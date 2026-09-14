@@ -1,0 +1,5 @@
+.DEFAULT_GOAL := help
+PYTHON_PATHS := src/ tests/ scripts/
+COVERAGE_SOURCE := {{ package_name }}
+
+include scripts/development.mk

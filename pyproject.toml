@@ -1,0 +1,192 @@
+[project]
+name = "justpen-mcp-dev-template"
+version = "0.4.0"
+description = "Copier template for Claude- and Codex-ready Python MCP servers"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "justpenkit" }]
+keywords = ["mcp"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+dependencies = ["copier>=9.18.2,<10"]
+
+[project.urls]
+Homepage = "https://github.com/justpenkit/justpen-mcp-dev-template"
+Repository = "https://github.com/justpenkit/justpen-mcp-dev-template"
+Issues = "https://github.com/justpenkit/justpen-mcp-dev-template/issues"
+Changelog = "https://github.com/justpenkit/justpen-mcp-dev-template/releases"
+
+[dependency-groups]
+dev = [
+  "commitizen>=4.0",
+  "cssbeautifier>=2.0",
+  "djlint>=1.36",
+  "mdformat>=0.7.19",
+  "mdformat-frontmatter>=2.0",
+  "mdformat-gfm>=0.4",
+  "mdformat-mkdocs>=4.0",
+  "pre-commit>=4.5.1",
+  "pre-commit-hooks>=5.0",
+  "pyright>=1.1.408",
+  "pytest>=9.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.15",
+  "taplo>=0.9.3",
+  "yamlfix>=1.16",
+]
+
+docs = ["mkdocs-material>=9.5"]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "pep621"
+tag_format = "v$version"
+message_length_limit = 72
+allowed_prefixes = ["Merge ", "fixup! ", "squash! ", "amend! ", 'Revert "']
+
+[tool.commitizen.customize]
+schema_pattern = '^(?=[^\r\n]{1,72}(?:\r?\n|$))(?:feat|fix|docs|chore|ci|refactor|test|style|build|perf|revert)(?:\([^()\r\n]+\))?!?: [^\r\n]+(?<!\.)(?:\r?\n[\s\S]*)?$'
+
+[tool.yamlfix]
+explicit_start = false
+line_length = 120
+sequence_style = "keep_style"
+preserve_quotes = true
+whitelines = 1
+section_whitelines = 1
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--strict-markers --strict-config"
+filterwarnings = ["error"]
+markers = ["integration: real tool, release, documentation, and generated-project scenarios"]
+
+[tool.ruff]
+line-length = 120
+src = ["scripts"]
+extend-exclude = [".superpowers"]
+
+[tool.ruff.lint]
+select = [
+  "F",     # Pyflakes: undefined names, unused imports/variables
+  "E",     # pycodestyle errors: PEP 8 style violations
+  "W",     # pycodestyle warnings: whitespace, deprecated syntax
+  "B",     # flake8-bugbear: likely bugs and design problems
+  "BLE",   # flake8-blind-except: bare except / except Exception
+  "RET",   # flake8-return: return statement anti-patterns
+  "PLC",   # Pylint Convention: style/convention issues
+  "PLE",   # Pylint Error: likely runtime errors
+  "PLW",   # Pylint Warning: suspicious patterns
+  "UP",    # pyupgrade: modernize syntax for target Python version
+  "I",     # isort: import ordering and grouping
+  "SIM",   # flake8-simplify: code that can be simplified
+  "C4",    # flake8-comprehensions: better list/dict/set comprehensions
+  "C90",   # mccabe: cyclomatic complexity threshold
+  "PTH",   # flake8-use-pathlib: prefer pathlib over os.path
+  "RUF",   # Ruff-specific rules (e.g. unused noqa, ambiguous unicode)
+  "S",     # flake8-bandit: security issues (eval, hardcoded passwords, etc.)
+  "ASYNC", # flake8-async: async/await misuse, blocking calls in coroutines
+  "ARG",   # flake8-unused-arguments: unused function/method arguments
+  "DTZ",   # flake8-datetimez: timezone-naive datetime usage
+  "T20",   # flake8-print: catches stray print() calls
+  "LOG",   # flake8-logging: logging best practices
+  "G",     # flake8-logging-format: logging format string issues
+  "PT",    # flake8-pytest-style: pytest idioms (fixtures, parametrize)
+  "TID",   # flake8-tidy-imports: banned / relative import rules
+  "TC",    # flake8-type-checking: move type-only imports under TYPE_CHECKING
+  "PERF",  # Perflint: performance anti-patterns (e.g. try/except in loops)
+  "FBT",   # flake8-boolean-trap: boolean positional arguments
+  "N",     # pep8-naming: naming conventions for classes/functions/variables
+  "ANN",   # flake8-annotations: missing type annotations
+  "T10",   # flake8-debugger: pdb/breakpoint() leftovers
+  "SLF",   # flake8-self: private member access from outside class
+  "TRY",   # tryceratops: try/except anti-patterns
+  "PIE",   # flake8-pie: misc lints (unnecessary pass, duplicate keys, etc.)
+  "ERA",   # eradicate: commented-out code
+  "A",     # flake8-builtins: shadowing Python builtins
+  "PGH",   # pygrep-hooks: generic checks (blanket noqa, eval usage)
+  "RSE",   # flake8-raise: raise statement issues (unnecessary parentheses)
+  "FURB",  # refurb: modernize older Python patterns
+  "INP",   # flake8-no-pep420: require __init__.py (no implicit namespace pkg)
+  "EXE",   # flake8-executable: shebang / file-mode mismatches
+  "D",     # pydocstyle: docstring presence and style (Google convention)
+]
+ignore = [
+  "E501",   # line too long — formatter handles line length
+  "COM812", # missing trailing comma — conflicts with ruff formatter
+  "ISC001", # implicit string concatenation — conflicts with ruff formatter
+  "TRY003", # long exception messages outside exception class — too strict
+  "EM101",  # raw string in exception — stylistic noise
+  "EM102",  # f-string in exception — stylistic noise
+  "TID252", # relative imports from parent modules — we allow them
+  "S603",   # subprocess without shell=True — false positives on trusted input
+  "S607",   # subprocess partial executable path — false positives for standard tools
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+  "S101",
+  "SLF001",
+  "ARG",
+  "T201",
+  "PT011",
+  "ANN",
+  "INP001",
+  "D",      # tests don't need docstrings
+]
+# scripts/ are CLI entry points: `print` is the user-facing output mechanism (T201),
+# and cleanup helpers accept a positional `dry_run: bool` flag by design (FBT001/FBT002).
+"scripts/*" = ["INP001", "T201", "FBT001", "FBT002"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# Make and the editor use the active Python; CI checks Python 3.11, 3.12 and 3.13.
+[tool.pyright]
+include = ["tests", "scripts"]
+extraPaths = ["."]
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false
+reportImplicitOverride = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportUnusedFunction = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportMissingParameterType = "none"
+reportUnknownParameterType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownLambdaType = "none"
+reportPrivateUsage = "none"
+
+[tool.coverage.run]
+source = ["scripts.bootstrap"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+exclude_lines = ["pragma: no cover", "raise NotImplementedError", "if TYPE_CHECKING:", "if __name__ == .__main__.:"]

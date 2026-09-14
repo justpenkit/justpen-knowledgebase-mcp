@@ -1,0 +1,34 @@
+name: Template CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-template:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.repository == 'justpenkit/justpen-mcp-dev-template'
+    env:
+      UV_PYTHON: "3.13"
+      PYRIGHT_PYTHON_GLOBAL_NODE: "0"
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - run: uv python install 3.11 3.12 3.13
+      - run: make lock-check
+      - run: make install
+
+      - name: Shared integration and both generated-project setup routes
+        run: make test-integration

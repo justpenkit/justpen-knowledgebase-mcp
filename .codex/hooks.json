@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 -I -B \"$(git rev-parse --show-toplevel)/scripts/hooks/guard_config.py\" --client codex"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "Bash|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 -I -B \"$(git rev-parse --show-toplevel)/scripts/hooks/guard_config.py\" --client codex"
+          }
+        ]
+      }
+    ]
+  }
+}

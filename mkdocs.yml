@@ -1,0 +1,67 @@
+site_name: justpen-mcp-dev-template
+site_description: Reusable Python MCP projects for Claude Code and Codex
+site_url: https://justpen-mcp-dev-template.justpenkit.justmumu.com/
+repo_url: https://github.com/justpenkit/justpen-mcp-dev-template
+repo_name: justpenkit/justpen-mcp-dev-template
+edit_uri: ''
+
+hooks:
+  - scripts/docs_version.py
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Template guides:
+      - Create a project: guides/create-project.md
+      - Update a project: guides/template-updates.md
+      - Architecture: guides/template-architecture.md
+  - Contributing:
+      - Getting started: contributing/getting-started.md
+      - Claude Code and Codex: contributing/agents.md
+      - Pre-PR checklist: contributing/pr-checklist.md
+      - Lint & typing: contributing/lint-typing.md
+      - Release process: contributing/release-process.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+    absolute_links: warn
+  links:
+    not_found: warn
+    anchors: warn
+    absolute_links: warn
+    unrecognized_links: warn

@@ -1,0 +1,4 @@
+exclude = ["uv.lock"]
+
+[formatting]
+column_width = 120

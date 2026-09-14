@@ -1,0 +1,24 @@
+# Requires Codex CLI 0.154+ (or a desktop build with permission profiles and hooks).
+# Trust this project and review its hooks before starting a development session.
+approval_policy = "on-request"
+approvals_reviewer = "user"
+default_permissions = "justpen-dev"
+
+[permissions.justpen-dev]
+extends = ":workspace"
+
+# Routine checks can use their caches without an out-of-workspace escalation.
+[permissions.justpen-dev.filesystem]
+"~/.cache/uv" = "write"
+"~/Library/Caches/uv" = "write"
+"~/.cache/pre-commit" = "write"
+"~/.cache/pyright-python" = "write"
+
+[permissions.justpen-dev.filesystem.":workspace_roots"]
+"pyproject.toml" = "read"
+"uv.lock" = "read"
+"scripts/hooks/guard_config.py" = "read"
+".claude" = "read"
+
+[permissions.justpen-dev.network]
+enabled = true

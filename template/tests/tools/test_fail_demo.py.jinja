@@ -1,0 +1,28 @@
+"""Tests for the fail_demo tool."""
+
+from fastmcp import FastMCP
+
+from {{ package_name }}.tools.fail_demo import register
+
+
+async def test_fail_demo_success_branch():
+    mcp = FastMCP("test")
+    register(mcp)
+    # fastmcp 3.x public API: ``await mcp.call_tool(name, args)`` returns a
+    # ``ToolResult`` whose ``.structured_content`` holds the tool's return dict.
+    result = await mcp.call_tool("fail_demo", {"should_fail": False})
+    assert result.structured_content == {
+        "status": "success",
+        "data": {"demo": "ok"},
+    }
+
+
+async def test_fail_demo_error_branch():
+    mcp = FastMCP("test")
+    register(mcp)
+    result = await mcp.call_tool("fail_demo", {"should_fail": True})
+    assert result.structured_content == {
+        "status": "error",
+        "error_type": "demo_failure",
+        "message": "Demo failure triggered",
+    }

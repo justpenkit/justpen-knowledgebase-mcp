@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: quality
+    outputs:
+      generated: ${{ steps.project.outputs.generated }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: "3.13"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+      - name: Select integration owner
+        id: project
+        run: |
+          if [ -f copier.yml ]; then
+            echo "generated=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "generated=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Require the committed lockfile
+        run: make lock-check
+      - name: make install
+        run: make install
+      - name: Shared formatting and lint
+        run: make check-static
+      - name: Strict documentation build
+        run: make docs-build
+
+  check:
+    name: check (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+      - name: Require the committed lockfile
+        run: make lock-check
+      - name: make install
+        run: make install
+      - name: Active Python typing and unit tests
+        run: make check-python
+
+  integration:
+    name: integration
+    needs: quality
+    if: needs.quality.outputs.generated == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: "3.13"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+      - name: Require the committed lockfile
+        run: make lock-check
+      - name: make install
+        run: make install
+      - name: Real tool, release and documentation scenarios
+        run: make test-integration

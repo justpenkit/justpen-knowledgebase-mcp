@@ -1,0 +1,8 @@
+"""Smoke test for the FastMCP singleton."""
+
+from {{ package_name }}.app import mcp
+
+
+def test_mcp_singleton_exists():
+    assert mcp is not None
+    assert mcp.name

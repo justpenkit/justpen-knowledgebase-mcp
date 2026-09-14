@@ -1,0 +1,90 @@
+{
+  "env": {
+    "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1",
+    "ENABLE_LSP_TOOL": "1"
+  },
+  "effortLevel": "high",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 -I -B \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard_config.py\" --client claude"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-marketplace": true,
+    "pyright-lsp@claude-plugins-official": true,
+    "caveman@caveman": true
+  },
+  "extraKnownMarketplaces": {
+    "superpowers-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers-marketplace"
+      },
+      "autoUpdate": true
+    },
+    "caveman": {
+      "source": {
+        "source": "github",
+        "repo": "JuliusBrussee/caveman"
+      },
+      "autoUpdate": true
+    },
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      },
+      "autoUpdate": true
+    }
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(make install)",
+      "Bash(make setup)",
+      "Bash(make check)",
+      "Bash(make test)",
+      "Bash(make test-integration)",
+      "Bash(make test-permissions)",
+      "Bash(make lint)",
+      "Bash(make lint-fix)",
+      "Bash(make format)",
+      "Bash(make format-check)",
+      "Bash(make format-md)",
+      "Bash(make format-md-check)",
+      "Bash(make format-toml)",
+      "Bash(make format-toml-check)",
+      "Bash(make format-yaml)",
+      "Bash(make format-yaml-check)",
+      "Bash(make format-json)",
+      "Bash(make format-json-check)",
+      "Bash(make format-ruff)",
+      "Bash(make format-ruff-check)",
+      "Bash(make typecheck)",
+      "Bash(make docs-build)",
+      "Bash(make lock-check)",
+      "Bash(uv add *)",
+      "Bash(uv remove *)",
+      "Bash(uv lock *)",
+      "Bash(uv sync *)",
+      "Bash(uv version *)"
+    ],
+    "ask": [
+      "Edit(/pyproject.toml)",
+      "Edit(/uv.lock)",
+      "Edit(/scripts/hooks/guard_config.py)"
+    ]
+  }
+}

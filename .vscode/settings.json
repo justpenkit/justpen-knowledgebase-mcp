@@ -1,0 +1,59 @@
+{
+  "editor.formatOnSave": true,
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "ruff.importStrategy": "fromEnvironment",
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": [
+    "tests",
+    "-m",
+    "not integration"
+  ],
+  "customLocalFormatters.formatters": [
+    {
+      "command": "uv run --group dev mdformat -",
+      "languages": [
+        "markdown"
+      ]
+    },
+    {
+      "command": "uv run --group dev yamlfix -",
+      "languages": [
+        "yaml",
+        "github-actions-workflow"
+      ]
+    },
+    {
+      "command": "uv run --group dev taplo fmt -",
+      "languages": [
+        "toml"
+      ]
+    },
+    {
+      "command": "uv run python -m json.tool --indent 2 --no-ensure-ascii",
+      "languages": [
+        "json"
+      ]
+    }
+  ],
+  "[markdown]": {
+    "editor.defaultFormatter": "jkillian.custom-local-formatters"
+  },
+  "[yaml]": {
+    "editor.defaultFormatter": "jkillian.custom-local-formatters"
+  },
+  "[github-actions-workflow]": {
+    "editor.defaultFormatter": "jkillian.custom-local-formatters"
+  },
+  "[toml]": {
+    "editor.defaultFormatter": "jkillian.custom-local-formatters"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "jkillian.custom-local-formatters"
+  }
+}

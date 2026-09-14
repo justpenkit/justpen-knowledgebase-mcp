@@ -1,0 +1,50 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+*.egg
+build/
+dist/
+.venv/
+
+# Testing & Linting
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# MkDocs output and tool caches
+site/
+.cache/
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Playwright
+test-results/
+playwright-report/
+.playwright-mcp/
+playwright/.cache/
+
+# Claude Code local overrides (personal, non-shared)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Superpowers private working area (specs, plans)
+.superpowers/
+
+# Git worktrees
+.worktrees/
+
+# Leftover dependency caches from older template versions
+node_modules/
