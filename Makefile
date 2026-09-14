@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-PYTHON_PATHS := tests/ scripts/
-COVERAGE_SOURCE := scripts.bootstrap
+PYTHON_PATHS := src/ tests/ scripts/
+COVERAGE_SOURCE := justpen_knowledgebase_mcp
 
 include scripts/development.mk

@@ -1,0 +1,10 @@
+# Managed by Copier. Change answers through Copier rather than editing this file.
+# Quote strings so YAML formatters cannot interpret revisions as numbers.
+"_commit": "13f7e7e"
+"_src_path": "."
+"author": "justpenkit"
+"copyright_year": 2026
+"description": "Knowledge base MCP for justpen pentesting framework"
+"initial_version": "0.0.0"
+"project_name": "justpen-knowledgebase-mcp"
+"repo_owner": "justpenkit"

@@ -1,8 +1,7 @@
-site_name: justpen-mcp-dev-template
-site_description: Reusable Python MCP projects for Claude Code and Codex
-site_url: https://justpen-mcp-dev-template.justpenkit.justmumu.com/
-repo_url: https://github.com/justpenkit/justpen-mcp-dev-template
-repo_name: justpenkit/justpen-mcp-dev-template
+site_name: "justpen-knowledgebase-mcp"
+site_description: "Knowledge base MCP for justpen pentesting framework"
+repo_url: https://github.com/justpenkit/justpen-knowledgebase-mcp
+repo_name: justpenkit/justpen-knowledgebase-mcp
 edit_uri: ''
 
 hooks:
@@ -34,10 +33,8 @@ theme:
 
 nav:
   - Home: index.md
-  - Template guides:
-      - Create a project: guides/create-project.md
-      - Update a project: guides/template-updates.md
-      - Architecture: guides/template-architecture.md
+  - API reference: api.md
+  - Template updates: guides/template-updates.md
   - Contributing:
       - Getting started: contributing/getting-started.md
       - Claude Code and Codex: contributing/agents.md
@@ -47,6 +44,13 @@ nav:
 
 plugins:
   - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: true
 
 markdown_extensions:
   - admonition

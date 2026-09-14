@@ -1,29 +1,29 @@
-![justpen-mcp-dev-template logo](assets/logo.svg)
+# justpen-knowledgebase-mcp
 
-# justpen-mcp-dev-template
+Knowledge base MCP for justpen pentesting framework
 
-Start an MCP server with shared Claude Code and Codex rules, strict quality
-checks and a repeatable path for template updates. Copier creates the project
-from your answers and brings future template changes into your existing server.
+This MCP server communicates over stdio. After running `make setup`, start it
+with:
 
-## Build and maintain your MCP server
+```bash
+uv run justpen-knowledgebase-mcp
+```
 
-- [Create a project](guides/create-project.md): use GitHub's automatic setup or
-    answer Copier's questions locally.
-- [Claude Code and Codex](contributing/agents.md): activate shared instructions
-    and the protected metadata gate.
-- [Update your template](guides/template-updates.md): review incoming template
-    changes and preserve project customizations.
-- [Contribute](contributing/getting-started.md): set up the generator, run the
-    quality gates and open a PR.
+Replace the example tools and this introduction with your server's behavior.
+The project starts at version `0.0.0`; follow the
+[release process](contributing/release-process.md) when it is ready to release.
 
-## One development setup
+## Contributor docs
 
-Install uv, then run `make setup`. It installs the Python environment, development
-and documentation tools, and Git hooks. Formatting, tests, type checks and MkDocs
-all run through Make; no separate Node.js or npm setup is required.
-
-Projects support Python 3.11, 3.12 and 3.13, with 3.13 as the local default. The
-generated documentation includes API reference pages built from the server's
-Python docstrings. Read the [architecture guide](guides/template-architecture.md)
-to see how the generator and generated project share their development policy.
+- [Getting started](contributing/getting-started.md): install the tools with
+    `make setup` and run the development gate.
+- [Claude Code and Codex](contributing/agents.md): activate shared development
+    rules and metadata permissions.
+- [PR checklist](contributing/pr-checklist.md): branch, commits, tests, docs and
+    merge style.
+- [Lint & typing](contributing/lint-typing.md): Ruff and strict Pyright rules,
+    including the suppression protocol.
+- [API reference](api.md): configuration, errors, responses and example tools,
+    rendered from their Python docstrings.
+- [Template updates](guides/template-updates.md): bring future template changes
+    into this project through Copier.

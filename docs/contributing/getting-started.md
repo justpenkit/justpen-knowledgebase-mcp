@@ -13,8 +13,8 @@ package manages its own runtime.
 ## Clone and set up
 
 ```bash
-git clone https://github.com/justpenkit/justpen-mcp-dev-template.git
-cd justpen-mcp-dev-template
+git clone https://github.com/justpenkit/justpen-knowledgebase-mcp.git
+cd justpen-knowledgebase-mcp
 make setup
 ```
 

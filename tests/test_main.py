@@ -1,0 +1,151 @@
+"""Verify CLI exit status, server failures, and graceful task cleanup."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import signal
+import subprocess
+import sys
+from typing import TYPE_CHECKING, Any
+
+import pytest
+
+import justpen_knowledgebase_mcp.__main__ as main_mod
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+def capture_signals(monkeypatch: pytest.MonkeyPatch) -> dict[signal.Signals, Callable[[], None]]:
+    handlers: dict[signal.Signals, Callable[[], None]] = {}
+
+    def add_handler(sig: signal.Signals, callback: Callable[[], None]) -> None:
+        handlers[sig] = callback
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", add_handler)
+    monkeypatch.setattr(main_mod, "register_all", lambda _mcp: None)
+    return handlers
+
+
+def test_setup_logging_resolves_named_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_basic_config(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr("justpen_knowledgebase_mcp.__main__.logging.basicConfig", fake_basic_config)
+    main_mod._setup_logging("DEBUG")
+    assert captured["level"] == logging.DEBUG
+
+
+def test_setup_logging_falls_back_on_unknown_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_basic_config(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr("justpen_knowledgebase_mcp.__main__.logging.basicConfig", fake_basic_config)
+    main_mod._setup_logging("NOT_A_LEVEL")
+    assert captured["level"] == logging.INFO
+
+
+def test_cli_invokes_asyncio_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[object] = []
+
+    def fake_run(coro: object) -> None:
+        captured.append(coro)
+        if hasattr(coro, "close"):
+            coro.close()  # type: ignore[attr-defined]
+
+    monkeypatch.setattr("justpen_knowledgebase_mcp.__main__.asyncio.run", fake_run)
+    main_mod.cli()
+    assert len(captured) == 1
+
+
+async def test_main_runs_to_completion_when_server_exits(monkeypatch: pytest.MonkeyPatch) -> None:
+    capture_signals(monkeypatch)
+    before = asyncio.all_tasks()
+
+    async def quick_exit() -> None:
+        return
+
+    monkeypatch.setattr("justpen_knowledgebase_mcp.app.mcp.run_async", quick_exit)
+    await main_mod.main()
+    assert asyncio.all_tasks() == before
+
+
+@pytest.mark.parametrize("stop_requested", [False, True], ids=["server-failure", "simultaneous-stop-and-failure"])
+async def test_main_propagates_server_failure(monkeypatch: pytest.MonkeyPatch, *, stop_requested: bool) -> None:
+    handlers = capture_signals(monkeypatch)
+    before = asyncio.all_tasks()
+    failure = RuntimeError("server startup failed")
+
+    async def failing_server() -> None:
+        if stop_requested:
+            handlers[signal.SIGTERM]()
+        raise failure
+
+    monkeypatch.setattr(main_mod.mcp, "run_async", failing_server)
+    with pytest.raises(RuntimeError, match="server startup failed") as raised:
+        await main_mod.main()
+    assert raised.value is failure
+    assert asyncio.all_tasks() == before
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+async def test_signal_waits_for_server_cleanup(monkeypatch: pytest.MonkeyPatch, sig: signal.Signals) -> None:
+    handlers = capture_signals(monkeypatch)
+    before = asyncio.all_tasks()
+    cleaned_up = asyncio.Event()
+
+    async def running_server() -> None:
+        try:
+            handlers[sig]()
+            await asyncio.Event().wait()
+        finally:
+            cleaned_up.set()
+
+    monkeypatch.setattr(main_mod.mcp, "run_async", running_server)
+    await asyncio.wait_for(main_mod.main(), timeout=5)
+    assert cleaned_up.is_set()
+    assert asyncio.all_tasks() == before
+
+
+async def test_cancelling_main_cleans_up_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    capture_signals(monkeypatch)
+    before = asyncio.all_tasks()
+    started = asyncio.Event()
+    cleaned_up = asyncio.Event()
+
+    async def running_server() -> None:
+        try:
+            started.set()
+            await asyncio.Event().wait()
+        finally:
+            cleaned_up.set()
+
+    monkeypatch.setattr(main_mod.mcp, "run_async", running_server)
+    task = asyncio.create_task(main_mod.main())
+    await asyncio.wait_for(started.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cleaned_up.is_set()
+    assert asyncio.all_tasks() == before
+
+
+def test_cli_exits_with_failure_when_server_crashes() -> None:
+    probe = """
+from justpen_knowledgebase_mcp import __main__ as entrypoint
+
+async def failing_server():
+    raise RuntimeError("server startup failed")
+
+entrypoint.mcp.run_async = failing_server
+entrypoint.cli()
+"""
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=False, timeout=30)
+    assert result.returncode != 0, result.stderr
+    assert "RuntimeError: server startup failed" in result.stderr
+    assert "Task exception was never retrieved" not in result.stderr
