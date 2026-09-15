@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self
 from uuid import uuid4
 
-from .errors import ConfigurationError, PathDeniedError, StorageIOError
+from .errors import ConfigurationError, InvalidParamsError, PathDeniedError, StorageIOError
 from .storage.filesystem import validate_local_directory
 
 if TYPE_CHECKING:
@@ -80,7 +80,7 @@ class WorkspacePaths:
     def relative(self, value: str | Path) -> Path:
         """Strip only root prefixes, without resolving child symlinks."""
         if not str(value):
-            raise PathDeniedError("INVALID: empty path")
+            raise InvalidParamsError("empty path")
         path = Path(value)
         if ".." in path.parts:
             raise PathDeniedError("PATH_DENIED: PARENT_COMPONENT")

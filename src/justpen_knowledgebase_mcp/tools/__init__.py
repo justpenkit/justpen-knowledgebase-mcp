@@ -1,13 +1,12 @@
-"""Tool modules. Each exports ``register(mcp)``."""
+"""Public tool registration; populated by the graph API implementation."""
 
-from fastmcp import FastMCP
+from __future__ import annotations
 
-from . import echo, fail_demo
+from typing import TYPE_CHECKING
 
-__all__ = ["register_all"]
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
 
 
-def register_all(mcp: FastMCP) -> None:
-    """Register every tool category on the FastMCP instance."""
-    echo.register(mcp)
-    fail_demo.register(mcp)
+def register_all(_mcp: FastMCP) -> None:
+    """Keep the registry empty until real knowledgebase tools are implemented."""

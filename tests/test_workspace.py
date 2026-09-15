@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from justpen_knowledgebase_mcp.config import ServerConfig
-from justpen_knowledgebase_mcp.errors import ConfigurationError, PathDeniedError, StorageIOError
+from justpen_knowledgebase_mcp.errors import ConfigurationError, InvalidParamsError, PathDeniedError, StorageIOError
 from justpen_knowledgebase_mcp.workspace import WorkspacePaths
 
 pytestmark = pytest.mark.integration
@@ -160,3 +160,9 @@ def test_device_contract_uses_tmp_evidence_only(tmp_path, monkeypatch, different
     else:
         with workspace(tmp_path, db_path=target / "graph.sqlite3"):
             pass
+
+
+def test_empty_import_has_invalid_code(tmp_path):
+    cfg = ServerConfig(workspace_dir=tmp_path)
+    with WorkspacePaths(cfg) as workspace, pytest.raises(InvalidParamsError), workspace.open_import(""):
+        pass

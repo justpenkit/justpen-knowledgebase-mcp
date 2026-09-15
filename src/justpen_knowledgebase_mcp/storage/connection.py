@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import sys
+import time
 from typing import TYPE_CHECKING, Self
 
 import apsw
 
 from ..errors import ConfigurationError
+from .schema import SchemaGuard
 from .vfs import WorkspaceVFS
 
 if TYPE_CHECKING:
@@ -30,6 +31,7 @@ class SQLiteRuntime:
         self.workspace = workspace
         self.config = config
         self.vfs = WorkspaceVFS(workspace)
+        self.guard = SchemaGuard(workspace)
 
     def connect(self) -> apsw.Connection:
         """Open a durable WAL connection; call only in its eventual owner thread."""
@@ -48,7 +50,7 @@ class SQLiteRuntime:
     def _configure(self, connection: apsw.Connection) -> None:
         connection.enable_load_extension(enable=False)
         connection.set_busy_timeout(self.config.db_busy_timeout_ms)
-        if connection.pragma("journal_mode", "wal") != "wal":
+        if self._enable_wal(connection) != "wal":
             raise ConfigurationError("CONFIGURATION: WAL unavailable")
         connection.pragma("foreign_keys", 1)
         connection.pragma("synchronous", "full")
@@ -58,30 +60,32 @@ class SQLiteRuntime:
             connection.pragma("checkpoint_fullfsync", 1)
         if connection.execute("select json_valid('{}'), sqlite_compileoption_used('ENABLE_FTS5')").get != (1, 1):
             raise ConfigurationError("CONFIGURATION: JSON and FTS5 required")
-        self._check_paths(connection)
+        self.guard.initialize(connection)
 
-    def _check_paths(self, connection: apsw.Connection) -> None:
-        # Task 2 migrates this foundation contract into canonical schema settings.
-        paths = json.dumps(
-            {
-                name: str(self.workspace.relative(path))
-                for name, path in (
-                    ("data", self.workspace.data),
-                    ("db", self.workspace.db),
-                    ("evidence", self.workspace.evidence),
-                    ("tmp", self.workspace.tmp),
-                    ("locks", self.workspace.locks),
-                )
-            },
-            sort_keys=True,
-        )
-        with connection:
-            connection.execute(
-                "create table if not exists runtime_paths (singleton integer primary key check(singleton=1), paths text not null)"
-            )
-            connection.execute("insert or ignore into runtime_paths values (1, ?)", (paths,))
-            if connection.execute("select paths from runtime_paths where singleton=1").get != paths:
-                raise ConfigurationError("CONFIGURATION: managed paths differ from database initialization")
+    def _enable_wal(self, connection: apsw.Connection) -> object:
+        # Concurrent journal-mode upgrades can return BUSY without invoking the
+        # busy handler (shared-to-exclusive lock conflict). Retry the completed
+        # statement within one startup budget; do not restart the full timeout.
+        deadline = time.monotonic() + self.config.db_busy_timeout_ms / 1000
+        while True:
+            try:
+                return connection.pragma("journal_mode", "wal")
+            except apsw.BusyError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                connection.set_busy_timeout(max(1, int(remaining * 1000)))
+                time.sleep(min(0.005, remaining))
+
+    def open_writer(self) -> apsw.Connection:
+        """Open a writer on its owner thread."""
+        return self.connect()
+
+    def open_reader(self) -> apsw.Connection:
+        """Open a query-only reader on its owner thread."""
+        connection = self.connect()
+        connection.pragma("query_only", 1)
+        return connection
 
     def close(self) -> None:
         """Unregister the VFS after every connection has been closed."""
@@ -96,3 +100,7 @@ class SQLiteRuntime:
     ) -> None:
         """Release VFS registration on context exit."""
         self.close()
+
+
+# One factory implementation retains the native workspace/VFS boundary.
+ConnectionFactory = SQLiteRuntime

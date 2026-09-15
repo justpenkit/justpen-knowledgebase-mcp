@@ -20,10 +20,13 @@ to finish repository setup, customize the starter and run the development gate.
 The server uses Python 3.11–3.13 and communicates over stdio:
 
 ```bash
-uv run justpen-knowledgebase-mcp
+JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR=/absolute/existing/workspace uv run python -B -m justpen_knowledgebase_mcp
 ```
 
-SIGTERM and SIGINT stop the server gracefully. Unexpected server failures reach
+SIGTERM and SIGINT request graceful cleanup with a 30-second waiting budget.
+Native SQLite close/fsync may exceed this budget; `shutdown_timeout` is logged
+to stderr and a host supervisor can stop an unresponsive process. Committed WAL
+data is recovered on reopening. Unexpected server failures reach
 the CLI and produce a nonzero exit status.
 
 Claude Code and Codex share [AGENTS.md](AGENTS.md). Follow the

@@ -54,7 +54,7 @@ def test_same_db_different_evidence_is_configuration_error(tmp_path):
     with (
         WorkspacePaths(changed) as ws,
         SQLiteRuntime(ws, changed) as runtime,
-        pytest.raises(ConfigurationError, match="CONFIGURATION"),
+        pytest.raises(ConfigurationError, match="contract or managed paths"),
     ):
         runtime.connect()
 

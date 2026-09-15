@@ -1,15 +1,14 @@
 """Entrypoint for `python -m justpen_knowledgebase_mcp`."""
 
-import argparse
 import asyncio
 import logging
 import os
 import signal
 import sys
 
-from .app import mcp
+from .app import create_app
+from .cli import parse_config, temporary_environment
 from .config import ServerConfig
-from .tools import register_all
 
 
 def _setup_logging(level: str) -> None:
@@ -25,11 +24,12 @@ async def main(config: ServerConfig | None = None) -> None:
     config = config or ServerConfig.from_env(os.environ)
     _setup_logging(config.log_level)
 
-    register_all(mcp)
+    mcp = create_app(config, runtime_context=temporary_environment)
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    original_handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    for sig in original_handlers:
         loop.add_signal_handler(sig, stop_event.set)
 
     if config.transport == "http":
@@ -44,24 +44,32 @@ async def main(config: ServerConfig | None = None) -> None:
         if stop_task in done and not server_task.done():
             server_task.cancel()
             # Wait for shutdown without suppressing cancellation of main itself.
-            await asyncio.wait({server_task})
+            await _await_cleanup(server_task)
             if server_task.cancelled():
                 return
         await server_task
     finally:
         server_task.cancel()
         stop_task.cancel()
-        await asyncio.gather(server_task, stop_task, return_exceptions=True)
+        await _await_cleanup(server_task)
+        await asyncio.gather(stop_task, return_exceptions=True)
+        for sig, handler in original_handlers.items():
+            loop.remove_signal_handler(sig)
+            signal.signal(sig, handler)
 
 
-def parse_config(argv: list[str] | None = None) -> ServerConfig:
-    """Merge explicit CLI settings before validating the effective HTTP host."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--transport", choices=("stdio", "http"))
-    parser.add_argument("--host")
-    parser.add_argument("--port", type=int)
-    parser.add_argument("--log-level")
-    return ServerConfig.from_env(os.environ, overrides=vars(parser.parse_args(argv)))
+SHUTDOWN_GRACE_SECONDS = 30.0
+
+
+async def _await_cleanup(task: asyncio.Task[None]) -> None:
+    done, _ = await asyncio.wait({task}, timeout=SHUTDOWN_GRACE_SECONDS)
+    if not done:
+        logging.getLogger(__name__).error("shutdown_timeout")
+        # Native close/fsync can exceed the grace budget. Only the owner closes;
+        # a host supervisor can hard-stop the process if cleanup does not finish.
+        await asyncio.wait({task})
+    if not task.cancelled():
+        task.exception()
 
 
 def cli() -> None:

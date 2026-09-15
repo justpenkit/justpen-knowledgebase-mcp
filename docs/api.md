@@ -16,8 +16,12 @@ reference and internal links.
 
 ::: justpen_knowledgebase_mcp.responses
 
-## Example tools
+## Application lifecycle
 
-::: justpen_knowledgebase_mcp.tools.echo
+::: justpen_knowledgebase_mcp.app
 
-::: justpen_knowledgebase_mcp.tools.fail_demo
+::: justpen_knowledgebase_mcp.service
+
+The registry is currently empty while the real knowledgebase tools are implemented.
+Successful tool results use `{"status":"ok","data":...}`; errors use
+`{"status":"error","error":"CODE: message"}` with bounded operational details.

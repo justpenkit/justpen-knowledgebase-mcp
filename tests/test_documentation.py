@@ -44,6 +44,9 @@ def test_documentation_builds_strictly(documentation_project):
     result = build_documentation(documentation_project)
     assert result.returncode == 0, result.stdout + result.stderr
     assert (documentation_project / "site" / "index.html").is_file()
+    api = rendered_text(documentation_project / "site" / "api" / "index.html")
+    assert "Application lifecycle" in api
+    assert "fail_demo" not in api
 
 
 @pytest.mark.parametrize("target", ["missing-guide.md", "index.md#missing-anchor"])
