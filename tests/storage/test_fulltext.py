@@ -209,6 +209,106 @@ async def test_full_busy_skip_does_not_release_other_item_owner(tmp_path):
         assert not (await kb.search(SearchRequest(kind="evidence", query="text")))["incomplete"]
 
 
+@pytest.mark.parametrize("transition", ["queued", "reclaimed", "cancel_requested"])
+async def test_live_override_reservation_survives_job_claim(tmp_path, monkeypatch, transition):
+    entered, resume = asyncio.Event(), asyncio.Event()
+    held = []
+    original = indexing_jobs.index_evidence
+
+    async def barrier(runner, claim, evidence_id):
+        if not claim.payload.get("all"):
+            held.append((runner, claim))
+            entered.set()
+            await resume.wait()
+        return await original(runner, claim, evidence_id)
+
+    monkeypatch.setattr(indexing_jobs, "index_evidence", barrier)
+    config = ServerConfig(workspace_dir=tmp_path)
+    async with KnowledgeBase.open(config) as first, KnowledgeBase.open(config) as second:
+        raw = await first.ingest_evidence(IngestRequest(text="reserved searchable"))
+        identifier = raw["evidence_id"]
+
+        def reserve(c, _t):
+            override = admit_reindex(
+                c, ReindexRequest(kind="evidence", ids=[identifier], encoding="utf-8"), str(uuid4())
+            )
+            if transition == "reclaimed":
+                previous = JobStore.claim(c, "bulk", "reindex")
+                assert previous is not None
+                claim_item(
+                    c, identifier, c.execute("SELECT id FROM jobs WHERE uuid=?", (previous.job_id,)).get, previous.token
+                )
+                c.execute("UPDATE jobs SET lease_expires_at=0 WHERE uuid=?", (previous.job_id,))
+            return override
+
+        override = await first.workers.write(reserve)
+        try:
+            await asyncio.wait_for(entered.wait(), 3)
+            blocked, claim = held[0]
+            other = second if blocked is first.job_runner else first
+            if transition == "cancel_requested":
+                await other.workers.control(lambda c, _t: JobStore.cancel(c, claim.job_id))
+
+            def reservation(c, _t):
+                return c.execute(
+                    "SELECT j.uuid,e.index_owner_token,j.lease_token,j.state,j.lease_expires_at "
+                    "FROM evidence e JOIN jobs j ON j.id=e.index_owner_job_id WHERE e.uuid=?",
+                    (identifier,),
+                ).fetchone()
+
+            before = await other.workers.read(reservation)
+            assert before[0] == claim.job_id
+            assert before[1] != before[2] == claim.token
+            assert before[3] == "running"
+            assert before[4] > time.time()
+            full = await other.reindex({"kind": "evidence", "all": True})
+            done = await other.job_runner.wait(full["job_id"], time.monotonic() + 5, full)
+            assert done["state"] == "completed"
+            assert done.get("index_busy_count") == 1
+            assert done["coverage_incomplete"]
+            assert done["sample_ids"] == [identifier]
+            after = await other.workers.read(reservation)
+            assert after[:4] == before[:4]
+        finally:
+            resume.set()
+        completed = await first.job_runner.wait(override["job_id"], time.monotonic() + 5, override)
+        assert completed["state"] == ("cancelled" if transition == "cancel_requested" else "completed")
+        if transition != "cancel_requested":
+            found = await first.search(SearchRequest(kind="evidence", query="searchable"))
+            assert found["items"][0]["id"] == identifier
+            assert not found["incomplete"]
+
+
+@pytest.mark.parametrize("owner_state", ["expired", "completed", "failed", "cancelled"])
+async def test_inactive_item_reservation_allows_takeover(tmp_path, owner_state):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        raw = await kb.ingest_evidence(IngestRequest(text="recoverable text"))
+
+        def takeover(c, _t):
+            old_id, new_id = str(uuid4()), str(uuid4())
+            JobStore.insert(c, old_id, "reindex", "bulk", {"kind": "evidence", "ids": [raw["evidence_id"]]})
+            old = JobStore.claim(c, "bulk", "reindex")
+            assert old is not None
+            owner = claim_item(
+                c, raw["evidence_id"], c.execute("SELECT id FROM jobs WHERE uuid=?", (old_id,)).get, old.token
+            )
+            if owner_state == "expired":
+                c.execute("UPDATE jobs SET lease_expires_at=0 WHERE uuid=?", (old_id,))
+            else:
+                JobStore.finish(c, old, owner_state, {})
+            JobStore.insert(c, new_id, "reindex", "bulk", {"kind": "evidence", "all": True})
+            replacement = claim_item(
+                c, raw["evidence_id"], c.execute("SELECT id FROM jobs WHERE uuid=?", (new_id,)).get, new_id
+            )
+            assert replacement.generation == owner.generation
+            with pytest.raises(ConflictError, match="GENERATION"):
+                finish_item(c, owner, "ready", incomplete=False)
+            finish_item(c, replacement, "ready", incomplete=False)
+            c.execute("UPDATE jobs SET state='completed' WHERE uuid IN (?,?)", (old_id, new_id))
+
+        await kb.workers.write(takeover)
+
+
 async def test_relevance_one_page_and_cursor_query_binding(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         for text in ("needle", "needle other", "other needle third"):

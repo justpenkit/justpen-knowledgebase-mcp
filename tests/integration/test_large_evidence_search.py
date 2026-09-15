@@ -127,6 +127,46 @@ async def test_snippet_bounds_and_separate_match_truncation(tmp_path):
         assert len(words["matches"]) == 2
 
 
+@pytest.mark.parametrize("capped", [False, True])
+async def test_words_snippet_detects_earlier_matches(tmp_path, capped):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        body = "alpha " + "x " * 1000 + "omega " * (32 if capped else 1)
+        await kb.ingest_evidence(IngestRequest(text=body))
+        item = (await kb.search(SearchRequest(kind="evidence", query="omega alpha", query_mode="words")))["items"][0]
+        assert item["snippet_truncated"]
+        assert item["matches_truncated"] == capped
+        assert item["snippet_range"]["byte_start"] == item["matches"][0]["byte_start"]
+        bounds = item["snippet_range"]
+        assert body.encode()[bounds["byte_start"] : bounds["byte_end"]].decode() == item["snippet"]
+        assert "alpha" not in item["snippet"]
+
+
+async def test_snippet_checks_later_occurrences_after_reference_cap(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        body = "alpha " * 33 + "x " * 1000 + "alpha"
+        await kb.ingest_evidence(IngestRequest(text=body))
+        item = (await kb.search(SearchRequest(kind="evidence", query="alpha", query_mode="words")))["items"][0]
+        assert len(item["matches"]) == 32
+        assert all(ref["byte_end"] <= item["snippet_range"]["byte_end"] for ref in item["matches"])
+        assert item["matches_truncated"]
+        assert item["snippet_truncated"]
+
+
+async def test_words_snippet_detects_omitted_other_leaf(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        await kb.write(
+            WriteRequest.model_validate(
+                {"nodes": [{"type": "domain", "properties": {"name": "a.example", "a": "omega " * 32, "b": "alpha"}}]}
+            )
+        )
+        item = (await kb.search(SearchRequest(kind="nodes", query="omega alpha", query_mode="words")))["items"][0]
+        assert len(item["matches"]) == 32
+        assert {ref["pointer"] for ref in item["matches"]} == {"/properties/a"}
+        assert item["matches_truncated"]
+        assert item["snippet_truncated"]
+        assert item["snippet_range"]["byte_start"] == item["matches"][0]["byte_start"] == 0
+
+
 async def test_literal_overlap_deduplicates_and_long_token_leaves_gap(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         body = "x " * 32766 + "boundary phrase " + "z " * 100

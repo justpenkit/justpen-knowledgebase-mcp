@@ -92,8 +92,7 @@ class _Matches:
         self.snippet_range: dict[str, int] | None = None
         self.truncated = False
         self.snippet_truncated = False
-        self.snippet_end = 0
-        self.documents: set[int] = set()
+        self.snippet_source: tuple[str, str, str | None] | None = None
         self.reference_bytes = 0
 
     def add(self, document: tuple[Any, ...], reference: tuple[dict[str, Any], str, bool, dict[str, int]]) -> None:
@@ -106,14 +105,17 @@ class _Matches:
             self.seen.add(key)
             self.refs.append(ref)
             self.reference_bytes += cost
-            self.documents.add(document[0])
         else:
             self.truncated = True
         if self.snippet is None:
             self.snippet, self.snippet_truncated = snippet, cut
             self.snippet_range = snippet_range
-            self.snippet_end = ref["byte_start"] + len(snippet.encode(document[6] or "utf-8"))
-        elif ref["byte_end"] > self.snippet_end:
+            self.snippet_source = (ref["kind"], ref["id"], ref["pointer"])
+        elif self.snippet_range is not None and (
+            (ref["kind"], ref["id"], ref["pointer"]) != self.snippet_source
+            or ref["byte_start"] < self.snippet_range["byte_start"]
+            or ref["byte_end"] > self.snippet_range["byte_end"]
+        ):
             self.snippet_truncated = True
 
     def result(self, query: TextQuery, score: float) -> dict[str, Any]:
@@ -122,7 +124,7 @@ class _Matches:
             "query_mode": query.mode,
             "snippet": self.snippet,
             "snippet_range": self.snippet_range,
-            "snippet_truncated": self.snippet_truncated or len(self.documents) > 1,
+            "snippet_truncated": self.snippet_truncated,
             "matches": self.refs,
             "matches_truncated": self.truncated,
         }
@@ -159,8 +161,6 @@ def match_unit(
                 rank = float(document[-1])
                 best = rank if best is None else min(best, rank)
                 matches.add(document, reference)
-                if matches.truncated:
-                    break
             token.check()
         if best is None:
             return None
@@ -206,18 +206,20 @@ class IndexOwner:
 def claim_item(connection: apsw.Connection, uuid: str, job_id: int, claim_token: str) -> IndexOwner:
     """Claim a ready item unless another unexpired job actively owns this generation."""
     row = connection.execute(
-        "SELECT id,index_generation,index_owner_job_id,index_owner_token,encoding,media_type,lifecycle,byte_size FROM evidence WHERE uuid=?",
+        "SELECT id,index_generation,index_owner_job_id,encoding,media_type,lifecycle,byte_size FROM evidence WHERE uuid=?",
         (uuid,),
     ).fetchone()
     if row is None:
         raise NotFoundError("evidence not found")
-    identifier, generation, owner, owner_token, encoding, media_type, lifecycle, byte_size = row
+    identifier, generation, owner, encoding, media_type, lifecycle, byte_size = row
     if lifecycle != "ready":
         raise ConflictError("RECORD_DELETING")
     if owner is not None and owner != job_id:
+        # The job ID reserves the item across queued/reclaimed lease transitions.
+        # The item token fences writes only; it may still belong to an older attempt.
         active = connection.execute(
-            "SELECT 1 FROM jobs WHERE id=? AND (state='queued' OR (state='running' AND lease_token=? AND lease_expires_at>?))",
-            (owner, owner_token, time.time()),
+            "SELECT 1 FROM jobs WHERE id=? AND (state='queued' OR (state='running' AND lease_expires_at>?))",
+            (owner, time.time()),
         ).get
         if active:
             raise ConflictError("INDEX_BUSY")
