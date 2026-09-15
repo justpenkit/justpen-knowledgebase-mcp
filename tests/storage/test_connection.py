@@ -1,5 +1,6 @@
 """Real WAL, JSON, FTS and concurrent connection configuration."""
 
+import json
 import stat
 import sys
 
@@ -87,3 +88,27 @@ def test_second_writer_obeys_busy_timeout_then_recovers(tmp_path):
         finally:
             second.close()
             first.close()
+
+
+def test_policy_is_persisted_and_applied_on_every_connection(tmp_path):
+
+    cfg = ServerConfig(workspace_dir=tmp_path)
+    with WorkspacePaths(cfg) as ws, SQLiteRuntime(ws, cfg) as runtime:
+        connection = runtime.connect()
+        try:
+            policy = json.loads(connection.execute("select policy from settings").get)
+            assert policy.get("wal_high_bytes") == 268435456
+            assert connection.pragma("journal_size_limit") == 67108864
+            assert connection.pragma("wal_autocheckpoint") == 1000
+            assert json.loads(connection.execute("select terminal_job_counts from settings").get) == {
+                "completed": 0,
+                "failed_cancelled": 0,
+            }
+        finally:
+            connection.close()
+        reopened = runtime.open_writer()
+        try:
+            assert json.loads(reopened.execute("select policy from settings").get) == policy
+            assert reopened.pragma("journal_size_limit") == 67108864
+        finally:
+            reopened.close()

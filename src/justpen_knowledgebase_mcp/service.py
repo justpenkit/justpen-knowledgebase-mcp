@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from .shutdown import ShutdownObserver
 from .storage.connection import SQLiteRuntime
+from .storage.maintenance import CheckpointMaintenance
 from .storage.worker import DatabaseWorkers
 from .workspace import WorkspacePaths
 
@@ -26,6 +27,7 @@ class KnowledgeBase:
     config: ServerConfig
     workspace: WorkspacePaths
     workers: DatabaseWorkers
+    maintenance: CheckpointMaintenance
 
     @classmethod
     @asynccontextmanager
@@ -43,12 +45,14 @@ class KnowledgeBase:
             with runtime_context(workspace) if runtime_context is not None else nullcontext():
                 factory = SQLiteRuntime(workspace, config)
                 workers = DatabaseWorkers(factory)
+                maintenance = CheckpointMaintenance(factory)
                 try:
+                    await maintenance.start()
                     await workers.start()
-                    yield cls(config, workspace, workers)
+                    yield cls(config, workspace, workers, maintenance)
                 finally:
                     try:
-                        await _close_workers(workers, observer)
+                        await _close_workers(workers, observer, maintenance)
                     finally:
                         factory.close()
         finally:
@@ -57,11 +61,20 @@ class KnowledgeBase:
                 await observer.close()
 
 
-async def _close_workers(workers: DatabaseWorkers, observer: ShutdownObserver) -> None:
+async def _close_workers(
+    workers: DatabaseWorkers, observer: ShutdownObserver, maintenance: CheckpointMaintenance
+) -> None:
     # EOF/startup unwind may be the first trigger; a CLI signal may already have
     # started this same observer while transport teardown was still pending.
     observer.start()
-    cleanup = asyncio.create_task(workers.close())
+
+    async def close_all() -> None:
+        try:
+            await maintenance.close()
+        finally:
+            await workers.close()
+
+    cleanup = asyncio.create_task(close_all())
     cancelled = False
     while not cleanup.done():
         try:

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
-from .errors import VALID_ERROR_TYPES, McpError
+from .errors import VALID_ERROR_TYPES, McpError, WalBusyError
 
 
 class BlockingRecord(BaseModel):
@@ -38,7 +38,7 @@ class WalRetryDetails(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     reason: Literal["WAL_PRESSURE", "RESET_PENDING", "RESET_IN_PROGRESS", "WAL_RESET_BLOCKED"]
-    retry_after_ms: Annotated[int, Field(strict=True, ge=0, le=30000)]
+    retry_after_ms: Annotated[int, Field(strict=True, ge=1000, le=30000)]
 
 
 ErrorDetails = BlockerDetails | MissingDetails | WalRetryDetails
@@ -73,6 +73,10 @@ def error_response(error_type: str, message: str, details: ErrorDetails | None =
 
 def exception_response(error: BaseException) -> dict[str, Any]:
     """Map expected server-authored errors and hide all unexpected exception data."""
+    if isinstance(error, WalBusyError):
+        return error_response(
+            "BUSY", error.reason, WalRetryDetails(reason=error.reason, retry_after_ms=error.retry_after_ms)
+        )
     if isinstance(error, McpError):
         message = str(error)
         prefix = error.error_type + ": "

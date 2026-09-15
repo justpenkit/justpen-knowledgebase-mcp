@@ -2,6 +2,7 @@
 
 import pytest
 
+from justpen_knowledgebase_mcp import errors
 from justpen_knowledgebase_mcp.responses import ErrorResult, error_response, exception_response, success_response
 
 
@@ -37,3 +38,18 @@ def test_pending_timestamp_must_be_a_timestamp():
                 },
             }
         )
+
+
+def test_wal_busy_preserves_frozen_retry_metadata_without_parsing_messages():
+
+    assert hasattr(errors, "WalBusyError"), "WAL admission must carry structured retry details"
+    error = errors.WalBusyError("WAL_PRESSURE", 1400)
+    assert exception_response(error) == {
+        "status": "error",
+        "error": "BUSY: WAL_PRESSURE",
+        "details": {"reason": "WAL_PRESSURE", "retry_after_ms": 1400},
+    }
+    assert exception_response(errors.BusyError("database queue unavailable")) == {
+        "status": "error",
+        "error": "BUSY: database queue unavailable",
+    }

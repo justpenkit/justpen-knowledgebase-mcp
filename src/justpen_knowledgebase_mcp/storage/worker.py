@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from types import TracebackType
 
-    from .connection import SQLiteRuntime
+    from .connection import ManagedConnection, SQLiteRuntime
 
 T = TypeVar("T")
 State = Literal["queued", "running", "committing", "done"]
@@ -33,6 +33,7 @@ class OperationToken:
     generation: int = 0
     state: State = "queued"
     submitted: bool = False
+    wal_retry_after_ms: int = 1000
 
     def check(self) -> None:
         """Check cancellation and the shared queue/lock/query budget."""
@@ -47,6 +48,7 @@ class _Work:
     callback: Callable[[apsw.Connection, OperationToken], Any]
     token: OperationToken
     future: asyncio.Future[Any]
+    lane: Lane
 
 
 @dataclass
@@ -54,7 +56,7 @@ class _Owner:
     reader: bool
     ready: asyncio.Future[None]
     closed: asyncio.Future[None]
-    connection: apsw.Connection | None = None
+    connection: ManagedConnection | None = None
     current: OperationToken | None = None
     generation: int = 0
     thread: threading.Thread | None = None
@@ -119,7 +121,7 @@ class DatabaseWorkers:
                 raise ValueError("operation token already submitted")
             token.submitted = True
             future: asyncio.Future[T] = asyncio.get_running_loop().create_future()
-            self._queues[lane].append(_Work(callback, token, future))
+            self._queues[lane].append(_Work(callback, token, future, lane))
             self._condition.notify_all()
         try:
             async with asyncio.timeout(max(0, token.deadline - time.monotonic())):
@@ -190,8 +192,8 @@ class DatabaseWorkers:
                 self._condition.wait()
 
     def _run(self, owner: _Owner) -> None:
-        connection: apsw.Connection | None = None
-        outcome = _Outcome()
+        connection: ManagedConnection | None = None
+        outcome = OwnerOutcome()
         work: _Work | None = None
         with outcome:
             connection = self.factory.open_reader() if owner.reader else self.factory.open_writer()
@@ -216,10 +218,10 @@ class DatabaseWorkers:
         with self._condition:
             owner.connection = None
             owner.current = None
-        closed = _Outcome()
+        closed = OwnerOutcome()
         with closed:
             if connection is not None:
-                connection.close()
+                self.factory.close_connection(connection)
         self._notify(owner.closed, error=closed.error)
 
     def _fail_queued(self) -> None:
@@ -232,7 +234,22 @@ class DatabaseWorkers:
                     self._notify(work.future, error=StorageIOError("database owner unavailable"))
             self._condition.notify_all()
 
-    def _execute(self, owner: _Owner, connection: apsw.Connection, work: _Work) -> None:
+    def _execute(self, owner: _Owner, connection: ManagedConnection, work: _Work) -> None:
+        outcome = OwnerOutcome()
+        retry = self.factory.status_cache.snapshot()["retry_after_ms"]
+        if isinstance(retry, int):
+            work.token.wal_retry_after_ms = retry
+        with outcome, connection.gate.transaction(work.token):
+            self._execute_scoped(owner, connection, work)
+        if outcome.error is not None:
+            with self._condition:
+                owner.current = None
+                work.token.state = "done"
+            self._notify(work.future, error=_public_error(outcome.error, work.token))
+            if isinstance(outcome.error, StorageIOError):
+                raise outcome.error
+
+    def _execute_scoped(self, owner: _Owner, connection: ManagedConnection, work: _Work) -> None:
         token = work.token
         busy_started: float | None = None
 
@@ -252,16 +269,20 @@ class DatabaseWorkers:
         connection.set_busy_handler(busy)
         connection.set_progress_handler(progress, 1000)
         result: Any = None
-        outcome = _Outcome()
+        outcome = OwnerOutcome()
         with outcome:
             token.check()
             connection.execute("BEGIN" if owner.reader else "BEGIN IMMEDIATE")
             self.factory.guard.check(connection)
+            if work.lane != "control":
+                self.factory.check_product(connection)
             result = work.callback(connection, token)
             with self._condition:
                 token.check()
                 token.state = "committing"
             connection.execute("COMMIT")
+            if work.lane == "write":
+                self.factory.committed(connection)
         error = _public_error(outcome.error, token) if outcome.error is not None else None
         # Cleanup cannot be interrupted by a second cancellation notification.
         # The owner does not dequeue/reuse this connection until cleanup finishes.
@@ -269,7 +290,7 @@ class DatabaseWorkers:
             owner.current = None
         # Interrupted INSERT/UPDATE can already have rolled back the transaction.
         connection.set_progress_handler(None)
-        cleanup = _Outcome()
+        cleanup = OwnerOutcome()
         with cleanup:
             if not connection.get_autocommit():
                 connection.execute("ROLLBACK")
@@ -283,14 +304,14 @@ class DatabaseWorkers:
             raise StorageIOError("database cleanup failed") from None
 
 
-class _Outcome:
+class OwnerOutcome:
     """Transport arbitrary callback failures across the thread boundary without logging data."""
 
     def __init__(self) -> None:
         """Initialize an empty outcome."""
         self.error: BaseException | None = None
 
-    def __enter__(self) -> _Outcome:
+    def __enter__(self) -> OwnerOutcome:
         """Enter the owner-thread exception transport boundary."""
         return self
 

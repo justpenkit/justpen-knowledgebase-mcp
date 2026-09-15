@@ -79,3 +79,29 @@ class ServerConfig(BaseModel):
         if overrides:
             values.update({key: value for key, value in overrides.items() if value is not None})
         return cls.model_validate(values)
+
+
+class WorkspacePolicy(BaseModel):
+    """Versioned workspace settings, persisted once; never process overrides."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    format_version: Literal[1] = 1
+    wal_low_bytes: int = Field(default=64 * 1024**2, gt=0)
+    wal_high_bytes: int = Field(default=256 * 1024**2, gt=0)
+    wal_autocheckpoint: int = Field(default=1000, ge=0)
+    journal_size_limit: int = Field(default=64 * 1024**2, ge=0)
+    completed_retention_seconds: int = Field(default=7 * 86400, gt=0)
+    completed_retention_count: int = Field(default=100000, gt=0)
+    failed_cancelled_retention_seconds: int = Field(default=30 * 86400, gt=0)
+    failed_cancelled_retention_count: int = Field(default=10000, gt=0)
+    disk_reserve_bytes: int = Field(default=2 * 256 * 1024**2 + 1024**3, gt=0)
+    disk_check_interval_bytes: int = Field(default=8 * 1024**2, gt=0)
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> Self:
+        """Reject incompatible policy before opening product admission."""
+        if self.wal_low_bytes >= self.wal_high_bytes:
+            raise ValueError("low must be less than high")
+        if self.disk_reserve_bytes != 2 * self.wal_high_bytes + 1024**3:
+            raise ValueError("disk reserve must equal twice WAL high plus 1GiB")
+        return self

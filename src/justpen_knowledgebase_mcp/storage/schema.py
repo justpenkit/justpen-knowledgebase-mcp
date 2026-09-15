@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from ..catalog import CATALOG_FINGERPRINT, CATALOG_VERSION
+from ..config import WorkspacePolicy
 from ..errors import ConfigurationError
 
 if TYPE_CHECKING:
@@ -137,6 +140,19 @@ class SchemaGuard:
         if row != expected:
             raise ConfigurationError("database contract or managed paths differ")
 
+    def policy(self, connection: apsw.Connection) -> WorkspacePolicy:
+        """Validate the complete persisted policy; malformed state is configuration."""
+        value = connection.execute("SELECT policy FROM settings WHERE singleton=1").get
+        try:
+            parsed = json.loads(value)
+            if not isinstance(parsed, dict) or set(cast("dict[str, object]", parsed)) != set(
+                WorkspacePolicy.model_fields
+            ):
+                raise ConfigurationError("unsupported workspace policy")
+            return WorkspacePolicy.model_validate(parsed)
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise ConfigurationError("unsupported workspace policy") from exc
+
     def initialize(self, connection: apsw.Connection) -> None:
         """Serialize initialization under SQLite's write lock and roll back failed DDL."""
         connection.execute("BEGIN IMMEDIATE")
@@ -146,7 +162,7 @@ class SchemaGuard:
                 connection.execute(DDL + _property_ddl("node") + _property_ddl("relation"))
                 connection.execute(
                     "INSERT INTO settings(singleton,workspace_id,schema_version,catalog_version,"
-                    "catalog_fingerprint,index_format_version,managed_paths) VALUES(1,?,?,?,?,?,?)",
+                    "catalog_fingerprint,index_format_version,managed_paths,policy,terminal_job_counts) VALUES(1,?,?,?,?,?,?,?,?)",
                     (
                         str(uuid4()),
                         SCHEMA_VERSION,
@@ -154,9 +170,12 @@ class SchemaGuard:
                         CATALOG_FINGERPRINT,
                         INDEX_FORMAT_VERSION,
                         self.paths,
+                        WorkspacePolicy().model_dump_json(),
+                        '{"completed":0,"failed_cancelled":0}',
                     ),
                 )
             self.check(connection)
+            self.policy(connection)
             connection.execute("COMMIT")
         except BaseException:
             if not connection.get_autocommit():

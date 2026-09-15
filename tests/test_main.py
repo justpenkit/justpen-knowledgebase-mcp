@@ -231,30 +231,30 @@ from types import SimpleNamespace
 import threading
 closing_lock=threading.Lock()
 live_count=0
-class SlowCloseConnection(__import__('apsw').Connection):
-    def close(self, *args, **kwargs):
-        global live_count
-        with closing_lock:
-            live_count-=1
-            last=live_count==0
-        if last:
-            print('closing',flush=True)
-            time.sleep(60)
-        return super().close(*args, **kwargs)
-# All native connections retain production VFS/configuration; only last-close
-# timing is delayed to model a slow checkpoint/fsync deterministically.
-def connect(self):
+from justpen_knowledgebase_mcp.storage.connection import ManagedConnection
+native_init=ManagedConnection.__init__
+native_close=ManagedConnection.close_native
+def initialize(self, factory, *, reader=False):
     global live_count
-    connection=SlowCloseConnection(str(self.workspace.db),vfs=self.vfs.name)
-    self._configure(connection)
+    native_init(self, factory, reader=reader)
     with closing_lock:
         live_count+=1
         if live_count==1:
-            connection.execute("insert into nodes(uuid,type,key,properties) values ('committed','ip','a','{}')")
-        if live_count==3 and sys.argv[2]!='signal':
+            self.execute("insert into nodes(uuid,type,key,properties) values ('committed','ip','a','{}')")
+        if live_count==4 and sys.argv[2]!='signal':
             print('ready',flush=True)
-    return connection
-SQLiteRuntime.connect=connect
+def close_native(self, *, force=False):
+    global live_count
+    with closing_lock:
+        live_count-=1
+        last=live_count==0
+    if last:
+        print('closing',flush=True)
+        time.sleep(60)
+    return native_close(self,force=force)
+# Keep the actual factory/gate and owner-thread lifetime; delay only native close.
+ManagedConnection.__init__=initialize
+ManagedConnection.close_native=close_native
 config=ServerConfig(workspace_dir=__import__('pathlib').Path(sys.argv[1]),log_level='ERROR')
 import justpen_knowledgebase_mcp.shutdown as shutdown
 shutdown.SHUTDOWN_GRACE_SECONDS=.05
