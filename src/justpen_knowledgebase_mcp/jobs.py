@@ -30,6 +30,7 @@ from .errors import (
 from .evidence import INLINE_LIMIT, IngestRequest, ReadEvidenceRequest
 from .models import ClosedModel, DeleteRequest, RecordID, RetentionPolicyView, RetentionStatus
 from .mutations import canonical_json
+from .reindex import index_evidence, reindex_step
 from .storage.evidence import EvidenceStore, StagedEvidence, job_bucket, stage_name
 from .storage.evidence_records import EvidenceRecords
 from .storage.graph import require_ready, row_by_id
@@ -190,6 +191,11 @@ class JobRunner:
                 with contextlib.suppress(Exception):
                     await _settle(future)
             raise
+
+    async def close_io_owner(self, lane: str, callback: Callable[[], None]) -> None:
+        """Close an existing native I/O owner on its lane even during shutdown."""
+        future = asyncio.get_running_loop().run_in_executor(self._executors[lane], callback)
+        await _settle(future)
 
     async def ingest(self, request: IngestRequest, deadline: float) -> dict[str, Any]:
         """Stage bounded input, accept durably, then await only the caller's deadline."""
@@ -367,7 +373,7 @@ class JobRunner:
         previous = "cleanup"
         while not self._stopping:
             classes = (
-                ["ingest"]
+                (["ingest", "reindex"] if previous != "ingest" else ["reindex", "ingest"])
                 if lane == "bulk"
                 else (["ingest", "cleanup"] if previous == "cleanup" else ["cleanup", "ingest"])
             )
@@ -390,7 +396,7 @@ class JobRunner:
     async def _category_step(self, lane: str, category: str) -> bool:
         if category == "cleanup":
             return await self._cleanup_step()
-        claim = await self.workers.control(lambda c, _t: JobStore.claim(c, lane, "ingest"))
+        claim = await self.workers.control(lambda c, _t: JobStore.claim(c, lane, category))
         if claim is None:
             return False
         await self._run_claim(claim)
@@ -507,6 +513,8 @@ class JobRunner:
             claim.check()
             if claim.kind == "ingest":
                 await self._ingest_step(claim)
+            elif claim.kind == "reindex":
+                await reindex_step(self, claim)
             else:
                 await self._delete_step(claim)
         except (McpError, OSError) as exc:
@@ -543,6 +551,11 @@ class JobRunner:
 
     async def _ingest_step(self, claim: Claim) -> None:
         options = claim.payload
+        if claim.progress.get("awaiting_text_index"):
+            result = await index_evidence(self, claim, claim.progress["evidence_id"])
+            result["warnings"] = [*claim.result.get("warnings", []), *result.get("warnings", [])]
+            await self.workers.write(lambda c, _t: JobStore.finish(c, claim, "completed", {**claim.result, **result}))
+            return
         verified = None
         if "verified_sha256" in claim.progress:
             verified = await self.io(
@@ -629,12 +642,18 @@ class JobRunner:
             await self.io(claim.lane, lambda: self.store.discard_stage(claim.job_id, claim.token))
             state = "cancelled" if claim.cancelled or str(error) == "JOB_CANCELLED" else "failed"
             result: dict[str, Any] = {
+                **claim.result,
+                **(
+                    {"index_state": "index_failed", "incomplete": True}
+                    if claim.progress.get("awaiting_text_index")
+                    else {}
+                ),
                 "error": error.error_type if isinstance(error, McpError) else "IO_ERROR",
                 "reason": str(error) if isinstance(error, McpError) else "managed I/O failed",
             }
             if isinstance(error, RecordConflictError):
                 result["details"] = error.details.model_dump(mode="json")
-            await self.workers.control(lambda c, _t: JobStore.finish(c, claim, state, result))
+            await self.workers.control(lambda c, _t: JobStore.finish_failure(c, claim, state, result))
         except (McpError, OSError):
             self._failure_cache("IO_ERROR: job failure could not be committed")
 

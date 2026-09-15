@@ -7,11 +7,14 @@ import time
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
-from .errors import InvalidParamsError
+from .errors import InvalidParamsError, LimitError
 from .evidence import IngestRequest, ReadEvidenceRequest
 from .jobs import JobRunner, JobsRequest
 from .models import DeleteRequest, NeighborsRequest, SearchRequest
+from .reindex import ReindexRequest, admit_reindex
+from .responses import bounded_response
 from .shutdown import ShutdownObserver
 from .storage.connection import SQLiteRuntime
 from .storage.graph import Graph, graph_types
@@ -48,6 +51,19 @@ class KnowledgeBase:
             raise InvalidParamsError("invalid evidence source") from exc
         OperationToken(deadline).check()
         return await self.job_runner.ingest(validated, deadline)
+
+    async def reindex(self, request: ReindexRequest | dict[str, Any]) -> dict[str, Any]:
+        """Accept a fenced rebuild using the existing durable job runner."""
+        deadline = time.monotonic() + self.config.query_timeout_ms / 1000
+        try:
+            validated = ReindexRequest.model_validate(request)
+        except ValueError as exc:
+            raise InvalidParamsError("invalid reindex request") from exc
+        result = await self.workers.write(
+            lambda c, _t: admit_reindex(c, validated, str(uuid4())), OperationToken(deadline)
+        )
+        self.job_runner.wake(result["lane"])
+        return bounded_response(result)
 
     async def read_evidence(self, request: ReadEvidenceRequest | dict[str, Any]) -> dict[str, Any]:
         """Return a bounded exact byte range from ready owned evidence."""
@@ -89,12 +105,18 @@ class KnowledgeBase:
         return await self.workers.read(lambda connection, token: neighbors(connection, token, validated))
 
     async def search(self, request: SearchRequest | dict[str, Any]) -> dict[str, Any]:
-        """Select exact graph records in one guarded bounded snapshot."""
+        """Select records with exact filters and verified text in one bounded snapshot."""
+        deadline = time.monotonic() + self.config.query_timeout_ms / 1000
         try:
             validated = SearchRequest.model_validate(request)
         except ValueError as exc:
             raise InvalidParamsError("invalid search request") from exc
-        return await self.workers.read(lambda connection, token: search(connection, token, validated))
+        try:
+            return await self.workers.read(
+                lambda connection, token: search(connection, token, validated), OperationToken(deadline)
+            )
+        except LimitError as exc:
+            raise LimitError("search incomplete: operation budget exceeded") from exc
 
     async def types(self, request: TypesRequest) -> dict[str, Any]:
         """Discover controlled types with ready-only snapshot counts."""

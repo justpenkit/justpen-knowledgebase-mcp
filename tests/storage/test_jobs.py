@@ -129,20 +129,20 @@ async def test_inline_failure_retains_input_then_retry_and_counter_equivalence(k
     assert counts == {"completed": 1, "failed_cancelled": 0}
 
 
-async def test_text_storage_is_durable_queued_handoff_not_completed(tmp_path):
+async def test_text_storage_waits_for_same_durable_job_index_completion(tmp_path):
 
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=200)) as service:
-        result = await service.ingest_evidence({"text": "raw awaits Task7", "media_type": "application/x-yaml"})
-        assert result["status"] == "accepted"
-        assert result["state"] == "queued"
-        assert result["index_state"] == "pending"
-        assert result["incomplete"] is True
+        result = await service.ingest_evidence({"text": "raw is searchable", "media_type": "application/x-yaml"})
+        assert result["status"] == "completed"
+        assert result["state"] == "completed"
+        assert result["index_state"] == "ready"
+        assert result["incomplete"] is False
         assert result["effective_media_type"] == "application/x-yaml"
-        assert (await service.read_evidence({"evidence_id": result["evidence_id"]}))["content"] == "raw awaits Task7"
+        assert (await service.read_evidence({"evidence_id": result["evidence_id"]}))["content"] == "raw is searchable"
         count = await service.workers.read(
             lambda c, t: c.execute("select attempts from jobs where uuid=?", (result["job_id"],)).get
         )
-        assert count == 1
+        assert count == 2
 
 
 async def test_ready_read_and_pending_delete_do_not_deadlock_short_lane(kb, monkeypatch):
@@ -324,7 +324,8 @@ async def test_bulk_barrier_allows_short_ingest_and_batched_cleanup_fairness(kb,
     assert large["status"] == "accepted"
     assert await asyncio.to_thread(entered.wait, 2)
     evidence_result = await kb.ingest_evidence({"base64": "AA=="})
-    small = await kb.ingest_evidence({"path": "small.bin"})
+    small = await kb.ingest_evidence({"path": "small.bin", "media_type": "text/plain"})
+    assert small["index_state"] == "ready"
     assert small["state"] == "completed"
     graph = await kb.write(
         WriteRequest.model_validate(

@@ -76,7 +76,7 @@ class EvidenceRecords:
         connection.execute(
             "UPDATE jobs SET progress=json_remove(progress,'$.stage_token') WHERE uuid=?", (claim.job_id,)
         )
-        if existing["index_state"] == "pending":
+        if existing["index_state"] in ("pending", "index_failed"):
             connection.execute("UPDATE jobs SET result=? WHERE uuid=?", (json.dumps(result), claim.job_id))
             JobStore.release(
                 connection,

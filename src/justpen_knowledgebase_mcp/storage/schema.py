@@ -38,6 +38,7 @@ CREATE TABLE jobs (
  lane TEXT NOT NULL DEFAULT 'short', finished_at REAL, result TEXT NOT NULL DEFAULT '{}',
  attempts INTEGER NOT NULL DEFAULT 0, purge_tokens TEXT NOT NULL DEFAULT '[]', purge_pending INTEGER NOT NULL DEFAULT 0 CHECK(purge_pending IN (0,1))
 );
+CREATE UNIQUE INDEX jobs_active_full ON jobs((1)) WHERE kind='reindex' AND json_extract(payload,'$.all')=1 AND state IN ('queued','running');
 CREATE INDEX jobs_claim ON jobs(lane,state,lease_expires_at,id);
 CREATE INDEX jobs_terminal ON jobs(state,finished_at,id);
 CREATE INDEX jobs_purge ON jobs(id) WHERE purge_pending=1;
@@ -105,13 +106,13 @@ CREATE TABLE search_documents (
  id INTEGER PRIMARY KEY AUTOINCREMENT, node_id INTEGER REFERENCES nodes(id), relation_id INTEGER REFERENCES relations(id),
  evidence_id INTEGER REFERENCES evidence(id), pointer TEXT, label TEXT, text TEXT NOT NULL,
  byte_start INTEGER, byte_end INTEGER, line_start INTEGER, line_end INTEGER,
- overlap_owner INTEGER, index_generation INTEGER,
+ overlap_owner INTEGER, index_generation INTEGER, encoding TEXT, previous_cr INTEGER DEFAULT 0,
  CHECK((node_id IS NOT NULL)+(relation_id IS NOT NULL)+(evidence_id IS NOT NULL)=1)
 );
 CREATE INDEX search_documents_node ON search_documents(node_id,id);
 CREATE INDEX search_documents_relation ON search_documents(relation_id,id);
 CREATE INDEX search_documents_evidence ON search_documents(evidence_id,id);
-CREATE VIRTUAL TABLE search_fts USING fts5(text,content='search_documents',content_rowid='id');
+CREATE VIRTUAL TABLE search_fts USING fts5(text,content='search_documents',content_rowid='id',tokenize='unicode61');
 CREATE TRIGGER search_insert AFTER INSERT ON search_documents BEGIN
  INSERT INTO search_fts(rowid,text) VALUES(new.id,new.text);
 END;

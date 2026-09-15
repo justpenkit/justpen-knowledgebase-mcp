@@ -33,12 +33,12 @@ async def test_search_partial_index_and_refresh(tmp_path):
         )
         identifier = result["nodes"][0]["id"]
         indexed = await kb.search(SearchRequest(kind="nodes", properties={"path": "/status", "op": "eq", "value": 403}))
-        assert [item["id"] for item in indexed["results"]] == [identifier]
+        assert [item["id"] for item in indexed["items"]] == [identifier]
         assert indexed["canonical_scan_count"] == 0
         fallback = await kb.search(
             SearchRequest(kind="nodes", properties={"path": "/ports/599", "op": "eq", "value": 599})
         )
-        assert [item["id"] for item in fallback["results"]] == [identifier]
+        assert [item["id"] for item in fallback["items"]] == [identifier]
         assert fallback["canonical_scan_count"] == 1
         record = (await kb.get(GetRequest(kind="nodes", ids=[identifier])))["records"][0]
         assert len(record["properties"]["ports"]) == 600
@@ -46,7 +46,7 @@ async def test_search_partial_index_and_refresh(tmp_path):
         await kb.write(WriteRequest.model_validate({"nodes": [{"id": identifier, "remove_properties": ["/status"]}]}))
         assert not (
             await kb.search(SearchRequest(kind="nodes", properties={"path": "/status", "op": "exists", "value": True}))
-        )["results"]
+        )["items"]
 
 
 async def test_sql_matches_canonical_oracle_matrix(tmp_path):
@@ -113,7 +113,7 @@ async def test_sql_matches_canonical_oracle_matrix(tmp_path):
                 identifier for identifier, document in zip(ids, documents, strict=True) if evaluate(document, predicate)
             ]
             actual = await kb.search(SearchRequest(kind="nodes", properties=predicate))
-            assert [item["id"] for item in actual["results"]] == expected, predicate
+            assert [item["id"] for item in actual["items"]] == expected, predicate
 
 
 async def test_storage_classes_sentinels_and_negative_affinity(tmp_path):
@@ -164,10 +164,10 @@ async def test_cursor_write_stability_and_filter_binding(tmp_path):
         await kb.write(
             WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"name": "d.example"}}]})
         )
-        second = await kb.search(SearchRequest(kind="nodes", cursor=first["next_cursor"]))
-        assert len(second["results"]) == 3
+        second = await kb.search(SearchRequest(kind="nodes", cursor=first["cursor"]))
+        assert len(second["items"]) == 3
         with pytest.raises(InvalidParamsError):
-            await kb.search(SearchRequest(kind="nodes", type="domain", cursor=first["next_cursor"]))
+            await kb.search(SearchRequest(kind="nodes", type="domain", cursor=first["cursor"]))
 
 
 async def test_type_counts_use_type_index(tmp_path):
@@ -198,7 +198,7 @@ async def test_numeric_sql_precision_and_no_canonical_read_short_circuit(tmp_pat
         for operand in [True, 1, 1.0, 2**53 + 1, float(2**53), None, "1", 0]:
             predicate = {"path": "/value", "op": "eq", "value": operand}
             result = await kb.search(SearchRequest(kind="nodes", properties=predicate))
-            assert [item["id"] for item in result["results"]] == [
+            assert [item["id"] for item in result["items"]] == [
                 identifier for identifier, document in zip(ids, documents, strict=True) if evaluate(document, predicate)
             ]
             assert result["canonical_scan_count"] == 0
@@ -222,7 +222,7 @@ async def test_numeric_sql_precision_and_no_canonical_read_short_circuit(tmp_pat
 
 async def test_service_raw_mapping_presence_validation(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
-        assert (await kb.search({"kind": "nodes"}))["results"] == []
+        assert (await kb.search({"kind": "nodes"}))["items"] == []
         with pytest.raises(InvalidParamsError):
             await kb.search({"kind": "nodes", "source_id": None})
 
@@ -283,7 +283,7 @@ async def test_partial_materialized_predicate_does_not_read_canonical_body(tmp_p
             return result, queries
 
         result, queries = await kb.workers.read(run)
-        assert len(result["results"]) == 1
+        assert len(result["items"]) == 1
         assert not any("SELECT properties" in query for query in queries)
 
 
@@ -296,11 +296,11 @@ async def test_canonical_depth16_exists_depth17_is_missing(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         await kb.write(WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": properties}]}))
         present = await kb.search(SearchRequest(kind="nodes", properties={"path": path, "op": "eq", "value": 42}))
-        assert len(present["results"]) == 1
+        assert len(present["items"]) == 1
         missing = await kb.search(
             SearchRequest(kind="nodes", properties={"path": path + "/child", "op": "exists", "value": False})
         )
-        assert len(missing["results"]) == 1
+        assert len(missing["items"]) == 1
         assert missing["canonical_scan_count"] == 0
 
 
@@ -361,7 +361,7 @@ async def test_relation_properties_refresh_and_builtin_filters(tmp_path):
                 properties={"path": "/status", "op": "eq", "value": 403},
             )
         )
-        assert [item["id"] for item in result["results"]] == [identifier]
+        assert [item["id"] for item in result["items"]] == [identifier]
         assert result["canonical_scan_count"] == 0
         await kb.write(
             WriteRequest.model_validate({"relations": [{"id": identifier, "remove_properties": ["/status"]}]})
@@ -370,7 +370,7 @@ async def test_relation_properties_refresh_and_builtin_filters(tmp_path):
             await kb.search(
                 SearchRequest(kind="relations", properties={"path": "/status", "op": "exists", "value": True})
             )
-        )["results"]
+        )["items"]
 
 
 async def test_maximum_accepted_ast_executes_with_exact_result(tmp_path):
@@ -383,7 +383,7 @@ async def test_maximum_accepted_ast_executes_with_exact_result(tmp_path):
             )
         )
         result = await kb.search(SearchRequest(kind="nodes", properties=predicate))
-        assert [item["id"] for item in result["results"]] == [
+        assert [item["id"] for item in result["items"]] == [
             item["id"]
             for item, document in zip(written["nodes"], documents, strict=True)
             if evaluate(document, predicate)
@@ -399,6 +399,6 @@ async def test_empty_cursor_is_invalid_while_omitted_or_null_starts_first_page(t
         expected_ids = [written["nodes"][0]["id"]]
         for request in ({"kind": "nodes"}, {"kind": "nodes", "cursor": None}):
             result = await kb.search(request)
-            assert [item["id"] for item in result["results"]] == expected_ids
+            assert [item["id"] for item in result["items"]] == expected_ids
         with pytest.raises(InvalidParamsError):
             await kb.search({"kind": "nodes", "cursor": ""})

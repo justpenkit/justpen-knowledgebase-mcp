@@ -247,9 +247,19 @@ GetResult = RecordViewResult | LinksViewResult | SourcesViewResult
 
 
 class SearchRequest(ClosedModel):
-    """Exact graph selection in stable ID order; text arrives separately."""
+    """Closed record/evidence selection with bounded text queries."""
 
-    kind: GraphKind
+    kind: Kind
+    query: str | None = None
+    query_mode: Literal["literal", "words"] = "literal"
+    include_evidence: bool = True
+    sort: Literal["id", "relevance"] = "id"
+    media_type: MediaType | None = None
+    index_state: Literal["pending", "ready", "not_applicable", "index_failed"] | None = None
+    byte_size_min: Annotated[int, Field(ge=0)] | None = None
+    byte_size_max: Annotated[int, Field(ge=0)] | None = None
+    created_at_min: str | None = None
+    created_at_max: str | None = None
     type: str | None = None
     key: str | None = None
     source: str | None = None
@@ -266,10 +276,34 @@ class SearchRequest(ClosedModel):
         """Validate predicate complexity and kind-specific explicit fields."""
         if self.kind == "nodes" and self.model_fields_set & {"source_id", "target_id"}:
             raise ValueError("endpoint filters require relations")
+        evidence_fields = {
+            "media_type",
+            "index_state",
+            "byte_size_min",
+            "byte_size_max",
+            "created_at_min",
+            "created_at_max",
+        }
+        graph_fields = {
+            "type",
+            "key",
+            "properties",
+            "observed_at_min",
+            "observed_at_max",
+            "source_id",
+            "target_id",
+            "include_evidence",
+        }
+        if self.model_fields_set & (graph_fields if self.kind == "evidence" else evidence_fields):
+            raise ValueError("field does not apply to search kind")
+        if self.sort == "relevance" and (self.query is None or self.cursor is not None):
+            raise ValueError("relevance needs query and does not accept cursor")
+        if self.query is not None and len(self.query.encode("utf-8")) > 2048:
+            raise ValueError("query byte limit")
         for identifier in (self.source_id, self.target_id):
             if identifier is not None:
                 UUID(identifier)
-        for timestamp in (self.observed_at_min, self.observed_at_max):
+        for timestamp in (self.observed_at_min, self.observed_at_max, self.created_at_min, self.created_at_max):
             if timestamp is not None:
                 parse_timestamp(timestamp)
         if self.properties is not None:
@@ -297,26 +331,64 @@ class NeighborsRequest(ClosedModel):
         return self
 
 
-class SearchSummary(ClosedModel):
-    """A bounded graph record summary, without canonical properties."""
+class SourceRange(ClosedModel):
+    """Raw evidence bytes, or UTF-8 bytes within one canonical record string."""
 
-    id: RecordID
-    type: str
-    key: str
+    byte_start: Annotated[int, Field(ge=0)]
+    byte_end: Annotated[int, Field(ge=0)]
+    line_start: Annotated[int, Field(ge=1)]
+    line_end: Annotated[int, Field(ge=1)]
+
+
+class MatchReference(SourceRange):
+    """Exact source bounds, separate from the deliberately short snippet."""
+
+    kind: Kind
+    id: RecordID | EvidenceID
+    pointer: str | None = None
+
+
+class SearchSummary(ClosedModel):
+    """One bounded summary and one winning match unit."""
+
+    id: RecordID | EvidenceID
+    type: str | None = None
+    key: str | None = None
     source: str | None = None
     label: str | None = None
     property_index: PropertyIndexCoverage | None = None
+    media_type: MediaType | None = None
+    index_state: Literal["pending", "ready", "not_applicable", "index_failed"] | None = None
+    byte_size: Annotated[int, Field(ge=0)] | None = None
+    score: float | None = None
+    query_mode: Literal["literal", "words"] | None = None
+    snippet: str | None = None
+    snippet_range: SourceRange | None = Field(default=None, description="Snippet bounds in the source of matches[0].")
+    snippet_truncated: bool = False
+    matches: list[MatchReference] = Field(default_factory=list[MatchReference], max_length=32)
+    matches_truncated: bool = False
+
+
+class IndexCoverage(ClosedModel):
+    """Current workspace evidence coverage, distinct from full-job pass coverage."""
+
+    ready: Annotated[int, Field(ge=0)] = 0
+    pending: Annotated[int, Field(ge=0)] = 0
+    failed: Annotated[int, Field(ge=0)] = 0
+    incomplete: Annotated[int, Field(ge=0)] = 0
+    not_applicable: Annotated[int, Field(ge=0)] = 0
 
 
 class SearchResult(ClosedModel):
-    """Exact graph search completion and canonical evaluation accounting."""
+    """Bounded search completion and canonical evaluation accounting."""
 
-    results: list[SearchSummary] = Field(max_length=100)
-    next_cursor: str | None
+    items: list[SearchSummary] = Field(max_length=100)
+    cursor: str | None
     has_more: bool
     property_filter_mode: Literal["index_only", "canonical_fallback"]
     canonical_scan_count: Annotated[int, Field(ge=0)]
     incomplete: bool
+    coverage: IndexCoverage
 
 
 class NeighborNode(ClosedModel):
@@ -375,6 +447,12 @@ class JobResult(ClosedModel):
     status: Literal["accepted", "completed", "failed", "cancelled"] | None = None
 
     details: BlockerDetails | None = None
+    reused: bool = False
+    coverage_incomplete: bool = False
+    generation_changed_count: Annotated[int, Field(ge=0)] = 0
+    index_busy_count: Annotated[int, Field(ge=0)] = 0
+    sample_ids: list[RecordID | EvidenceID] = Field(default_factory=list[str], max_length=32)
+    sample_truncated: bool = False
 
     @model_validator(mode="after")
     def blocker_presence(self) -> Self:

@@ -107,7 +107,7 @@ class JobStore:
         """Atomically claim queued/expired work using a fresh fencing capability."""
         now = time.time() if now is None else now
         value = connection.execute(
-            "SELECT uuid FROM jobs WHERE lane=? AND kind=? AND purge_pending=0 AND coalesce(json_extract(progress,'$.awaiting_text_index'),0)=0 AND (state='queued' OR (state='running' AND lease_expires_at<=?)) ORDER BY id LIMIT 1",
+            "SELECT uuid FROM jobs WHERE lane=? AND kind=? AND purge_pending=0 AND (state='queued' OR (state='running' AND lease_expires_at<=?)) ORDER BY id LIMIT 1",
             (lane, kind, now),
         ).get
         if value is None:
@@ -182,6 +182,29 @@ class JobStore:
         adjust_terminal_count(connection, state, 1)
 
     @staticmethod
+    def finish_failure(connection: apsw.Connection, claim: Claim, state: str, result: dict[str, Any]) -> None:
+        """Retain the raw evidence identity and current coverage after an indexing failure."""
+        JobStore.fence(connection, claim)
+        merged = {**claim.result, **result}
+        evidence_id = claim.progress.get("evidence_id")
+        if (
+            claim.kind == "reindex"
+            and claim.payload.get("kind") == "evidence"
+            and len(claim.payload.get("ids", [])) == 1
+        ):
+            evidence_id = claim.payload["ids"][0]
+        if evidence_id is not None:
+            merged["evidence_id"] = evidence_id
+            row = row_by_id(connection, "evidence", evidence_id)
+            if row is not None:
+                merged.update(
+                    effective_media_type=row["media_type"],
+                    index_state=row["index_state"],
+                    incomplete=bool(row["incomplete"]),
+                )
+        JobStore.finish(connection, claim, state, merged)
+
+    @staticmethod
     def release(connection: apsw.Connection, claim: Claim, progress: dict[str, Any]) -> None:
         """Commit bounded cleanup and checkpoint while yielding the lane/lease."""
         JobStore.fence(connection, claim)
@@ -240,7 +263,9 @@ class JobStore:
             raise ConflictError("DELETE_ALREADY_COMMITTED")
         if row["purge_pending"]:
             raise ConflictError("JOB_PURGING")
-        if row["state"] == "queued":
+        if row["state"] == "queued" and row["kind"] == "reindex" and json.loads(row["payload"]).get("all"):
+            connection.execute("UPDATE jobs SET cancel_requested=1 WHERE uuid=?", (job_id,))
+        elif row["state"] == "queued":
             connection.execute(
                 "UPDATE jobs SET state='cancelled',cancel_requested=1,finished_at=?,updated_at=? WHERE uuid=?",
                 (time.time(), time.time(), job_id),
@@ -258,6 +283,13 @@ class JobStore:
             raise ConflictError("JOB_PURGING")
         if row["state"] not in ("failed", "cancelled"):
             raise InvalidParamsError("only failed or cancelled jobs can retry")
+        if row["kind"] == "reindex" and json.loads(row["payload"]).get("all"):
+            if connection.execute(
+                "SELECT 1 FROM jobs WHERE kind='reindex' AND json_extract(payload,'$.all')=1 AND state IN ('queued','running')"
+            ).get:
+                raise ConflictError("FULL_REINDEX_ACTIVE")
+            connection.execute("UPDATE settings SET query_epoch=query_epoch+1 WHERE singleton=1")
+            connection.execute("UPDATE jobs SET progress='{}',result='{}' WHERE uuid=?", (job_id,))
         adjust_terminal_count(connection, row["state"], -1)
         connection.execute(
             "UPDATE jobs SET state='queued',result=json_remove(result,'$.error','$.reason','$.details'),cancel_requested=0,finished_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=? WHERE uuid=?",

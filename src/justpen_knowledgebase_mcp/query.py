@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
 
+if TYPE_CHECKING:
+    import apsw
+
+from .errors import InvalidParamsError
 from .indexing import Projection, value_type
 from .mutations import pointer_tokens, validate_properties
 from .storage.graph_sql import PROPERTY_SELECT
+from .text import tokenize, tokens
 
 MISSING = object()
 
@@ -234,3 +240,32 @@ def compile_filter(expression: dict[str, Any], kind: str) -> tuple[str, list[Any
     validate_filter(expression)
     compiler = _Compiler(kind)
     return compiler.compile_node(expression), compiler.parameters
+
+
+@dataclass(frozen=True)
+class TextQuery:
+    """A bounded literal query and safe FTS candidate expressions."""
+
+    original: str
+    mode: str
+    tokens: tuple[str, ...]
+    expressions: tuple[str, ...]
+    token_start: int
+    token_end: int
+
+
+def compile_text_query(query: str, mode: str = "literal", *, tokenizer: apsw.FTS5Tokenizer | None = None) -> TextQuery:
+    """Treat all user operators/quotes as data, never as FTS query syntax."""
+    if mode not in ("literal", "words") or len(query.encode("utf-8")) > 2048:
+        raise InvalidParamsError("invalid text query budget or mode")
+    offsets = tokenize(query) if tokenizer is None else tokens(tokenizer, query.encode("utf-8"))
+    if not offsets:
+        raise InvalidParamsError("text query requires tokens")
+    terms = tuple(item[2] for item in offsets)
+    if mode == "words":
+        terms = tuple(dict.fromkeys(terms))
+    if len(terms) > 32:
+        raise InvalidParamsError("text query token limit")
+    quoted = tuple('"' + term.replace('"', '""') + '"' for term in terms)
+    expressions = ('"' + " ".join(terms).replace('"', '""') + '"',) if mode == "literal" else quoted
+    return TextQuery(query, mode, terms, expressions, offsets[0][0], offsets[-1][1])

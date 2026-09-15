@@ -17,6 +17,7 @@ from ..models import GetRequest, Mutation, NodeRef, RelationWrite, WriteRequest,
 from ..mutations import canonical_json, merge_properties
 from ..responses import BlockerDetails
 from . import graph_sql as sql
+from .fulltext import refresh_record_text
 from .properties import refresh_properties
 
 if TYPE_CHECKING:
@@ -242,6 +243,7 @@ def _persist(
         if row is None:
             raise NotFoundError("record disappeared")
     refresh_properties(connection, kind, row, properties)
+    refresh_record_text(connection, kind, row)
     return row, created
 
 
