@@ -9,6 +9,7 @@ import select
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 import justpen_knowledgebase_mcp.__main__ as main_mod
+import justpen_knowledgebase_mcp.service as service_mod
+import justpen_knowledgebase_mcp.shutdown as shutdown_mod
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -166,31 +169,58 @@ entrypoint.cli()
     assert "Task exception was never retrieved" not in result.stderr
 
 
-async def test_shutdown_timeout_logs_and_keeps_waiting_for_cleanup(monkeypatch, caplog):
+@pytest.mark.integration
+@pytest.mark.parametrize("trigger", ["signal", "server-return", "startup-failure"])
+async def test_shutdown_timeout_logs_and_keeps_waiting_for_cleanup(monkeypatch, caplog, tmp_path, trigger):
     handlers = capture_signals(monkeypatch)
     release = asyncio.Event()
+    closing = asyncio.Event()
+    config = main_mod.ServerConfig(workspace_dir=tmp_path)
+    original_close = service_mod.DatabaseWorkers.close
 
-    async def running_server():
-        try:
-            handlers[signal.SIGTERM]()
-            await asyncio.Event().wait()
-        finally:
-            await release.wait()
+    async def slow_close(workers):
+        closing.set()
+        await release.wait()
+        await original_close(workers)
 
-    monkeypatch.setattr(main_mod, "create_app", lambda config, **kwargs: SimpleNamespace(run_async=running_server))
-    monkeypatch.setattr(main_mod, "SHUTDOWN_GRACE_SECONDS", 0.01)
-    task = asyncio.create_task(main_mod.main())
+    async def running_server(observer):
+        async with service_mod.KnowledgeBase.open(config, _shutdown_observer=observer):
+            if trigger == "signal":
+                handlers[signal.SIGTERM]()
+                await asyncio.Event().wait()
+
+    if trigger == "startup-failure":
+
+        def fail_reader(factory):
+            raise RuntimeError("reader startup failed")
+
+        monkeypatch.setattr(service_mod.SQLiteRuntime, "open_reader", fail_reader)
+    monkeypatch.setattr(service_mod.DatabaseWorkers, "close", slow_close)
+    monkeypatch.setattr(
+        main_mod,
+        "create_app",
+        lambda config, **kwargs: SimpleNamespace(run_async=lambda: running_server(kwargs["_shutdown_observer"])),
+    )
+    monkeypatch.setattr(shutdown_mod, "SHUTDOWN_GRACE_SECONDS", 0.01)
+    task = asyncio.create_task(main_mod.main(config))
     try:
+        await asyncio.wait_for(closing.wait(), timeout=5)
         await asyncio.sleep(0.04)
-        assert "shutdown_timeout" in caplog.text
+        assert caplog.text.count("shutdown_timeout") == 1
         assert not task.done()
     finally:
         release.set()
-    await task
+        if trigger == "startup-failure":
+            with pytest.raises(RuntimeError, match="reader startup failed"):
+                await task
+        else:
+            await task
+    assert caplog.text.count("shutdown_timeout") == 1
 
 
 @pytest.mark.integration
-def test_supervisor_hard_stop_recovers_committed_wal(tmp_path):
+@pytest.mark.parametrize("trigger", ["signal", "eof", "idle-stdin-signal"])
+def test_supervisor_hard_stop_recovers_committed_wal(tmp_path, trigger):
     probe = """
 import asyncio, os, signal, sys, time
 from justpen_knowledgebase_mcp import __main__ as entry
@@ -219,32 +249,57 @@ def connect(self):
     self._configure(connection)
     with closing_lock:
         live_count+=1
+        if live_count==1:
+            connection.execute("insert into nodes(uuid,type,key,properties) values ('committed','ip','a','{}')")
+        if live_count==3 and sys.argv[2]!='signal':
+            print('ready',flush=True)
     return connection
 SQLiteRuntime.connect=connect
-config=ServerConfig(workspace_dir=__import__('pathlib').Path(sys.argv[1]))
-async def server():
-    async with KnowledgeBase.open(config) as kb:
-        await kb.workers.write(lambda c,t:c.execute("insert into nodes(uuid,type,key,properties) values ('committed','ip','a','{}')"))
-        print('ready',flush=True)
-        await asyncio.Event().wait()
-entry.create_app=lambda config, **kwargs:SimpleNamespace(run_async=server)
-entry.SHUTDOWN_GRACE_SECONDS=.05
+config=ServerConfig(workspace_dir=__import__('pathlib').Path(sys.argv[1]),log_level='ERROR')
+import justpen_knowledgebase_mcp.shutdown as shutdown
+shutdown.SHUTDOWN_GRACE_SECONDS=.05
+import fastmcp
+fastmcp.settings.show_server_banner=False
+if sys.argv[2]=='signal':
+    # Retain the original controlled signal scenario; EOF below exercises the
+    # actual FastMCP stdio transport, not a stand-in reading stdin.
+    async def server(observer):
+        async with KnowledgeBase.open(config, _shutdown_observer=observer):
+            print('ready',flush=True)
+            await asyncio.Event().wait()
+    entry.create_app=lambda config, **kwargs:SimpleNamespace(run_async=lambda:server(kwargs["_shutdown_observer"]))
 asyncio.run(entry.main(config))
 """
     process = subprocess.Popen(
-        [sys.executable, "-B", "-c", probe, str(tmp_path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        [sys.executable, "-B", "-c", probe, str(tmp_path), trigger],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
     try:
         assert process.stdout is not None
         assert select.select([process.stdout], [], [], 10)[0]
         assert process.stdout.readline().strip() == "ready"
-        process.send_signal(signal.SIGTERM)
-        assert select.select([process.stdout], [], [], 10)[0]
-        assert process.stdout.readline().strip() == "closing"
+        if trigger != "eof":
+            process.send_signal(signal.SIGTERM)
+        else:
+            assert process.stdin is not None
+            process.stdin.close()
+            process.stdin = None
+        if trigger != "idle-stdin-signal":
+            assert select.select([process.stdout], [], [], 10)[0]
+            assert process.stdout.readline().strip() == "closing"
         assert process.stderr is not None
         # The timeout line arrives while native owner cleanup is still pending.
-        assert select.select([process.stderr], [], [], 10)[0]
-        assert "shutdown_timeout" in process.stderr.readline()
+        stderr_seen = b""
+        deadline = time.monotonic() + 10
+        while b"shutdown_timeout" not in stderr_seen:
+            assert select.select([process.stderr], [], [], max(0, deadline - time.monotonic()))[0], stderr_seen
+            chunk = os.read(process.stderr.fileno(), 4096)
+            assert chunk, stderr_seen
+            stderr_seen += chunk
+        assert stderr_seen.count(b"shutdown_timeout") == 1
         assert process.poll() is None
         process.kill()
         process.communicate(timeout=5)
@@ -272,3 +327,39 @@ asyncio.run(main())
         if process.poll() is None:
             process.kill()
         process.communicate(timeout=5)
+
+
+@pytest.mark.parametrize("trigger", ["signal", "main-cancel"])
+async def test_signal_timeout_before_lifespan_cleanup_logs_once(monkeypatch, caplog, trigger):
+    handlers = capture_signals(monkeypatch)
+    release = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def server():
+        try:
+            entered.set()
+            if trigger == "signal":
+                handlers[signal.SIGTERM]()
+            await asyncio.Event().wait()
+        finally:
+            # Model a transport teardown still waiting before lifespan unwinds.
+            await release.wait()
+
+    monkeypatch.setattr(main_mod, "create_app", lambda config, **kwargs: SimpleNamespace(run_async=server))
+    monkeypatch.setattr(shutdown_mod, "SHUTDOWN_GRACE_SECONDS", 0.01)
+    task = asyncio.create_task(main_mod.main())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        if trigger == "main-cancel":
+            task.cancel()
+        await asyncio.sleep(0.04)
+        assert caplog.text.count("shutdown_timeout") == 1
+        assert not task.done()
+    finally:
+        release.set()
+        if trigger == "main-cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            await task
+    assert caplog.text.count("shutdown_timeout") == 1

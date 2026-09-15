@@ -7,18 +7,24 @@ from fastmcp import Context, FastMCP
 
 from .config import ServerConfig
 from .service import KnowledgeBase
+from .shutdown import ShutdownObserver
 from .tools import register_all
 from .workspace import WorkspacePaths
 
 
 def create_app(
-    config: ServerConfig, *, runtime_context: Callable[[WorkspacePaths], AbstractContextManager[None]] | None = None
+    config: ServerConfig,
+    *,
+    runtime_context: Callable[[WorkspacePaths], AbstractContextManager[None]] | None = None,
+    _shutdown_observer: ShutdownObserver | None = None,
 ) -> FastMCP:
     """Bind one immutable configuration; resources open only during lifespan."""
 
     @asynccontextmanager
     async def lifespan(_server: FastMCP) -> AsyncGenerator[dict[str, KnowledgeBase]]:
-        async with KnowledgeBase.open(config, runtime_context=runtime_context) as service:
+        async with KnowledgeBase.open(
+            config, runtime_context=runtime_context, _shutdown_observer=_shutdown_observer
+        ) as service:
             yield {"knowledgebase": service}
 
     server = FastMCP("justpen-knowledgebase-mcp", lifespan=lifespan)

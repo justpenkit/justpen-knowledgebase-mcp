@@ -78,20 +78,16 @@ class DatabaseWorkers:
         self._loop: asyncio.AbstractEventLoop | None = None
 
     async def start(self) -> None:
-        """Initialize writer before reader connections, each on its owner thread."""
+        """Initialize owner connections; lifespan must close even on startup failure."""
         self._loop = asyncio.get_running_loop()
-        try:
-            for reader in [False] + [True] * self.factory.config.db_reader_threads:
-                owner = _Owner(reader, self._loop.create_future(), self._loop.create_future())
-                self._owners.append(owner)
-                owner.thread = threading.Thread(
-                    target=self._run, args=(owner,), name="kb-reader" if reader else "kb-writer"
-                )
-                owner.thread.start()
-                await asyncio.shield(owner.ready)
-        except BaseException:
-            await self.close()
-            raise
+        for reader in [False] + [True] * self.factory.config.db_reader_threads:
+            owner = _Owner(reader, self._loop.create_future(), self._loop.create_future())
+            self._owners.append(owner)
+            owner.thread = threading.Thread(
+                target=self._run, args=(owner,), name="kb-reader" if reader else "kb-writer"
+            )
+            owner.thread.start()
+            await asyncio.shield(owner.ready)
 
     async def read(
         self, callback: Callable[[apsw.Connection, OperationToken], T], token: OperationToken | None = None
