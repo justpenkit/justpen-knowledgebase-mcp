@@ -48,5 +48,7 @@ def test_duplicate_members_and_byte_limit():
 
 def test_deeply_nested_cursor_is_invalid_not_an_internal_failure():
     payload = b"[" * 1100 + b"0" + b"]" * 1100
+    cursor = base64.urlsafe_b64encode(payload).decode()
+    assert len(cursor) <= 4096
     with pytest.raises(ValueError):
-        binding().decode(base64.urlsafe_b64encode(payload).decode())
+        binding().decode(cursor)

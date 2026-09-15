@@ -75,7 +75,7 @@ class CursorBinding:
                 base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True),
                 object_pairs_hook=_unique_object,
             )
-        except (ValueError, UnicodeError) as exc:
+        except (ValueError, UnicodeError, RecursionError) as exc:
             raise ValueError("invalid cursor payload") from exc
         expected = self._fields()
         if type(data) is not dict:
