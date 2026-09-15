@@ -56,7 +56,11 @@ CREATE TABLE relations (
  (lifecycle='delete_pending' AND delete_job_id IS NOT NULL AND delete_cascade IS NOT NULL AND delete_cascade IN (0,1) AND typeof(delete_cascade)='integer' AND typeof(delete_requested_at)='integer')),
  UNIQUE(source_id,type,target_id,key)
 );
+CREATE INDEX nodes_type_ready ON nodes(type,lifecycle,id);
+CREATE INDEX relations_type_ready ON relations(type,lifecycle,id);
 CREATE INDEX relations_outgoing ON relations(source_id,type,target_id,id);
+CREATE INDEX relations_outgoing_type_id ON relations(source_id,type,id);
+CREATE INDEX relations_incoming_type_id ON relations(target_id,type,id);
 CREATE INDEX relations_outgoing_id ON relations(source_id,id);
 CREATE INDEX relations_incoming_id ON relations(target_id,id);
 CREATE INDEX relations_incoming ON relations(target_id,type,source_id,id);

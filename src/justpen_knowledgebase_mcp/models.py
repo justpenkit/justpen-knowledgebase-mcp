@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .identity import parse_timestamp
 from .mutations import validate_properties
+from .query import validate_filter
 
 Kind = Literal["nodes", "relations", "evidence"]
 GraphKind = Literal["nodes", "relations"]
@@ -174,6 +175,17 @@ class TypesRequest(ClosedModel):
     cursor: str | None = None
 
 
+class PropertyIndexCoverage(ClosedModel):
+    """Independent path, non-array path, and materialized value coverage."""
+
+    complete: bool
+    paths_complete: bool
+    non_array_complete: bool
+    indexed_paths: Annotated[int, Field(ge=0, le=512)]
+    total_paths: Annotated[int, Field(ge=0)]
+    omitted_values: Annotated[int, Field(ge=0, le=512)]
+
+
 class MutationResult(ClosedModel):
     """Compact mutation acknowledgment, never a duplicate full property payload."""
 
@@ -182,6 +194,7 @@ class MutationResult(ClosedModel):
     updated: bool
     links_added: Annotated[int, Field(ge=0, le=100)]
     links_removed: Annotated[int, Field(ge=0, le=100)]
+    property_index: PropertyIndexCoverage
 
 
 class WriteResult(ClosedModel):
@@ -222,3 +235,100 @@ class SourcesViewResult(ClosedModel):
 
 
 GetResult = RecordViewResult | LinksViewResult | SourcesViewResult
+
+
+class SearchRequest(ClosedModel):
+    """Exact graph selection in stable ID order; text arrives separately."""
+
+    kind: GraphKind
+    type: str | None = None
+    key: str | None = None
+    source: str | None = None
+    source_id: RecordID | None = None
+    target_id: RecordID | None = None
+    observed_at_min: str | None = None
+    observed_at_max: str | None = None
+    properties: dict[str, Any] | None = None
+    limit: Annotated[int, Field(ge=1, le=100)] = 20
+    cursor: str | None = None
+
+    @model_validator(mode="after")
+    def selection_rules(self) -> Self:
+        """Validate predicate complexity and kind-specific explicit fields."""
+        if self.kind == "nodes" and self.model_fields_set & {"source_id", "target_id"}:
+            raise ValueError("endpoint filters require relations")
+        for identifier in (self.source_id, self.target_id):
+            if identifier is not None:
+                UUID(identifier)
+        for timestamp in (self.observed_at_min, self.observed_at_max):
+            if timestamp is not None:
+                parse_timestamp(timestamp)
+        if self.properties is not None:
+            validate_filter(self.properties)
+        return self
+
+
+class NeighborsRequest(ClosedModel):
+    """Bounded breadth-first seeds, depth and output budgets."""
+
+    seed_ids: list[RecordID] = Field(min_length=1, max_length=1000)
+    direction: Literal["in", "out", "both"] = "both"
+    relation_types: list[str] | None = Field(default=None, max_length=100)
+    depth: Annotated[int, Field(ge=0, le=3)] = 1
+    max_nodes: Annotated[int, Field(ge=1, le=1000)] = 100
+    max_edges: Annotated[int, Field(ge=0, le=3000)] = 300
+
+    @model_validator(mode="after")
+    def seed_budget(self) -> Self:
+        """Reject duplicate/oversized seeds before any database work."""
+        if len(self.seed_ids) > self.max_nodes or len(set(self.seed_ids)) != len(self.seed_ids):
+            raise ValueError("seed budget exceeded or duplicate seed")
+        for identifier in self.seed_ids:
+            UUID(identifier)
+        return self
+
+
+class SearchSummary(ClosedModel):
+    """A bounded graph record summary, without canonical properties."""
+
+    id: RecordID
+    type: str
+    key: str
+    source: str | None = None
+    label: str | None = None
+    property_index: PropertyIndexCoverage | None = None
+
+
+class SearchResult(ClosedModel):
+    """Exact graph search completion and canonical evaluation accounting."""
+
+    results: list[SearchSummary] = Field(max_length=100)
+    next_cursor: str | None
+    has_more: bool
+    property_filter_mode: Literal["index_only", "canonical_fallback"]
+    canonical_scan_count: Annotated[int, Field(ge=0)]
+    incomplete: bool
+
+
+class NeighborNode(ClosedModel):
+    """Bounded graph node identity for traversal."""
+
+    id: RecordID
+    type: str
+
+
+class NeighborEdge(NeighborNode):
+    """A directed stored relation, without inferred facts."""
+
+    source_id: RecordID
+    target_id: RecordID
+
+
+class NeighborsResult(ClosedModel):
+    """Bounded traversal and unexpanded frontier."""
+
+    nodes: list[NeighborNode] = Field(max_length=1000)
+    edges: list[NeighborEdge] = Field(max_length=3000)
+    truncated: bool
+    reason: Literal["max_nodes", "max_edges", "deadline", "response_bytes"] | None
+    frontier: list[RecordID] = Field(max_length=1000)

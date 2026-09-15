@@ -111,3 +111,34 @@ EVIDENCE_LINK_COUNT = {
     "node_evidence": "SELECT count(*) FROM node_evidence WHERE evidence_id=?",
     "relation_evidence": "SELECT count(*) FROM relation_evidence WHERE evidence_id=?",
 }
+
+# Trusted compiler slots accept only server-built expressions. Literal caller
+# values never enter these templates: they travel in the parallel bindings list.
+PROPERTY_SELECT = {
+    "nodes": "(SELECT {expression} FROM node_property_index p WHERE p.owner_id=o.id AND {condition})",
+    "relations": "(SELECT {expression} FROM relation_property_index p WHERE p.owner_id=o.id AND {condition})",
+}
+PROPERTY_DELETE = {
+    "nodes": "DELETE FROM node_property_index WHERE owner_id=?",
+    "relations": "DELETE FROM relation_property_index WHERE owner_id=?",
+}
+PROPERTY_INSERT = {
+    "nodes": "INSERT INTO node_property_index(owner_id,path,value_type,value_materialized,value) VALUES(?,?,?,?,?)",
+    "relations": "INSERT INTO relation_property_index(owner_id,path,value_type,value_materialized,value) VALUES(?,?,?,?,?)",
+}
+PROPERTY_BODY = {
+    "nodes": "SELECT properties FROM nodes WHERE id=?",
+    "relations": "SELECT properties FROM relations WHERE id=?",
+}
+SEARCH_CANDIDATE = {
+    "nodes": "SELECT o.id,o.uuid,o.type,o.key,o.metadata,({expression}) FROM nodes o WHERE {conditions} ORDER BY o.id LIMIT 1",
+    "relations": "SELECT o.id,o.uuid,o.type,o.key,o.metadata,({expression}) FROM relations o WHERE {conditions} ORDER BY o.id LIMIT 1",
+}
+READY = {
+    "nodes": "o.lifecycle='ready'",
+    "relations": "o.lifecycle='ready' AND EXISTS(SELECT 1 FROM nodes s WHERE s.id=o.source_id AND s.lifecycle='ready') AND EXISTS(SELECT 1 FROM nodes t WHERE t.id=o.target_id AND t.lifecycle='ready')",
+}
+ADJACENCY = {
+    "source_id": "SELECT o.id,o.uuid,o.type,o.source_id,o.target_id FROM relations o WHERE o.source_id=? AND o.id>? {type_clause} AND {ready} ORDER BY o.id LIMIT 1",
+    "target_id": "SELECT o.id,o.uuid,o.type,o.source_id,o.target_id FROM relations o WHERE o.target_id=? AND o.id>? {type_clause} AND {ready} ORDER BY o.id LIMIT 1",
+}

@@ -7,10 +7,14 @@ from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .errors import InvalidParamsError
+from .models import NeighborsRequest, SearchRequest
 from .shutdown import ShutdownObserver
 from .storage.connection import SQLiteRuntime
 from .storage.graph import Graph, graph_types
 from .storage.maintenance import CheckpointMaintenance
+from .storage.search import search
+from .storage.traversal import neighbors
 from .storage.worker import DatabaseWorkers
 from .workspace import WorkspacePaths
 
@@ -38,6 +42,22 @@ class KnowledgeBase:
     async def get(self, request: GetRequest) -> dict[str, Any]:
         """Read bounded canonical records in one guarded snapshot."""
         return await self.workers.read(lambda connection, token: Graph.get(connection, token, request))
+
+    async def neighbors(self, request: NeighborsRequest | dict[str, Any]) -> dict[str, Any]:
+        """Traverse ready adjacency within explicit output budgets."""
+        try:
+            validated = NeighborsRequest.model_validate(request)
+        except ValueError as exc:
+            raise InvalidParamsError("invalid traversal request") from exc
+        return await self.workers.read(lambda connection, token: neighbors(connection, token, validated))
+
+    async def search(self, request: SearchRequest | dict[str, Any]) -> dict[str, Any]:
+        """Select exact graph records in one guarded bounded snapshot."""
+        try:
+            validated = SearchRequest.model_validate(request)
+        except ValueError as exc:
+            raise InvalidParamsError("invalid search request") from exc
+        return await self.workers.read(lambda connection, token: search(connection, token, validated))
 
     async def types(self, request: TypesRequest) -> dict[str, Any]:
         """Discover controlled types with ready-only snapshot counts."""

@@ -17,6 +17,7 @@ from ..models import GetRequest, Mutation, NodeRef, RelationWrite, WriteRequest,
 from ..mutations import canonical_json, merge_properties
 from ..responses import BlockerDetails
 from . import graph_sql as sql
+from .properties import refresh_properties
 
 if TYPE_CHECKING:
     import apsw
@@ -240,6 +241,7 @@ def _persist(
         row = row_by_id(connection, kind, row["id"])
         if row is None:
             raise NotFoundError("record disappeared")
+    refresh_properties(connection, kind, row, properties)
     return row, created
 
 
@@ -313,6 +315,7 @@ class Graph:
                             "updated": not created,
                             "links_added": added,
                             "links_removed": removed,
+                            "property_index": json.loads(row["metadata"])["property_index"],
                         }
                     )
                     if kind == "nodes":
