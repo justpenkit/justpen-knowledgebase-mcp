@@ -1,0 +1,346 @@
+"""Bounded terminal retention, retry fencing and managed-file cleanup."""
+
+import asyncio
+import json
+import threading
+import time
+from uuid import uuid4
+
+import pytest
+
+from justpen_knowledgebase_mcp.config import ServerConfig, WorkspacePolicy
+from justpen_knowledgebase_mcp.errors import BusyError, ConflictError, NotFoundError
+from justpen_knowledgebase_mcp.models import GetRequest, WriteRequest
+from justpen_knowledgebase_mcp.service import KnowledgeBase
+from justpen_knowledgebase_mcp.storage.connection import SQLiteRuntime
+from justpen_knowledgebase_mcp.storage.job_retention import CANDIDATES_SQL, JobRetention
+from justpen_knowledgebase_mcp.storage.jobs import JobStore
+from justpen_knowledgebase_mcp.workspace import WorkspacePaths
+
+pytestmark = pytest.mark.integration
+
+
+def terminal(connection, state="completed", finished: float = 1, payload=None, progress=None):
+    identifier = str(uuid4())
+    JobStore.insert(connection, identifier, "ingest", "bulk", payload or {})
+    claim = JobStore.claim(connection, "bulk", "ingest", now=finished - 1)
+    assert claim is not None
+    if progress:
+        connection.execute("update jobs set progress=? where uuid=?", (json.dumps(progress), identifier))
+    JobStore.finish(connection, claim, state, {}, now=finished)
+    return identifier
+
+
+def persist_policy(connection, **overrides):
+    values = json.loads(connection.execute("select policy from settings").get)
+    values.update(overrides)
+    policy = WorkspacePolicy.model_validate(values)
+    connection.execute("update settings set policy=?", (policy.model_dump_json(),))
+    return policy
+
+
+async def test_age_or_count_prunes_oldest_in_hundred_row_batches(kb):
+    await kb.job_runner.close()
+    policy = await kb.workers.control(
+        lambda c, _t: persist_policy(c, completed_retention_count=2, failed_cancelled_retention_count=2)
+    )
+
+    def populate(c, _t):
+        ids = [terminal(c, finished=100 + index) for index in range(205)]
+        for state in ("failed", "cancelled", "failed"):
+            terminal(c, state, 300)
+        terminal(c, "failed", 1)
+        return ids
+
+    ids = await kb.workers.control(populate)
+    cursor = (0.0, 0)
+    for _ in range(3):
+        outcome = await kb.workers.control(lambda c, _t, cursor=cursor: JobRetention.batch(c, policy, cursor, now=400))
+        assert outcome["examined"] <= 100
+        assert outcome["pruned"] <= 100
+        cursor = outcome["cursor"]
+    remaining = await kb.workers.read(
+        lambda c, _t: [
+            row[0] for row in c.execute("select uuid from jobs where state='completed' order by finished_at,id")
+        ]
+    )
+    assert remaining == ids[-2:]
+    counts = await kb.workers.read(lambda c, _t: json.loads(c.execute("select terminal_job_counts from settings").get))
+    assert counts == {"completed": 2, "failed_cancelled": 2}
+    expired_policy = await kb.workers.control(
+        lambda c, _t: persist_policy(c, completed_retention_seconds=10, failed_cancelled_retention_seconds=10)
+    )
+    await kb.workers.control(lambda c, _t: JobRetention.batch(c, expired_policy, (0.0, 0), now=400))
+    assert await kb.workers.read(lambda c, _t: c.execute("select count(*) from jobs").get) == 0
+
+
+async def test_pending_owner_and_live_lease_are_protected_and_keyset_progresses(kb):
+    await kb.job_runner.close()
+
+    def populate(c, _t):
+        ids = [terminal(c, "failed") for _ in range(101)]
+        for identifier in ids[:100]:
+            c.execute(
+                "insert into nodes(uuid,type,key,properties,lifecycle,delete_job_id,delete_cascade,delete_requested_at) values(?,'hostname',?,'{}','delete_pending',?,1,1)",
+                (str(uuid4()), identifier, identifier),
+            )
+        c.execute("update jobs set lease_expires_at=1000 where uuid=?", (ids[-1],))
+        last = terminal(c, "cancelled", 2)
+        return ids, last
+
+    ids, last = await kb.workers.control(populate)
+    policy = await kb.workers.control(
+        lambda c, _t: persist_policy(c, failed_cancelled_retention_seconds=1, failed_cancelled_retention_count=1)
+    )
+    first = await kb.workers.control(lambda c, _t: JobRetention.batch(c, policy, (0.0, 0), now=20))
+    assert first["pruned"] == 0
+    second = await kb.workers.control(lambda c, _t: JobRetention.batch(c, policy, first["cursor"], now=20))
+    assert second["pruned"] == 1
+    assert (await kb.jobs({"action": "get", "job_id": ids[0]}))["retention_protected"] is True
+    with pytest.raises(NotFoundError):
+        await kb.jobs({"action": "get", "job_id": last})
+
+
+async def test_purge_pending_fences_retry_until_every_recorded_stage_is_acknowledged(kb):
+    await kb.job_runner.close()
+    input_token, stage_token = str(uuid4()), str(uuid4())
+
+    def populate(c, _t):
+        identifier = terminal(c, "failed", payload={"input_token": input_token}, progress={"stage_token": stage_token})
+        c.execute(
+            "update jobs set payload=json_set(payload,'$.input_stage',?) where uuid=?",
+            (f"{identifier}.{input_token}.stage", identifier),
+        )
+        return identifier
+
+    identifier = await kb.workers.control(populate)
+    outcome = await kb.workers.control(lambda c, _t: JobRetention.batch(c, WorkspacePolicy(), (0.0, 0), now=40 * 86400))
+    assert outcome["marked"] == 1
+    with pytest.raises(ConflictError, match="JOB_PURGING"):
+        await kb.jobs({"action": "retry", "job_id": identifier})
+    assert await kb.workers.control(lambda c, _t: JobRetention.next_file(c, identifier)) == input_token
+    await kb.workers.control(lambda c, _t: JobRetention.acknowledge(c, identifier, input_token))
+    assert await kb.workers.control(lambda c, _t: JobRetention.next_file(c, identifier)) == stage_token
+    await kb.workers.control(lambda c, _t: JobRetention.acknowledge(c, identifier, stage_token))
+    assert await kb.workers.control(lambda c, _t: JobRetention.finalize(c, identifier)) is True
+    assert await kb.workers.control(lambda c, _t: JobRetention.finalize(c, identifier)) is False
+    with pytest.raises(NotFoundError):
+        await kb.jobs({"action": "retry", "job_id": identifier})
+
+
+async def test_real_short_purge_preserves_blob_links_and_removes_recorded_files(kb, monkeypatch):
+    monkeypatch.setattr(JobRetention, "next_job", staticmethod(lambda _c, _after=0: None))
+    result = await kb.ingest_evidence({"base64": "AP8=", "source": "retained-source"})
+    identifier = result["evidence_id"]
+    graph = await kb.write(
+        WriteRequest.model_validate(
+            {"nodes": [{"type": "hostname", "properties": {"name": "retained"}, "evidence_add": [identifier]}]}
+        )
+    )
+    node_id = graph["nodes"][0]["id"]
+    token1, token2 = str(uuid4()), str(uuid4())
+
+    def populate(c, _t):
+        job_id = terminal(c, "failed", payload={"input_token": token1}, progress={"stage_token": token2})
+        c.execute(
+            "update jobs set payload=json_set(payload,'$.input_stage',?) where uuid=?",
+            (f"{job_id}.{token1}.stage", job_id),
+        )
+        c.execute(
+            "update evidence set index_owner_job_id=(select id from jobs where uuid=?) where uuid=?",
+            (job_id, identifier),
+        )
+        return job_id
+
+    job_id = await kb.workers.control(populate)
+    for token in (token1, token2):
+        (kb.workspace.tmp / f"{job_id}.{token}.stage").write_bytes(b"owned")
+    outcome = await kb.workers.control(
+        lambda c, _t: JobRetention.batch(c, kb.job_runner.store.policy, (0.0, 0), now=time.time())
+    )
+    assert outcome["marked"] == 1
+    removed = []
+    original = kb.job_runner.store.discard_stage
+
+    def discard(job, token):
+        if job == job_id:
+            removed.append(token)
+        original(job, token)
+
+    monkeypatch.setattr(kb.job_runner.store, "discard_stage", discard)
+    await kb.job_runner._purge_step(job_id)
+    assert len(removed) == 1
+    assert (await kb.jobs({"action": "get", "job_id": job_id}))["purge_pending"] is True
+    await kb.job_runner._purge_step(job_id)
+    assert removed == [token1, token2]
+    assert (await kb.get(GetRequest(kind="nodes", ids=[node_id], view="links")))["links"] == [identifier]
+    assert (await kb.get(GetRequest(kind="evidence", ids=[identifier], view="sources")))["sources"][0][
+        "source"
+    ] == "retained-source"
+    with pytest.raises(NotFoundError):
+        await kb.jobs({"action": "get", "job_id": job_id})
+    assert (await kb.read_evidence({"evidence_id": identifier, "format": "base64"}))["content"] == "AP8="
+    assert (
+        await kb.workers.read(
+            lambda c, _t: c.execute("select index_owner_job_id from evidence where uuid=?", (identifier,)).get
+        )
+        is None
+    )
+
+
+async def test_retention_status_cache_has_expiry_policy_and_explicit_unknown(kb):
+    snapshot = kb.job_runner.retention_status()
+    assert snapshot["policy"]["completed_retention_count"] == 100000
+    assert snapshot["policy"]["failed_cancelled_retention_seconds"] == 30 * 86400
+    await kb.job_runner.retention_pass(force=True)
+    snapshot = kb.job_runner.retention_status()
+    assert snapshot["available"] is True
+    assert snapshot["stale"] is False
+    assert snapshot["terminal_counts"] == {"completed": 0, "failed_cancelled": 0}
+    await kb.workers.close()
+    with pytest.raises(BusyError):
+        await kb.job_runner.retention_pass(force=True)
+    assert kb.job_runner.retention_status()["stale"] is True
+
+
+async def test_old_unrecorded_stage_is_recovered_after_prune_without_touching_live_input(kb, monkeypatch):
+    monkeypatch.setattr(JobRetention, "next_job", staticmethod(lambda _c, _after=0: None))
+    old_token, live_token = str(uuid4()), str(uuid4())
+
+    def populate(c, _t):
+        old = terminal(c)
+        live = terminal(c, "failed", time.time(), {"input_token": live_token})
+        c.execute(
+            "update jobs set payload=json_set(payload,'$.input_stage',?) where uuid=?",
+            (f"{live}.{live_token}.stage", live),
+        )
+        return old, live
+
+    old, live = await kb.workers.control(populate)
+    old_name, live_name = f"{old}.{old_token}.stage", f"{live}.{live_token}.stage"
+    (kb.workspace.tmp / old_name).write_bytes(b"old unrecorded")
+    (kb.workspace.tmp / live_name).write_bytes(b"retry input")
+    (kb.workspace.tmp / "unrelated").write_bytes(b"leave")
+    await kb.workers.control(lambda c, _t: JobRetention.batch(c, kb.job_runner.store.policy, (0.0, 0)))
+    with pytest.raises(NotFoundError):
+        await kb.jobs({"action": "get", "job_id": old})
+    assert (kb.workspace.tmp / old_name).exists()
+    await kb.job_runner._orphan_step(old_name)
+    await kb.job_runner._orphan_step(live_name)
+    assert not (kb.workspace.tmp / old_name).exists()
+    assert (kb.workspace.tmp / live_name).read_bytes() == b"retry input"
+    assert (kb.workspace.tmp / "unrelated").read_bytes() == b"leave"
+
+
+async def test_counter_reconciliation_is_explicit_and_prune_plan_uses_sparse_indexes(kb):
+    await kb.job_runner.close()
+
+    def populate(c, _t):
+        terminal(c)
+        terminal(c, "failed")
+        terminal(c, "cancelled")
+        c.execute('update settings set terminal_job_counts=\'{"completed":0,"failed_cancelled":0}\'')
+        JobRetention.reconcile(c)
+        plans = [row[3] for row in c.execute("explain query plan " + CANDIDATES_SQL, (0, 0) * 3)]
+        purge = [
+            row[3]
+            for row in c.execute(
+                "explain query plan select state,count(*) from jobs where purge_pending=1 group by state"
+            )
+        ]
+        return JobRetention.counts(c), plans, purge
+
+    counts, plans, purge = await kb.workers.control(populate)
+    assert counts == {"completed": 1, "failed_cancelled": 2}
+    assert sum("jobs_terminal" in item for item in plans) >= 3
+    assert any("jobs_purge" in item for item in purge)
+
+
+async def test_expiry_metadata_and_cached_protected_count(kb):
+    await kb.job_runner.close()
+
+    def populate(c, _t):
+        job_id = terminal(c, "failed", 100)
+        c.execute(
+            "insert into evidence(uuid,sha256,byte_size,media_type,encoding,blob_path,lifecycle,delete_job_id,delete_cascade,delete_requested_at) values(?,?,0,'image/png','auto',?,'delete_pending',?,1,1)",
+            ("e_" + "f" * 64, "f" * 64, "ff/ff/" + "f" * 64, job_id),
+        )
+        return job_id
+
+    job_id = await kb.workers.control(populate)
+    value = await kb.jobs({"action": "get", "job_id": job_id})
+    assert value["expires_at"] == "1970-01-31T00:01:40.000000Z"
+    assert value["retention_protected"] is True
+    assert value["needs_attention"] is True
+    await kb.job_runner.retention_pass(force=True)
+    status = kb.job_runner.retention_status()
+    assert status["protected_count"] == 1
+    assert status["needs_attention"] is True
+    assert status["pending_prune_count"] == 0
+    assert status["terminal_counts"]["failed_cancelled"] == 1
+
+
+async def test_automatic_count_cleanup_progresses_while_bulk_copy_is_blocked(tmp_path, monkeypatch):
+    config = ServerConfig(workspace_dir=tmp_path)
+    with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as factory:
+        connection = factory.connect()
+        policy = json.loads(connection.execute("select policy from settings").get)
+        policy["completed_retention_count"] = 2
+        connection.execute("update settings set policy=?", (json.dumps(policy),))
+        connection.close()
+    (tmp_path / "bulk.bin").write_bytes(b"b" * 300000)
+    async with KnowledgeBase.open(config) as kb:
+        entered, release = threading.Event(), threading.Event()
+        copy = kb.job_runner.store.copy_path
+
+        def blocked(*args, **kwargs):
+            entered.set()
+            release.wait(5)
+            return copy(*args, **kwargs)
+
+        monkeypatch.setattr(kb.job_runner.store, "copy_path", blocked)
+        bulk = await kb.ingest_evidence({"path": "bulk.bin"})
+        assert await asyncio.to_thread(entered.wait, 2)
+        deleted = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        snapshot = JobRetention.snapshot
+        first = await kb.ingest_evidence({"base64": "AA=="})
+
+        def observe(c):
+            result = snapshot(c)
+            if c.execute("select 1 from jobs where uuid=?", (first["job_id"],)).get is None:
+                loop.call_soon_threadsafe(deleted.set)
+            return result
+
+        monkeypatch.setattr(JobRetention, "snapshot", staticmethod(observe))
+        try:
+            await kb.ingest_evidence({"base64": "AQ=="})
+            await kb.ingest_evidence({"base64": "Ag=="})
+            await asyncio.wait_for(deleted.wait(), 2)
+            with pytest.raises(NotFoundError):
+                await kb.jobs({"action": "get", "job_id": first["job_id"]})
+            assert (await kb.read_evidence({"evidence_id": first["evidence_id"], "format": "base64"}))[
+                "content"
+            ] == "AA=="
+            assert (await kb.jobs({"action": "get", "job_id": bulk["job_id"]}))["state"] == "running"
+        finally:
+            release.set()
+        assert (await kb.job_runner.wait(bulk["job_id"], time.monotonic() + 3))["state"] == "completed"
+
+
+async def test_unobserved_cache_is_explicit_and_status_never_queries_sql(kb, monkeypatch):
+    unused = type(kb.job_runner)(kb.workers, kb.workspace, kb.job_runner.store.policy)
+    try:
+        value = unused.retention_status()
+        assert value["available"] is False
+        assert value["stale"] is True
+        assert value["terminal_counts"] is None
+        assert value["protected_count"] is None
+
+        def forbidden(*_args):
+            raise AssertionError("status must not query SQL")
+
+        monkeypatch.setattr(kb.workers, "read", forbidden)
+        assert kb.job_runner.retention_status()["available"] is True
+    finally:
+        await unused.close()

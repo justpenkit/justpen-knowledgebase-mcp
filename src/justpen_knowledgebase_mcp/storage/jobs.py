@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from ..errors import ConflictError, InvalidParamsError, NotFoundError
 from ..evidence import is_text_candidate
+from ..identity import format_timestamp
 from ..models import JobResult
 from .deletions import DeleteIntent, GraphDeletion
 from .graph import row_by_id
@@ -57,7 +58,8 @@ class Claim:
             raise ConflictError("JOB_CANCELLED")
 
 
-def _row(connection: apsw.Connection, job_id: str) -> dict[str, Any]:
+def job_row(connection: apsw.Connection, job_id: str) -> dict[str, Any]:
+    """Read one durable job for guarded lifecycle and retention operations."""
     cursor = connection.execute("SELECT * FROM jobs WHERE uuid=?", (job_id,))
     value = cursor.fetchone()
     if value is None:
@@ -66,7 +68,8 @@ def _row(connection: apsw.Connection, job_id: str) -> dict[str, Any]:
     return dict(zip(names, value, strict=True))
 
 
-def _counter(connection: apsw.Connection, state: str, delta: int) -> None:
+def adjust_terminal_count(connection: apsw.Connection, state: str, delta: int) -> None:
+    """Adjust the one shared terminal counter authority in the transition transaction."""
     group = "completed" if state == "completed" else "failed_cancelled" if state in ("failed", "cancelled") else None
     if group is not None:
         path = f"$.{group}"
@@ -115,7 +118,7 @@ class JobStore:
             "UPDATE jobs SET state='running',lease_token=?,lease_expires_at=?,updated_at=?,attempts=attempts+1 WHERE uuid=?",
             (token, expires, now, value),
         )
-        row = _row(connection, value)
+        row = job_row(connection, value)
         return Claim(
             value,
             token,
@@ -132,7 +135,7 @@ class JobStore:
     def fence(connection: apsw.Connection, claim: Claim, *, now: float | None = None) -> dict[str, Any]:
         """Reject stale, expired, purging, and cancelled capabilities in the snapshot."""
         now = time.time() if now is None else now
-        row = _row(connection, claim.job_id)
+        row = job_row(connection, claim.job_id)
         if (
             row["state"] != "running"
             or row["lease_token"] != claim.token
@@ -176,7 +179,7 @@ class JobStore:
             "UPDATE jobs SET state=?,result=?,finished_at=?,updated_at=?,lease_token=NULL,lease_expires_at=NULL,error_code=? WHERE uuid=?",
             (state, json.dumps(result), current, current, result.get("error"), claim.job_id),
         )
-        _counter(connection, state, 1)
+        adjust_terminal_count(connection, state, 1)
 
     @staticmethod
     def release(connection: apsw.Connection, claim: Claim, progress: dict[str, Any]) -> None:
@@ -190,10 +193,22 @@ class JobStore:
     @staticmethod
     def get(connection: apsw.Connection, job_id: str) -> dict[str, Any]:
         """Materialize bounded public metadata, excluding source/staging locators."""
-        row = _row(connection, job_id)
+        row = job_row(connection, job_id)
         payload = json.loads(row["payload"])
         result = json.loads(row["result"])
+        retention_protected = (
+            row["state"] not in TERMINAL
+            or protected(connection, job_id)
+            or (row["lease_expires_at"] is not None and row["lease_expires_at"] > time.time())
+        )
+        policy = json.loads(connection.execute("SELECT policy FROM settings WHERE singleton=1").get)
+        expiry = None
+        if row["state"] in TERMINAL and row["finished_at"] is not None:
+            group = "completed" if row["state"] == "completed" else "failed_cancelled"
+            expiry = format_timestamp(int((row["finished_at"] + policy[group + "_retention_seconds"]) * 1000000))
         output = {
+            "expires_at": expiry,
+            "retention_protected": retention_protected,
             "job_id": job_id,
             "kind": row["kind"],
             "state": row["state"],
@@ -220,7 +235,7 @@ class JobStore:
     @staticmethod
     def cancel(connection: apsw.Connection, job_id: str) -> dict[str, Any]:
         """Never undo immutable delete intent, including between queued steps."""
-        row = _row(connection, job_id)
+        row = job_row(connection, job_id)
         if row["kind"] == "delete":
             raise ConflictError("DELETE_ALREADY_COMMITTED")
         if row["purge_pending"]:
@@ -230,7 +245,7 @@ class JobStore:
                 "UPDATE jobs SET state='cancelled',cancel_requested=1,finished_at=?,updated_at=? WHERE uuid=?",
                 (time.time(), time.time(), job_id),
             )
-            _counter(connection, "cancelled", 1)
+            adjust_terminal_count(connection, "cancelled", 1)
         elif row["state"] == "running":
             connection.execute("UPDATE jobs SET cancel_requested=1 WHERE uuid=?", (job_id,))
         return JobStore.get(connection, job_id)
@@ -238,12 +253,12 @@ class JobStore:
     @staticmethod
     def retry(connection: apsw.Connection, job_id: str) -> dict[str, Any]:
         """Retain durable input/verified blob checkpoints and create a new attempt."""
-        row = _row(connection, job_id)
+        row = job_row(connection, job_id)
         if row["purge_pending"]:
             raise ConflictError("JOB_PURGING")
         if row["state"] not in ("failed", "cancelled"):
             raise InvalidParamsError("only failed or cancelled jobs can retry")
-        _counter(connection, row["state"], -1)
+        adjust_terminal_count(connection, row["state"], -1)
         connection.execute(
             "UPDATE jobs SET state='queued',result=json_remove(result,'$.error','$.reason','$.details'),cancel_requested=0,finished_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=? WHERE uuid=?",
             (time.time(), job_id),

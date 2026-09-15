@@ -334,6 +334,7 @@ async def test_unexpected_callback_failure_is_sanitized_and_rolled_back(kb):
 
 async def test_eight_readers_still_share_one_queue_of_128(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, db_reader_threads=8)) as kb:
+        await kb.job_runner.close()
         entered = threading.Barrier(9)
         release = threading.Event()
 

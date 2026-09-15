@@ -105,3 +105,30 @@ Publication syncs regular files and affected directories and requests macOS
 `F_FULLFSYNC` for evidence files. An unavailable or failed required sync fails
 the operation. Process-kill recovery tests validate job/file reconciliation; they
 do not establish power-loss durability for every filesystem or storage device.
+
+## Job retention
+
+Terminal metadata has shared workspace retention targets: completed jobs retain
+up to seven days or the newest 100,000 records; failed and cancelled jobs retain
+up to 30 days or the newest 10,000 records together. Either age or count can make
+an old eligible job removable. Maintenance starts bounded batches hourly and when
+counts exceed a target. These are asynchronous cleanup targets, not an admission
+quota: active work and jobs needed by pending deletion intents remain protected.
+
+Job results expose `expires_at` for the age target, `retention_protected` and
+`purge_pending`. Count pressure can remove metadata before the age target;
+protection can retain it beyond that time. Once purging starts, retry fails with
+`JOB_PURGING`; after pruning, get/retry return `NOT_FOUND`. Evidence IDs remain
+stable recon identities. Pruning job metadata preserves raw evidence, sources and
+graph links, and clears nullable job references.
+
+Recorded staging input is removed one file per short cleanup step before its job
+row is pruned. Older unrecorded attempt files are separate orphan-recovery work:
+they may remain until a bounded directory scan reaches them after metadata prune.
+A pruned row does not mean every matching temporary filename has been enumerated.
+
+The service's `retention_status()` cache provides the policy, terminal counts,
+protected/attention count, pending prune count, total pruned rows, sample time and
+cache age. Status reads do not open SQL or acquire file locks. Before observation,
+counts are unknown; failed refreshes or samples at least 60 seconds old are marked
+stale. Tool registration will incorporate this snapshot into `kb_status`.

@@ -8,11 +8,15 @@ import time
 from pathlib import Path
 
 from justpen_knowledgebase_mcp.config import ServerConfig
-from justpen_knowledgebase_mcp.errors import ConflictError
+from justpen_knowledgebase_mcp.errors import ConflictError, McpError
 from justpen_knowledgebase_mcp.models import DeleteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
+from justpen_knowledgebase_mcp.storage.connection import SQLiteRuntime
 from justpen_knowledgebase_mcp.storage.evidence import EvidenceStore
+from justpen_knowledgebase_mcp.storage.job_retention import JobRetention
 from justpen_knowledgebase_mcp.storage.jobs import JobStore
+from justpen_knowledgebase_mcp.storage.worker import DatabaseWorkers
+from justpen_knowledgebase_mcp.workspace import WorkspacePaths
 
 
 def barrier(ready, release):
@@ -50,15 +54,34 @@ def install_failpoints(scenario, ready, release):
             barrier(ready, release)
         return result
 
+    install_purge_failpoints(scenario, ready, release)
     EvidenceStore.copy_path = copy
     EvidenceStore.publish = publish
     EvidenceStore.unlink_blob = unlink
     EvidenceStore.stage_inline = stage
 
 
+def install_purge_failpoints(scenario, ready, release):
+    original_discard = EvidenceStore.discard_stage
+
+    def discard(self, job_id, token):
+        if scenario == "purge_mark":
+            barrier(ready, release)
+        original_discard(self, job_id, token)
+        if scenario == "purge_unlink":
+            barrier(ready, release)
+
+    EvidenceStore.discard_stage = discard
+
+
 async def run(root, scenario, ready, release):
+    if scenario in ("retention_retry", "retention_prune"):
+        await retention_race(root, scenario, ready, release)
+        return
     install_failpoints(scenario, ready, release)
     async with KnowledgeBase.open(ServerConfig(workspace_dir=Path(root))) as kb:
+        if scenario in ("purge_mark", "purge_unlink"):
+            await asyncio.Event().wait()
         if scenario in ("claim", "stale_claim"):
             await claim_scenario(kb, scenario, ready, release)
             return
@@ -93,6 +116,33 @@ async def claim_scenario(kb, scenario, ready, release):
         else:
             result = {"fenced": False}
     sys.stdout.write(json.dumps(result) + "\n")
+
+
+async def retention_race(root, scenario, ready, release):
+    config = ServerConfig(workspace_dir=Path(root))
+    with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as factory:
+        workers = DatabaseWorkers(factory)
+        await workers.start()
+        try:
+            await asyncio.to_thread(barrier, ready, release)
+            os.write(ready, b"1")  # contender is about to enter the real guarded writer
+
+            def transition(connection, _token):
+                try:
+                    job_id = connection.execute("select uuid from jobs limit 1").get
+                    if scenario == "retention_retry":
+                        result = JobStore.retry(connection, job_id or "missing")
+                    else:
+                        result = JobRetention.batch(connection, factory.guard.policy(connection), (0.0, 0))
+                except McpError as exc:
+                    result = {"error": exc.error_type}
+                barrier(ready, release)  # mutation is still uncommitted and holds the writer
+                return result
+
+            result = await workers.control(transition)
+            sys.stdout.write(json.dumps(result) + "\n")
+        finally:
+            await workers.close()
 
 
 if __name__ == "__main__":

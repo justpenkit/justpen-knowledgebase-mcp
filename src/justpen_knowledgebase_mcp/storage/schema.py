@@ -27,7 +27,7 @@ CREATE TABLE settings (
  catalog_fingerprint TEXT NOT NULL, index_format_version INTEGER NOT NULL,
  managed_paths TEXT NOT NULL, query_epoch INTEGER NOT NULL DEFAULT 1,
  policy TEXT NOT NULL DEFAULT '{}', maintenance TEXT NOT NULL DEFAULT '{}',
- terminal_job_counts TEXT NOT NULL DEFAULT '{}'
+ terminal_job_counts TEXT NOT NULL DEFAULT '{}', retention TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE jobs (
  id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
@@ -36,10 +36,12 @@ CREATE TABLE jobs (
  cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1)),
  error_code TEXT, payload TEXT NOT NULL DEFAULT '{}',
  lane TEXT NOT NULL DEFAULT 'short', finished_at REAL, result TEXT NOT NULL DEFAULT '{}',
- attempts INTEGER NOT NULL DEFAULT 0, purge_pending INTEGER NOT NULL DEFAULT 0 CHECK(purge_pending IN (0,1))
+ attempts INTEGER NOT NULL DEFAULT 0, purge_tokens TEXT NOT NULL DEFAULT '[]', purge_pending INTEGER NOT NULL DEFAULT 0 CHECK(purge_pending IN (0,1))
 );
 CREATE INDEX jobs_claim ON jobs(lane,state,lease_expires_at,id);
 CREATE INDEX jobs_terminal ON jobs(state,finished_at,id);
+CREATE INDEX jobs_purge ON jobs(id) WHERE purge_pending=1;
+CREATE INDEX jobs_purge_state ON jobs(state) WHERE purge_pending=1;
 CREATE TABLE nodes (
  id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT NOT NULL UNIQUE, type TEXT NOT NULL,
  key TEXT NOT NULL, properties TEXT NOT NULL CHECK(json_valid(properties)),

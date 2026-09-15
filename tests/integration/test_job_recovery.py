@@ -19,6 +19,7 @@ from justpen_knowledgebase_mcp.errors import BusyError, LimitError
 from justpen_knowledgebase_mcp.models import DeleteRequest, GetRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.job_recovery import recover_intents
+from justpen_knowledgebase_mcp.storage.job_retention import PROTECTED_COUNT_SQL, JobRetention
 from justpen_knowledgebase_mcp.storage.jobs import PENDING_SQL, JobStore
 
 pytestmark = pytest.mark.integration
@@ -203,6 +204,12 @@ async def test_recovery_keyset_reaches_owner101_with_million_ready_rows(tmp_path
 
         plan = await kb.workers.control(populate)
         assert any("nodes_pending_owner" in row[3] for row in plan)
+        protected_plan = await kb.workers.read(
+            lambda c, _t: c.execute("EXPLAIN QUERY PLAN " + PROTECTED_COUNT_SQL).fetchall()
+        )
+        for index in ("nodes_pending_job", "relations_pending_job", "evidence_pending_job"):
+            assert any(index in str(row[3]) for row in protected_plan), protected_plan
+        assert (await kb.workers.read(lambda c, _t: JobRetention.snapshot(c)))["protected_count"] == 100
         first = await kb.workers.control(lambda c, t: recover_intents(c, "nodes", 0))
         assert first["repaired"] == 0
         assert first["after_id"] > 1000000
@@ -290,3 +297,81 @@ async def test_inline_kill_before_and_after_acceptance_reconciles_owned_input(tm
             assert (await kb.read_evidence({"evidence_id": result["evidence_id"], "format": "base64"}))[
                 "content"
             ] == "AP8="
+
+
+@pytest.mark.parametrize("phase", ["purge_mark", "purge_unlink"])
+async def test_purge_kill_recovers_recorded_file_acknowledgment(kb, tmp_path, phase):
+    await kb.job_runner.close()
+    job_id, token = str(uuid4()), str(uuid4())
+    name = f"{job_id}.{token}.stage"
+
+    def populate(c, _t):
+        JobStore.insert(c, job_id, "ingest", "short", {"input_token": token, "input_stage": name})
+        claim = JobStore.claim(c, "short", "ingest", now=0)
+        assert claim is not None
+        JobStore.finish(c, claim, "failed", {}, now=1)
+
+    await kb.workers.control(populate)
+    (kb.workspace.tmp / name).write_bytes(b"owned retry input")
+    with worker(tmp_path, phase) as child:
+        await asyncio.to_thread(await_barrier, child)
+        assert (
+            await kb.workers.read(lambda c, _t: c.execute("select purge_pending from jobs where uuid=?", (job_id,)).get)
+            == 1
+        )
+        child[0].kill()
+        child[0].wait(timeout=10)
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as reopened:
+        exists = True
+        for _ in range(100):
+            exists = await reopened.workers.read(
+                lambda c, _t: c.execute("select 1 from jobs where uuid=?", (job_id,)).get
+            )
+            if exists is None:
+                break
+            await asyncio.sleep(0.01)
+        assert exists is None
+        assert not (reopened.workspace.tmp / name).exists()
+        counts = await reopened.workers.read(
+            lambda c, _t: json.loads(c.execute("select terminal_job_counts from settings").get)
+        )
+        assert counts == {"completed": 0, "failed_cancelled": 0}
+
+
+@pytest.mark.parametrize("winner", ["retention_retry", "retention_prune"])
+async def test_real_retry_prune_transaction_race_has_one_winner(kb, tmp_path, winner):
+    await kb.job_runner.close()
+    job_id = str(uuid4())
+
+    def populate(c, _t):
+        JobStore.insert(c, job_id, "ingest", "short", {})
+        claim = JobStore.claim(c, "short", "ingest", now=0)
+        assert claim is not None
+        JobStore.finish(c, claim, "failed", {}, now=1)
+
+    await kb.workers.control(populate)
+    loser = "retention_prune" if winner == "retention_retry" else "retention_retry"
+    with worker(tmp_path, winner) as first, worker(tmp_path, loser) as second:
+        await asyncio.gather(asyncio.to_thread(await_barrier, first), asyncio.to_thread(await_barrier, second))
+        os.write(first[2], b"1")
+        await asyncio.to_thread(await_barrier, first)  # submitting
+        await asyncio.to_thread(await_barrier, first)  # uncommitted transition owns the writer
+        os.write(second[2], b"1")
+        await asyncio.to_thread(await_barrier, second)  # contender submitted before winner commits
+        os.write(first[2], b"1")
+        await asyncio.to_thread(await_barrier, second)
+        os.write(second[2], b"1")
+        outputs = await asyncio.gather(
+            asyncio.to_thread(first[0].communicate, timeout=10), asyncio.to_thread(second[0].communicate, timeout=10)
+        )
+        results = {winner: json.loads(outputs[0][0]), loser: json.loads(outputs[1][0])}
+        assert all(not stderr for _stdout, stderr in outputs)
+    if winner == "retention_retry":
+        assert results[winner]["state"] == "queued"
+        assert results[loser]["pruned"] == 0
+        assert (await kb.jobs({"action": "get", "job_id": job_id}))["state"] == "queued"
+    else:
+        assert results[winner]["pruned"] == 1
+        assert results[loser]["error"] == "NOT_FOUND"
+    counts = await kb.workers.read(lambda c, _t: json.loads(c.execute("select terminal_job_counts from settings").get))
+    assert counts == {"completed": 0, "failed_cancelled": 0}

@@ -27,12 +27,13 @@ from .errors import (
     StorageIOError,
 )
 from .evidence import INLINE_LIMIT, IngestRequest, ReadEvidenceRequest
-from .models import ClosedModel, DeleteRequest, RecordID
+from .models import ClosedModel, DeleteRequest, RecordID, RetentionPolicyView, RetentionStatus
 from .mutations import canonical_json
 from .storage.evidence import EvidenceStore, StagedEvidence, job_bucket, stage_name
 from .storage.evidence_records import EvidenceRecords
 from .storage.graph import require_ready, row_by_id
 from .storage.job_recovery import StageScan, recover_intents, staging_disposable
+from .storage.job_retention import JobRetention
 from .storage.jobs import HEARTBEAT_SECONDS, TERMINAL, Claim, JobStore
 from .storage.worker import OperationToken
 
@@ -92,17 +93,29 @@ class JobRunner:
         self._stages = StageScan(workspace)
         self._orphans: deque[str] = deque()
         self._last_cleanup = "orphan"
+        self._purge_after = 0
+        self._retention_event = asyncio.Event()
+        self._retention_cursor = (0.0, 0)
+        self._retention_due = 0.0
+        selected = policy.model_dump(include=set(RetentionPolicyView.model_fields))
+        self._retention_cache = RetentionStatus(policy=RetentionPolicyView.model_validate(selected)).model_dump(
+            mode="json"
+        )
 
     async def start(self) -> None:
         """Recover owner intent before beginning bounded durable polling."""
         await self.recover()
+        await self.workers.control(lambda c, _t: JobRetention.reconcile(c))
+        await self.retention_pass(force=True)
         self._tasks = [asyncio.create_task(self._lane(lane)) for lane in ("short", "bulk")]
         self._tasks.append(asyncio.create_task(self._recovery_loop()))
+        self._tasks.append(asyncio.create_task(self._retention_loop()))
 
     async def close(self) -> None:
         """Drain I/O and heartbeat owners before DB worker/VFS teardown."""
         self._stopping = True
         self._stop_event.set()
+        self._retention_event.set()
         for claim in self._claims.values():
             claim.lost = True
         for lane in self._wake:
@@ -221,6 +234,7 @@ class JobRunner:
         callback = JobStore.cancel if request.action == "cancel" else JobStore.retry
         result = await self.workers.control(lambda c, _t: callback(c, request.job_id or ""))
         self.wake(result["lane"])
+        self._retention_event.set()
         return result
 
     async def acquire_bucket(self, lane: str, digest: str, *, exclusive: bool) -> int:
@@ -307,22 +321,106 @@ class JobRunner:
                     await asyncio.wait_for(self._wake[lane].get(), timeout=0.1)
 
     async def _category_step(self, lane: str, category: str) -> bool:
-        if category == "cleanup" and self._orphans and self._last_cleanup == "delete":
-            await self._orphan_step(self._orphans.popleft())
-            self._last_cleanup = "orphan"
-            return True
-        kind = "delete" if category == "cleanup" else "ingest"
-        claim = await self.workers.control(lambda c, _t: JobStore.claim(c, lane, kind))
-        if claim is not None:
-            await self._run_claim(claim)
-            if category == "cleanup":
-                self._last_cleanup = "delete"
-            return True
-        if category == "cleanup" and self._orphans:
-            await self._orphan_step(self._orphans.popleft())
-            self._last_cleanup = "orphan"
-            return True
+        if category == "cleanup":
+            return await self._cleanup_step()
+        claim = await self.workers.control(lambda c, _t: JobStore.claim(c, lane, "ingest"))
+        if claim is None:
+            return False
+        await self._run_claim(claim)
+        return True
+
+    async def _cleanup_step(self) -> bool:
+        classes = ["delete", "orphan", "purge"]
+        start = (classes.index(self._last_cleanup) + 1) % len(classes)
+        for category in classes[start:] + classes[:start]:
+            if await self._cleanup_category(category):
+                self._last_cleanup = category
+                return True
         return False
+
+    async def _cleanup_category(self, category: str) -> bool:
+        if category == "delete":
+            claim = await self.workers.control(lambda c, _t: JobStore.claim(c, "short", "delete"))
+            if claim is not None:
+                await self._run_claim(claim)
+                return True
+        elif category == "orphan":
+            if self._orphans:
+                await self._orphan_step(self._orphans.popleft())
+                return True
+        else:
+            item = await self.workers.control(lambda c, _t: JobRetention.next_job(c, self._purge_after))
+            self._purge_after = 0 if item is None else item[0]
+            if item is not None:
+                await self._purge_step(item[1])
+                return True
+        return False
+
+    async def _purge_step(self, job_id: str) -> None:
+        bucket = await self.acquire_bucket("short", job_bucket(job_id), exclusive=True)
+        try:
+            token = await self.workers.control(lambda c, _t: JobRetention.next_file(c, job_id))
+            if token is not None:
+                await self.io("short", lambda: self.store.discard_stage(job_id, token))
+
+            def finish(connection: apsw.Connection, _token: OperationToken) -> None:
+                if token is not None:
+                    JobRetention.acknowledge(connection, job_id, token)
+                JobRetention.finalize(connection, job_id)
+
+            await self.workers.control(finish)
+            self._retention_event.set()
+        except NotFoundError:
+            pass  # Another process already finalized this candidate before the bucket recheck.
+        finally:
+            os.close(bucket)
+
+    def retention_status(self) -> dict[str, Any]:
+        """Serve a bounded copy without DB operations or file locks, including cache age."""
+        snapshot = dict(self._retention_cache)
+        stamp = snapshot["cached_at"]
+        snapshot["cache_age"] = None if stamp is None else max(0, time.time() - stamp)
+        snapshot["stale"] = snapshot["stale"] or stamp is None or time.time() - stamp >= 60
+        return RetentionStatus.model_validate(snapshot).model_dump(mode="json")
+
+    async def retention_pass(self, *, force: bool = False) -> bool:
+        """One control batch on age/count trigger, followed by a cached read snapshot."""
+        try:
+            counts = await self.workers.read(lambda c, _t: JobRetention.counts(c))
+            policy = self.store.policy
+            due = force or self._retention_cursor != (0.0, 0) or time.time() >= self._retention_due
+            excess = (
+                counts["completed"] > policy.completed_retention_count
+                or counts["failed_cancelled"] > policy.failed_cancelled_retention_count
+            )
+            if due or excess:
+                batch = await self.workers.control(lambda c, _t: JobRetention.batch(c, policy, self._retention_cursor))
+                self._retention_cursor = batch["cursor"]
+                if self._retention_cursor == (0.0, 0):
+                    self._retention_due = time.time() + 3600
+                if batch["marked"]:
+                    self.wake("short")
+            snapshot = await self.workers.read(lambda c, _t: JobRetention.snapshot(c))
+            self._retention_cache.update(snapshot, available=True, stale=False, cached_at=time.time())
+        except (McpError, OSError):
+            self._retention_cache["stale"] = True
+            raise
+        else:
+            return self._retention_cursor != (0.0, 0)
+
+    async def _retention_loop(self) -> None:
+        while not self._stopping:
+            self._retention_event.clear()
+            try:
+                if await self.retention_pass():
+                    await asyncio.sleep(0)
+                    continue
+            except (BusyError, LimitError):
+                pass
+            except (McpError, OSError):
+                self._failure_cache("IO_ERROR: job retention failed")
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._retention_event.wait(), timeout=30)
 
     async def _orphan_step(self, name: str) -> None:
         job_id, token, _suffix = name.split(".")
@@ -331,6 +429,7 @@ class JobRunner:
             disposable = await self.workers.control(lambda c, _t: staging_disposable(c, job_id, token))
             if disposable:
                 await self.io("short", lambda: self.store.discard_stage(job_id, token))
+                await self.workers.control(lambda c, _t: JobRetention.forget_clean_input(c, job_id, token))
         finally:
             os.close(bucket)
 
@@ -350,6 +449,7 @@ class JobRunner:
             with contextlib.suppress(asyncio.CancelledError):
                 await heart
             self._claims.pop(claim.token, None)
+            self._retention_event.set()
 
     async def _heartbeat(self, claim: Claim) -> None:
         while not self._stopping:

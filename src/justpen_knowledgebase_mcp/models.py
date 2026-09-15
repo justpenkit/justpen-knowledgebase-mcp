@@ -359,6 +359,8 @@ class JobResult(ClosedModel):
     warnings: list[Annotated[str, Field(max_length=256)]] = Field(default_factory=list[str], max_length=101)
     needs_attention: bool = False
     purge_pending: bool = False
+    expires_at: str | None = None
+    retention_protected: bool = False
     error: Annotated[str, Field(max_length=32)] | None = None
     reason: Annotated[str, Field(max_length=256)] | None = None
     deleted_ids: list[RecordID | EvidenceID] = Field(default_factory=list[str], max_length=100)
@@ -372,3 +374,34 @@ class JobResult(ClosedModel):
         if self.reason == "RECORD_DELETING" and not isinstance(self.details, BlockerDetails):
             raise ValueError("pending failure requires blocker details")
         return self
+
+
+class RetentionPolicyView(ClosedModel):
+    """Persisted retention targets, independent of process configuration."""
+
+    completed_retention_seconds: int
+    completed_retention_count: int
+    failed_cancelled_retention_seconds: int
+    failed_cancelled_retention_count: int
+
+
+class TerminalCounts(ClosedModel):
+    """Maintained counts sampled from one shared database snapshot."""
+
+    completed: Annotated[int, Field(ge=0)]
+    failed_cancelled: Annotated[int, Field(ge=0)]
+
+
+class RetentionStatus(ClosedModel):
+    """Read-only cached status; unavailable and stale samples are explicit."""
+
+    policy: RetentionPolicyView
+    available: bool = False
+    stale: bool = True
+    cached_at: float | None = None
+    cache_age: float | None = None
+    terminal_counts: TerminalCounts | None = None
+    protected_count: int | None = None
+    needs_attention: bool | None = None
+    pending_prune_count: int | None = None
+    pruned_total: int | None = None
