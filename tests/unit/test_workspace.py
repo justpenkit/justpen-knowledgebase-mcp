@@ -147,9 +147,12 @@ def test_workspace_startup_checks_pinned_identity_devices_and_unwinds(monkeypatc
         Mock(side_effect=workspace.ConfigurationError("non-local") if failure == "locality" else None),
     )
     if failure:
-        with pytest.raises(workspace.ConfigurationError):
+        with pytest.raises(workspace.ConfigurationError) as captured:
             workspace.WorkspacePaths(config)
-        assert (3,) in [call.args for call in close.call_args_list]
+        expected = {"root_changed": [(3,)], "device_mismatch": [(4,), (5,), (6,), (7,), (3,)], "locality": [(4,), (3,)]}
+        assert [call.args for call in close.call_args_list] == expected[failure]
+        if failure == "root_changed":
+            assert str(captured.value) == "CONFIGURATION: ROOT_CHANGED"
     else:
         with workspace.WorkspacePaths(config) as value:
             assert value.db == Path("/workspace/data/graph.sqlite3")

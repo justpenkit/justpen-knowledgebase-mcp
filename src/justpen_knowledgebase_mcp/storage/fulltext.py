@@ -161,6 +161,11 @@ def match_unit(
                 rank = float(document[-1])
                 best = rank if best is None else min(best, rank)
                 matches.add(document, reference)
+                # Later hits in this document cannot change its rank or a fully
+                # saturated result. A byte-budget truncation alone is insufficient:
+                # a later shorter pointer may still fill unoccupied reference slots.
+                if len(matches.refs) == 32 and matches.truncated and matches.snippet_truncated:
+                    break
             token.check()
         if best is None:
             return None

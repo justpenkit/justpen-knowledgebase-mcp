@@ -88,5 +88,35 @@ jobs:
         run: make lock-check
       - name: make install
         run: make install
+      - name: Install native audit prerequisite
+        run: sudo apt-get update && sudo apt-get install -y strace
       - name: Real tool, release and documentation scenarios
         run: make test-integration
+
+  consumer-runtime:
+    name: consumer/runtime (${{ matrix.runner }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+        python: ["3.11", "3.12", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - name: Install active Python
+        run: uv python install "$UV_PYTHON"
+      - name: Install native Linux audit prerequisite
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y strace
+      - name: Native cold-start confinement including telemetry
+        run: make test-native
+      - name: Isolated locked and minimum wheel consumers
+        run: make test-consumer
+      - name: Record actual runtime architecture
+        run: uv run --no-project python -c 'import platform; print(platform.platform(), platform.machine())'

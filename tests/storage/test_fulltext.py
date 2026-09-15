@@ -375,6 +375,26 @@ async def test_json_expanded_snippet_budget_and_match_reference_cap(tmp_path):
         assert repeated["matches_truncated"]
 
 
+async def test_repeated_native_evidence_saturates_without_scanning_every_reference(kb, monkeypatch):
+    raw = "repeat alpha beta " * 10000
+    ingested = await kb.ingest_evidence({"text": raw})
+    references = 0
+    original = fulltext._reference
+
+    def count(*args):
+        nonlocal references
+        references += 1
+        return original(*args)
+
+    monkeypatch.setattr(fulltext, "_reference", count)
+    literal = await kb.search({"kind": "evidence", "query": "repeat", "query_mode": "literal"})
+    assert literal["items"][0]["id"] == ingested["evidence_id"]
+    assert len(literal["items"][0]["matches"]) == 32
+    assert literal["items"][0]["matches_truncated"]
+    assert references < 1000, "bounded chunk overlaps may be scanned, saturated valid references must stop"
+    assert (await kb.search({"kind": "evidence", "query": "alpha absentword", "query_mode": "words"}))["items"] == []
+
+
 async def test_literal_verification_timeout_is_incomplete_limit(tmp_path, monkeypatch):
 
     original = fulltext._literal_ranges

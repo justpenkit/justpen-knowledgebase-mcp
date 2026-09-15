@@ -11,6 +11,7 @@ from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import ConflictError, McpError
 from justpen_knowledgebase_mcp.models import DeleteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
+from justpen_knowledgebase_mcp.storage import evidence as evidence_module
 from justpen_knowledgebase_mcp.storage.connection import SQLiteRuntime
 from justpen_knowledgebase_mcp.storage.evidence import EvidenceStore
 from justpen_knowledgebase_mcp.storage.job_retention import JobRetention
@@ -24,7 +25,22 @@ def barrier(ready, release):
     os.read(release, 1)
 
 
+def install_copy_failpoint(scenario, ready, release):
+    original_write = evidence_module._write_all
+    written = 0
+
+    def write_piece(fd, content):
+        nonlocal written
+        original_write(fd, content)
+        written += len(content)
+        if scenario == "partial_copy" and written == 65536:
+            barrier(ready, release)
+
+    evidence_module._write_all = write_piece
+
+
 def install_failpoints(scenario, ready, release):
+    install_copy_failpoint(scenario, ready, release)
     original_copy = EvidenceStore.copy_path
     original_publish = EvidenceStore.publish
     original_unlink = EvidenceStore.unlink_blob

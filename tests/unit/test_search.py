@@ -105,15 +105,28 @@ def test_builtin_filters_parameterize_all_user_values():
     assert "evidence_sources" in " ".join(clauses)
 
 
-@pytest.mark.parametrize("direction", ["both", "in", "out"])
-def test_adjacency_returns_lowest_id_across_direction_and_types(direction):
-    db = database()
-    db.execute.return_value.fetchone.return_value = (2, OTHER, "subdomain_of", 1, 2)
+@pytest.mark.parametrize(
+    ("direction", "outgoing", "incoming", "expected"),
+    [
+        ("both", 2, 7, 2),
+        ("both", 7, 2, 2),
+        ("both", None, 7, 7),
+        ("both", 7, None, 7),
+        ("both", None, None, None),
+        ("out", 7, 2, 7),
+        ("in", 7, 2, 2),
+    ],
+)
+def test_adjacency_returns_lowest_id_across_direction_and_types(direction, outgoing, incoming, expected):
+    def row(identifier):
+        return None if identifier is None else (identifier, OTHER, "subdomain_of", 1, 2)
+
+    values = [outgoing, incoming] if direction == "both" else [outgoing if direction == "out" else incoming]
+    db = database(*(cursor(rows=[] if identifier is None else [row(identifier)]) for identifier in values))
     request = NeighborsRequest(seed_ids=[NODE], relation_types=["subdomain_of"], direction=direction)
     edge = traversal._next_edge(db, 1, 0, request)
-    assert edge is not None
-    assert edge[0] == 2
-    assert db.execute.call_count == (2 if direction == "both" else 1)
+    assert (edge[0] if edge else None) == expected
+    assert db.execute.call_count == len(values)
     assert db.execute.call_args.args[1] == (1, 0, "subdomain_of")
 
 

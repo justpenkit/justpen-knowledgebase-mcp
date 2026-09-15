@@ -107,3 +107,59 @@ def test_generation_fence_bounds_cleanup_and_publication():
     db.execute.return_value.get = None
     with pytest.raises(ConflictError, match="INDEX_GENERATION_CHANGED"):
         fulltext.append_chunk(db, selected, TextChunk("cat", "utf-8", 3, 1, 3))
+
+
+def test_saturated_references_stop_redundant_work_but_keep_later_rank(monkeypatch):
+    text = "cat " * 1000
+    documents = [(1, "/a", text, 0, 1, 0, "utf-8", False, -1.0), (2, "/b", text, 0, 1, 0, "utf-8", False, -3.0)]
+    monkeypatch.setattr(
+        fulltext, "_document_ranges", lambda *_args: ((index, index + 3) for index in range(0, 4000, 4))
+    )
+    reference = Mock(wraps=fulltext._reference)
+    monkeypatch.setattr(fulltext, "_reference", reference)
+    result = fulltext.match_unit(database(cursor(rows=documents)), Mock(), "nodes", 1, NODE, QUERY)
+    assert result is not None
+    assert result["score"] == -3.0
+    assert len(result["matches"]) == 32
+    assert result["matches_truncated"]
+    assert result["snippet_truncated"]
+    assert [value["byte_start"] for value in result["matches"]] == list(range(0, 128, 4))
+    # Initial snippet covers512bytes; the first outside hit settles both flags.
+    assert reference.call_count <= 130
+
+
+def test_reference_byte_budget_does_not_hide_shorter_later_document(monkeypatch):
+    text = "cat " * 1000
+    documents = [
+        (1, "/" + "p" * 60000, text, 0, 1, 0, "utf-8", False, -1.0),
+        (2, "/short", text, 0, 1, 0, "utf-8", False, -2.0),
+    ]
+    monkeypatch.setattr(
+        fulltext, "_document_ranges", lambda *_args: ((index, index + 3) for index in range(0, 4000, 4))
+    )
+    result = fulltext.match_unit(database(cursor(rows=documents)), Mock(), "nodes", 1, NODE, QUERY)
+    assert result is not None
+    assert result["matches_truncated"]
+    assert result["snippet_truncated"]
+    assert len(result["matches"]) == 32
+    assert sum(value["pointer"] == "/short" for value in result["matches"]) == 31
+    assert result["score"] == -2.0
+
+
+def test_saturation_preserves_missing_word_and_overlap_rejection(monkeypatch):
+    text = "cat " * 1000
+    overlap = (1, None, text, 0, 1, 5000, "utf-8", False, -99.0)
+    document = (2, None, text, 0, 1, 0, "utf-8", False, -2.0)
+    monkeypatch.setattr(
+        fulltext, "_document_ranges", lambda *_args: ((index, index + 3) for index in range(0, 4000, 4))
+    )
+    query = TextQuery("cat dog", "words", ("cat", "dog"), ('"cat"', '"dog"'), 0, 7)
+    assert (
+        fulltext.match_unit(
+            database(cursor(rows=[overlap, document]), cursor()), Mock(), "evidence", 1, EVIDENCE, query
+        )
+        is None
+    )
+    result = fulltext.match_unit(database(cursor(rows=[overlap, document])), Mock(), "evidence", 1, EVIDENCE, QUERY)
+    assert result is not None
+    assert result["score"] == -2.0
