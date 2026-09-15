@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
 
+from .identity import validate_record_id
 from .mutations import canonical_json
 
 
@@ -101,4 +102,7 @@ def _validate_owners(data: dict[str, Any]) -> None:
             continue
         if type(data[field]) is not str:
             raise ValueError("invalid cursor owner")
-        UUID(data[field])
+        if field == "owner_id":
+            validate_record_id(data["kind"], data[field])
+        else:
+            UUID(data[field])

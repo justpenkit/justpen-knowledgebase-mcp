@@ -1,12 +1,13 @@
 """Public envelopes and bounded, content-free operational error details."""
 
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 from .errors import VALID_ERROR_TYPES, McpError, MissingRecordsError, RecordConflictError, WalBusyError
+from .identity import EvidenceID, validate_record_id
 
 
 class BlockingRecord(BaseModel):
@@ -14,7 +15,13 @@ class BlockingRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     kind: Literal["nodes", "relations", "evidence"]
-    id: UUID
+    id: UUID | EvidenceID
+
+    @model_validator(mode="after")
+    def kind_identity(self) -> Self:
+        """Validate blocker ID against its server-selected record kind."""
+        validate_record_id(self.kind, str(self.id))
+        return self
 
 
 class BlockerDetails(BaseModel):
@@ -36,7 +43,7 @@ class MissingDetails(BaseModel):
     """Missing IDs from a bounded atomic batch."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    missing_ids: Annotated[list[UUID], Field(min_length=1, max_length=100)]
+    missing_ids: Annotated[list[UUID | EvidenceID], Field(min_length=1, max_length=100)]
 
 
 class WalRetryDetails(BaseModel):

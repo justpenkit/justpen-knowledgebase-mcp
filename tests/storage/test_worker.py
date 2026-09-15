@@ -121,6 +121,8 @@ async def test_queue_deadline_is_limit_and_does_not_run_callback(kb):
 
 @pytest.mark.parametrize(("lane", "capacity"), [("write", 128), ("control", 16), ("read", 128)])
 async def test_saturation_is_bounded(kb, lane, capacity):
+    # This primitive test owns every admission slot; scheduler integration is tested separately.
+    await kb.job_runner.close()
     entered = threading.Barrier(3 if lane == "read" else 2)
     release = threading.Event()
 
@@ -143,6 +145,7 @@ async def test_saturation_is_bounded(kb, lane, capacity):
 
 
 async def test_control_fairness(kb):
+    await kb.job_runner.close()
     entered, release = threading.Event(), threading.Event()
 
     def hold(c, t):

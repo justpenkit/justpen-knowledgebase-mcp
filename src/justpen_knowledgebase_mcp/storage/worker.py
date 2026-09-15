@@ -333,7 +333,7 @@ def _public_error(error: BaseException, token: OperationToken) -> BaseException:
             return LimitError("operation deadline exceeded")
     if isinstance(error, apsw.BusyError):
         return BusyError("database lock unavailable")
-    if isinstance(error, (apsw.IOError, OSError)):
+    if isinstance(error, (apsw.IOError, apsw.FullError, OSError)):
         return StorageIOError("managed storage operation failed")
     return InternalError("database operation failed")
 

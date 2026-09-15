@@ -177,6 +177,49 @@ class WorkspacePaths:
         finally:
             os.close(fd)
 
+    def managed_fd(self, directory: Path) -> int:
+        """Return an already pinned directory descriptor for advisory accounting."""
+        return self._fds[directory]
+
+    def create_managed_file(self, path: Path) -> int:
+        """Create a fresh private regular file through the pinned traversal."""
+        self.validate_native(path)
+        parent = self.open_directory(path.parent, create=True)
+        try:
+            return os.open(
+                path.name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent
+            )
+        finally:
+            os.close(parent)
+
+    @contextmanager
+    def open_managed_file(self, path: Path) -> Generator[int]:
+        """Open an existing single-link regular managed file without following aliases."""
+        self.validate_native(path)
+        parent = self.open_directory(path.parent)
+        try:
+            fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+        finally:
+            os.close(parent)
+        try:
+            item = os.fstat(fd)
+            if not stat.S_ISREG(item.st_mode) or item.st_nlink != 1:
+                raise PathDeniedError("PATH_DENIED: UNSAFE_MANAGED_FILE")
+            yield fd
+        finally:
+            os.close(fd)
+
+    def unlink_managed_file(self, path: Path) -> None:
+        """Unlink a validated managed file idempotently and sync its parent."""
+        self.validate_native(path)
+        parent = self.open_directory(path.parent)
+        try:
+            with suppress(FileNotFoundError):
+                os.unlink(path.name, dir_fd=parent)
+            os.fsync(parent)
+        finally:
+            os.close(parent)
+
     @contextmanager
     def stage(self) -> Generator[tuple[str, int]]:
         """Create a private staging file and remove it on every exit path."""

@@ -31,11 +31,15 @@ CREATE TABLE settings (
 );
 CREATE TABLE jobs (
  id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
- state TEXT NOT NULL, requested_at TEXT NOT NULL, updated_at TEXT NOT NULL,
- lease_token TEXT, lease_expires_at TEXT, progress TEXT NOT NULL DEFAULT '{}',
+ state TEXT NOT NULL, requested_at REAL NOT NULL, updated_at REAL NOT NULL,
+ lease_token TEXT, lease_expires_at REAL, progress TEXT NOT NULL DEFAULT '{}',
  cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1)),
- error_code TEXT, payload TEXT NOT NULL DEFAULT '{}'
+ error_code TEXT, payload TEXT NOT NULL DEFAULT '{}',
+ lane TEXT NOT NULL DEFAULT 'short', finished_at REAL, result TEXT NOT NULL DEFAULT '{}',
+ attempts INTEGER NOT NULL DEFAULT 0, purge_pending INTEGER NOT NULL DEFAULT 0 CHECK(purge_pending IN (0,1))
 );
+CREATE INDEX jobs_claim ON jobs(lane,state,lease_expires_at,id);
+CREATE INDEX jobs_terminal ON jobs(state,finished_at,id);
 CREATE TABLE nodes (
  id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT NOT NULL UNIQUE, type TEXT NOT NULL,
  key TEXT NOT NULL, properties TEXT NOT NULL CHECK(json_valid(properties)),
@@ -69,7 +73,8 @@ CREATE TABLE evidence (
  byte_size INTEGER NOT NULL CHECK(byte_size>=0), media_type TEXT, encoding TEXT,
  blob_path TEXT NOT NULL, lifecycle TEXT NOT NULL DEFAULT 'ready',
  delete_job_id TEXT, delete_cascade INTEGER, delete_requested_at INTEGER, index_generation INTEGER NOT NULL DEFAULT 0,
- index_owner_job_id INTEGER REFERENCES jobs(id), index_owner_token TEXT,
+ index_state TEXT NOT NULL DEFAULT 'pending', incomplete INTEGER NOT NULL DEFAULT 1,
+ index_owner_job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL, index_owner_token TEXT,
  created_at INTEGER, updated_at INTEGER,
  CHECK((lifecycle='ready' AND delete_job_id IS NULL AND delete_cascade IS NULL AND delete_requested_at IS NULL) OR
  (lifecycle='delete_pending' AND delete_job_id IS NOT NULL AND delete_cascade IS NOT NULL AND delete_cascade IN (0,1) AND typeof(delete_cascade)='integer' AND typeof(delete_requested_at)='integer'))

@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Annotated, Any
+from uuid import UUID
+
+from pydantic import AfterValidator
 
 from .catalog import catalog_manifest, validate_record
 from .mutations import canonical_json
@@ -52,3 +55,23 @@ def format_timestamp(value: int) -> str:
     """Emit a fixed six-digit UTC representation, including four-digit years."""
     date = _EPOCH + timedelta(microseconds=value)
     return f"{date.year:04d}-{date.month:02d}-{date.day:02d}T{date.hour:02d}:{date.minute:02d}:{date.second:02d}.{date.microsecond:06d}Z"
+
+
+def validate_evidence_id(value: str) -> str:
+    """Require the canonical content-addressed public evidence identity."""
+    if re.fullmatch(r"e_[0-9a-f]{64}", value) is None:
+        raise ValueError("invalid evidence id")
+    return value
+
+
+def validate_record_id(kind: str, value: str) -> str:
+    """Keep graph UUIDs and content-addressed evidence IDs disjoint."""
+    if kind == "evidence":
+        return validate_evidence_id(value)
+    if len(value) != 36:
+        raise ValueError("invalid graph id")
+    UUID(value)
+    return value
+
+
+EvidenceID = Annotated[str, AfterValidator(validate_evidence_id)]

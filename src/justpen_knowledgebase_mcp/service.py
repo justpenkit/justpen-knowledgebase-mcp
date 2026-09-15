@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .errors import InvalidParamsError
-from .models import NeighborsRequest, SearchRequest
+from .evidence import IngestRequest, ReadEvidenceRequest
+from .jobs import JobRunner, JobsRequest
+from .models import DeleteRequest, NeighborsRequest, SearchRequest
 from .shutdown import ShutdownObserver
 from .storage.connection import SQLiteRuntime
 from .storage.graph import Graph, graph_types
@@ -34,6 +36,35 @@ class KnowledgeBase:
     workspace: WorkspacePaths
     workers: DatabaseWorkers
     maintenance: CheckpointMaintenance
+    job_runner: JobRunner
+
+    async def ingest_evidence(self, request: IngestRequest | dict[str, Any]) -> dict[str, Any]:
+        """Accept raw evidence durably and wait for bounded short storage work."""
+        try:
+            validated = await self.job_runner.io("short", lambda: IngestRequest.model_validate(request))
+        except ValueError as exc:
+            raise InvalidParamsError("invalid evidence source") from exc
+        return await self.job_runner.ingest(validated)
+
+    async def read_evidence(self, request: ReadEvidenceRequest | dict[str, Any]) -> dict[str, Any]:
+        """Return a bounded exact byte range from ready owned evidence."""
+        try:
+            validated = ReadEvidenceRequest.model_validate(request)
+        except ValueError as exc:
+            raise InvalidParamsError("invalid evidence range") from exc
+        return await self.job_runner.read(validated)
+
+    async def delete(self, request: DeleteRequest) -> dict[str, Any]:
+        """Accept one atomic batch and run bounded durable cleanup steps."""
+        return await self.job_runner.delete(request)
+
+    async def jobs(self, request: JobsRequest | dict[str, Any]) -> dict[str, Any]:
+        """Read and control bounded durable job metadata."""
+        try:
+            validated = JobsRequest.model_validate(request)
+        except ValueError as exc:
+            raise InvalidParamsError("invalid job operation") from exc
+        return await self.job_runner.control(validated)
 
     async def write(self, request: WriteRequest) -> dict[str, Any]:
         """Atomically merge a validated graph batch in the admitted writer."""
@@ -80,13 +111,17 @@ class KnowledgeBase:
                 factory = SQLiteRuntime(workspace, config)
                 workers = DatabaseWorkers(factory)
                 maintenance = CheckpointMaintenance(factory)
+                job_runner = None
                 try:
                     await maintenance.start()
                     await workers.start()
-                    yield cls(config, workspace, workers, maintenance)
+                    policy = await workers.read(lambda connection, _token: factory.guard.policy(connection))
+                    job_runner = JobRunner(workers, workspace, policy)
+                    await job_runner.start()
+                    yield cls(config, workspace, workers, maintenance, job_runner)
                 finally:
                     try:
-                        await _close_workers(workers, observer, maintenance)
+                        await _close_workers(workers, observer, maintenance, job_runner)
                     finally:
                         factory.close()
         finally:
@@ -96,7 +131,10 @@ class KnowledgeBase:
 
 
 async def _close_workers(
-    workers: DatabaseWorkers, observer: ShutdownObserver, maintenance: CheckpointMaintenance
+    workers: DatabaseWorkers,
+    observer: ShutdownObserver,
+    maintenance: CheckpointMaintenance,
+    job_runner: JobRunner | None = None,
 ) -> None:
     # EOF/startup unwind may be the first trigger; a CLI signal may already have
     # started this same observer while transport teardown was still pending.
@@ -104,9 +142,13 @@ async def _close_workers(
 
     async def close_all() -> None:
         try:
-            await maintenance.close()
+            if job_runner is not None:
+                await job_runner.close()
         finally:
-            await workers.close()
+            try:
+                await maintenance.close()
+            finally:
+                await workers.close()
 
     cleanup = asyncio.create_task(close_all())
     cancelled = False

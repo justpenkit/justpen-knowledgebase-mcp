@@ -7,9 +7,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .identity import parse_timestamp
+from .identity import EvidenceID, parse_timestamp, validate_evidence_id, validate_record_id
 from .mutations import validate_properties
 from .query import validate_filter
+from .responses import BlockerDetails
 
 Kind = Literal["nodes", "relations", "evidence"]
 GraphKind = Literal["nodes", "relations"]
@@ -54,8 +55,8 @@ class Mutation(ClosedModel):
     source: str | None = None
     observed_at: str | None = None
     remove_properties: list[str] = Field(default_factory=list, max_length=100)
-    evidence_add: list[RecordID] = Field(default_factory=list, max_length=100)
-    evidence_remove: list[RecordID] = Field(default_factory=list, max_length=100)
+    evidence_add: list[EvidenceID] = Field(default_factory=list, max_length=100)
+    evidence_remove: list[EvidenceID] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")
     def validate_mutation(self) -> Self:
@@ -73,7 +74,7 @@ class Mutation(ClosedModel):
         validate_properties(self.properties)
         for identifiers in (self.evidence_add, self.evidence_remove):
             for identifier in identifiers:
-                UUID(identifier)
+                validate_evidence_id(identifier)
             if len(identifiers) != len(set(identifiers)):
                 raise ValueError("duplicate evidence mutation")
         if set(self.evidence_add) & set(self.evidence_remove):
@@ -130,7 +131,7 @@ class GetRequest(ClosedModel):
     """Bounded record or single-owner association retrieval."""
 
     kind: Kind
-    ids: list[RecordID] = Field(min_length=1, max_length=100)
+    ids: list[RecordID | EvidenceID] = Field(min_length=1, max_length=100)
     view: Literal["record", "links", "sources"] = "record"
     limit: Annotated[int, Field(ge=1, le=100)] = 20
     cursor: str | None = None
@@ -139,7 +140,7 @@ class GetRequest(ClosedModel):
     def view_rules(self) -> Self:
         """Bind association views to exactly one valid owner."""
         for identifier in self.ids:
-            UUID(identifier)
+            validate_record_id(self.kind, identifier)
         if self.view != "record" and len(self.ids) != 1:
             raise ValueError("association view requires one id")
         if self.view == "sources" and self.kind != "evidence":
@@ -153,14 +154,14 @@ class DeleteRequest(ClosedModel):
     """Atomic admission of a bounded unique target set."""
 
     kind: Kind
-    ids: list[RecordID] = Field(min_length=1, max_length=100)
+    ids: list[RecordID | EvidenceID] = Field(min_length=1, max_length=100)
     cascade: bool = False
 
     @model_validator(mode="after")
     def unique_ids(self) -> Self:
         """Reject duplicate targets before database state checks."""
         for identifier in self.ids:
-            UUID(identifier)
+            validate_record_id(self.kind, identifier)
         if len(set(self.ids)) != len(self.ids):
             raise ValueError("duplicate delete ids")
         return self
@@ -208,14 +209,14 @@ class RecordViewResult(ClosedModel):
     """Full records and explicit missing or response-budget remainder IDs."""
 
     records: list[dict[str, Any]] = Field(max_length=100)
-    missing_ids: list[RecordID] = Field(max_length=100)
-    remaining_ids: list[RecordID] = Field(max_length=100)
+    missing_ids: list[RecordID | EvidenceID] = Field(max_length=100)
+    remaining_ids: list[RecordID | EvidenceID] = Field(max_length=100)
 
 
 class LinksViewResult(ClosedModel):
     """Stable association page for one graph or evidence owner."""
 
-    links: list[RecordID | TargetRef] = Field(max_length=100)
+    links: list[EvidenceID | TargetRef] = Field(max_length=100)
     next_cursor: str | None
 
 
@@ -332,3 +333,42 @@ class NeighborsResult(ClosedModel):
     truncated: bool
     reason: Literal["max_nodes", "max_edges", "deadline", "response_bytes"] | None
     frontier: list[RecordID] = Field(max_length=1000)
+
+
+class JobProgress(ClosedModel):
+    """Only bounded operational counts leave the durable checkpoint store."""
+
+    bytes: Annotated[int, Field(ge=0)] = 0
+    chunks: Annotated[int, Field(ge=0)] = 0
+    rows_deleted: Annotated[int, Field(ge=0)] = 0
+
+
+class JobResult(ClosedModel):
+    """One public job state, independent of private path and token bookkeeping."""
+
+    job_id: RecordID
+    kind: Literal["ingest", "delete", "reindex"]
+    state: Literal["queued", "running", "completed", "failed", "cancelled"]
+    lane: Literal["short", "bulk"]
+    attempts: Annotated[int, Field(ge=0)]
+    progress: JobProgress = Field(default_factory=JobProgress)
+    effective_media_type: str | None = None
+    index_state: Literal["pending", "ready", "not_applicable", "index_failed"]
+    incomplete: bool = False
+    evidence_id: EvidenceID | None = None
+    warnings: list[Annotated[str, Field(max_length=256)]] = Field(default_factory=list[str], max_length=101)
+    needs_attention: bool = False
+    purge_pending: bool = False
+    error: Annotated[str, Field(max_length=32)] | None = None
+    reason: Annotated[str, Field(max_length=256)] | None = None
+    deleted_ids: list[RecordID | EvidenceID] = Field(default_factory=list[str], max_length=100)
+    status: Literal["accepted", "completed", "failed", "cancelled"] | None = None
+
+    details: BlockerDetails | None = None
+
+    @model_validator(mode="after")
+    def blocker_presence(self) -> Self:
+        """Pending failures keep the same typed bounded blocker as direct operations."""
+        if self.reason == "RECORD_DELETING" and not isinstance(self.details, BlockerDetails):
+            raise ValueError("pending failure requires blocker details")
+        return self

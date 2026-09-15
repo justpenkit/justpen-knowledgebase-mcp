@@ -184,7 +184,11 @@ async def test_cascade_false_evidence_link_matrix_and_atomic_hundred_ids(tmp_pat
         with pytest.raises(ConflictError, match="DEPENDENCIES_EXIST"):
             await admit(kb, kind, [target], cascade=False)
         with pytest.raises(MissingRecordsError) as caught:
-            await admit(kb, kind, [target, *(str(uuid4()) for _ in range(99))])
+            await admit(
+                kb,
+                kind,
+                [target, *(("e_" + uuid4().hex * 2) if kind == "evidence" else str(uuid4()) for _ in range(99))],
+            )
         assert len(caught.value.details.missing_ids) == 99
         assert await kb.workers.read(lambda c, t: c.execute("select count(*) from jobs").get) == 0
         assert (await kb.get(GetRequest(kind=kind, ids=[target])))["records"][0]["lifecycle"] == "ready"
