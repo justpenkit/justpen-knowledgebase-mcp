@@ -525,11 +525,14 @@ async def test_two_stdio_and_http_share_commits_after_disconnect_and_kill(tmp_pa
         )
 
 
-@pytest.mark.parametrize("mode", ["normal", "partial-setup", "lifespan", "cancelled-read"])
+@pytest.mark.parametrize(
+    "mode",
+    ["normal", "partial-setup", "lifespan", "normal-lifespan", "cancelled-lifespan", "cancelled-read", "flush-error"],
+)
 async def test_stdio_adapter_restores_owned_descriptors_and_flags(tmp_path, mode):
 
     probe = """
-import os,fcntl,json,asyncio
+import os,fcntl,json,asyncio,sys
 from contextlib import asynccontextmanager
 import anyio
 from justpen_knowledgebase_mcp.stdio import _wire_streams, KnowledgeBaseMCP
@@ -547,33 +550,60 @@ calls=0
 def failure(fd, value):
     global calls
     calls+=1
-    if calls==2: raise OSError("injected partial setup")
+    if calls==2:
+        print("accidental startup output")
+        raise OSError("injected partial setup")
     original(fd,value)
 mode=os.environ["TEST_MODE"]
 if mode=="partial-setup": os.set_blocking=failure
 @asynccontextmanager
 async def broken_lifespan(server):
-    print("accidental startup output",flush=True)
-    raise OSError("injected lifespan startup")
-    yield
+    print("accidental startup output")
+    if mode=="lifespan":
+        raise OSError("injected lifespan startup")
+    if mode=="cancelled-lifespan":
+        asyncio.get_running_loop().call_later(.05, asyncio.current_task().cancel)
+    try:
+        yield
+    finally:
+        print("accidental buffered teardown output")
 async def cancelled_read():
     with _wire_streams() as (reader, writer):
+        print("accidental startup output")
         with anyio.fail_after(.05):
             await reader.readline()
+output=sys.stdout
+flush_attempts=0
+flush_error=None
+class FlushFailure:
+    def flush(self):
+        global flush_attempts
+        flush_attempts+=1
+        assert os.fstat(1).st_ino==os.fstat(2).st_ino
+        raise OSError("injected flush failure")
+if mode=="flush-error": sys.stdout=FlushFailure()
 try:
-    if mode=="lifespan":
+    if mode in ("lifespan", "normal-lifespan", "cancelled-lifespan"):
         asyncio.run(KnowledgeBaseMCP("probe",lifespan=broken_lifespan).run_stdio_async())
     elif mode=="cancelled-read":
         asyncio.run(cancelled_read())
         raise AssertionError("partial read did not await cancellation")
     else:
         with _wire_streams():
-            print("accidental startup output",flush=True)
+            if mode!="flush-error": print("accidental startup output")
             assert os.fstat(1).st_ino==os.fstat(2).st_ino
+except asyncio.CancelledError:
+    assert mode=="cancelled-lifespan"
 except TimeoutError:
     assert mode=="cancelled-read"
-except OSError:
-    assert mode in ("partial-setup", "lifespan")
+except OSError as exc:
+    assert mode in ("partial-setup", "lifespan", "flush-error")
+    if mode=="flush-error": flush_error=str(exc)
+finally:
+    sys.stdout=output
+if mode=="flush-error":
+    assert flush_attempts==1
+    assert flush_error=="injected flush failure"
 assert [fcntl.fcntl(fd,fcntl.F_GETFL) for fd in (0,1)]==flags
 assert [os.fstat(fd).st_ino for fd in (0,1)]==identities
 assert descriptors()==before
@@ -581,14 +611,19 @@ print(json.dumps({"restored":True}),flush=True)
 """
     async with process(tmp_path, probe=probe, env={"TEST_MODE": mode}) as child:
         assert child.stdin is not None
-        child.stdin.write(b'{"unfinished":')
-        await child.stdin.drain()
+        if mode == "normal-lifespan":
+            child.stdin.close()
+        else:
+            child.stdin.write(b'{"unfinished":')
+            await child.stdin.drain()
         await asyncio.wait_for(child.wait(), 5)
         out, err = await child.communicate()
         assert child.returncode == 0, err
         assert json.loads(out) == {"restored": True}
-        if mode in ("normal", "lifespan"):
+        if mode != "flush-error":
             assert b"accidental startup output" in err
+        if mode in ("normal-lifespan", "cancelled-lifespan"):
+            assert b"accidental buffered teardown output" in err
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])

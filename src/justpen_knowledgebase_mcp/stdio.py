@@ -12,6 +12,7 @@ import fcntl
 import io
 import os
 import stat
+import sys
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -101,6 +102,9 @@ def _wire_streams() -> Generator[tuple[_PipeFile, _PipeFile]]:
         with Path(os.devnull).open("rb") as empty:
             os.dup2(empty.fileno(), 0)
         os.dup2(2, 1)
+        # Drain Python text buffering while fd 1 still targets stderr. ExitStack
+        # restores flags/descriptors even if this flush raises during unwind.
+        stack.callback(sys.stdout.flush)
         for owned in descriptors:
             os.set_blocking(owned, False)
         yield _PipeFile(descriptors[0]), _PipeFile(descriptors[1])
