@@ -3,13 +3,16 @@
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractContextManager, asynccontextmanager
 
-from fastmcp import Context, FastMCP
+from fastmcp import FastMCP
 
 from .config import ServerConfig
 from .service import KnowledgeBase
 from .shutdown import ShutdownObserver
 from .tools import register_all
+from .tools.request_presence import get_service
 from .workspace import WorkspacePaths
+
+__all__ = ["create_app", "get_service"]
 
 
 def create_app(
@@ -27,14 +30,6 @@ def create_app(
         ) as service:
             yield {"knowledgebase": service}
 
-    server = FastMCP("justpen-knowledgebase-mcp", lifespan=lifespan)
+    server = FastMCP("justpen-knowledgebase-mcp", lifespan=lifespan, strict_input_validation=True)
     register_all(server)
     return server
-
-
-def get_service(context: Context) -> KnowledgeBase:
-    """Resolve the owning service for a public tool wrapper."""
-    service = context.lifespan_context.get("knowledgebase")
-    if not isinstance(service, KnowledgeBase):
-        raise TypeError("knowledgebase lifespan is not active")
-    return service

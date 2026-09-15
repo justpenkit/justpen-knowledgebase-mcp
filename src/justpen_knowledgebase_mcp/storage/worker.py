@@ -79,6 +79,18 @@ class DatabaseWorkers:
         self._stopping = False
         self._loop: asyncio.AbstractEventLoop | None = None
 
+    def queue_status(self) -> dict[str, Any]:
+        """Snapshot process-local queues under their ordinary short mutex."""
+        with self._condition:
+            return {
+                "read_queued": len(self._queues["read"]),
+                "write_queued": len(self._queues["write"]),
+                "control_queued": len(self._queues["control"]),
+                "reader_running": sum(owner.reader and owner.current is not None for owner in self._owners),
+                "writer_running": sum(not owner.reader and owner.current is not None for owner in self._owners),
+                "stopping": self._stopping,
+            }
+
     async def start(self) -> None:
         """Initialize owner connections; lifespan must close even on startup failure."""
         self._loop = asyncio.get_running_loop()

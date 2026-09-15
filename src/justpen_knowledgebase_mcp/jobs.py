@@ -448,6 +448,14 @@ class JobRunner:
         finally:
             os.close(bucket)
 
+    def queue_status(self) -> dict[str, Any]:
+        """Snapshot event-loop-owned I/O admission counts without waiting."""
+        return {
+            "short": {"pending": self._pending["short"], "capacity": 32},
+            "bulk": {"pending": self._pending["bulk"], "capacity": 32},
+            "stopping": self._stopping,
+        }
+
     def retention_status(self) -> dict[str, Any]:
         """Serve a bounded copy without DB operations or file locks, including cache age."""
         snapshot = dict(self._retention_cache)

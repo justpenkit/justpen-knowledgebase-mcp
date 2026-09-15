@@ -1,12 +1,13 @@
-"""Public tool registration; populated by the graph API implementation."""
+"""Register the eleven bounded public knowledgebase tools."""
 
-from __future__ import annotations
+from fastmcp import FastMCP
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from fastmcp import FastMCP
+from . import evidence, graph, maintenance, search
+from .request_presence import RequestPresence
 
 
-def register_all(_mcp: FastMCP) -> None:
-    """Keep the registry empty until real knowledgebase tools are implemented."""
+def register_all(mcp: FastMCP) -> None:
+    """Install unconditional request presence and the four public tool families."""
+    mcp.add_middleware(RequestPresence())
+    for family in (graph, evidence, search, maintenance):
+        family.register(mcp)

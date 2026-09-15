@@ -111,3 +111,40 @@ def bounded_response(data: dict[str, Any]) -> dict[str, Any]:
     if len(canonical_json(success_response(data)).encode("utf-8")) > 256 * 1024:
         raise LimitError("response exceeds byte budget")
     return data
+
+
+class TypesResult(BaseModel):
+    """Controlled catalog discovery plus optional ready counts."""
+
+    model_config = ConfigDict(extra="forbid")
+    types: list[dict[str, Any]] = Field(max_length=100)
+    counts_deferred: bool
+    common: dict[str, Any]
+    formats: dict[str, Any]
+    next_cursor: str | None
+
+
+def tool_output_schema(data_schema: dict[str, Any]) -> dict[str, Any]:
+    """Compose the public success/error schema without flattening source DTOs."""
+    data = dict(data_schema)
+    definitions = dict(data.pop("$defs", {}))
+    if "title" in data:
+        title = data["title"]
+        definitions[title] = data
+        data = {"$ref": f"#/$defs/{title}"}
+    error = ErrorResult.model_json_schema()
+    definitions.update(error.pop("$defs", {}))
+    definitions["ErrorResult"] = error
+    return {
+        "type": "object",
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {"status": {"const": "ok"}, "data": data},
+                "required": ["status", "data"],
+                "additionalProperties": False,
+            },
+            {"$ref": "#/$defs/ErrorResult"},
+        ],
+        "$defs": definitions,
+    }
