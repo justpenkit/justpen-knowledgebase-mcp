@@ -131,7 +131,13 @@ class ReindexRequest(ClosedModel):
         return self
 
 
-def admit_reindex(connection: apsw.Connection, request: ReindexRequest, job_id: str) -> dict[str, Any]:
+def admit_reindex(
+    connection: apsw.Connection,
+    request: ReindexRequest,
+    job_id: str,
+    *,
+    initiating_context: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Claim the workspace full slot and metadata generations in BEGIN IMMEDIATE."""
     payload = request.model_dump(exclude_none=True)
     if request.all:
@@ -139,10 +145,14 @@ def admit_reindex(connection: apsw.Connection, request: ReindexRequest, job_id: 
             "SELECT uuid,payload FROM jobs WHERE kind='reindex' AND json_extract(payload,'$.all')=1 AND state IN ('queued','running')"
         ).fetchone()
         if active is not None:
-            if json.loads(active[1]) != payload:
+            active_payload = json.loads(active[1])
+            active_payload.pop("_telemetry", None)
+            if active_payload != payload:
                 raise ConflictError("FULL_REINDEX_ACTIVE")
             return {**JobStore.get(connection, active[0]), "reused": True, "status": "accepted"}
     _validate_targets(connection, request)
+    if initiating_context:
+        payload["_telemetry"] = initiating_context
     JobStore.insert(connection, job_id, "reindex", "bulk", payload)
     if request.all:
         connection.execute("UPDATE settings SET query_epoch=query_epoch+1 WHERE singleton=1")

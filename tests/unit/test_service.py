@@ -5,12 +5,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from opentelemetry.context import Context, attach, detach
 
 from justpen_knowledgebase_mcp import service
 from justpen_knowledgebase_mcp.config import ServerConfig, WorkspacePolicy
 from justpen_knowledgebase_mcp.errors import InvalidParamsError, LimitError
 from justpen_knowledgebase_mcp.models import RetentionPolicyView, RetentionStatus
 from justpen_knowledgebase_mcp.storage.maintenance import StatusCache
+from justpen_knowledgebase_mcp.telemetry.context import extract_carrier
 
 from .helpers import EVIDENCE, NODE
 
@@ -175,3 +177,31 @@ async def test_cancelled_close_waits_for_owner_cleanup():
     with pytest.raises(asyncio.CancelledError):
         await task
     workers.close.assert_awaited_once()
+
+
+async def test_reindex_captures_context_before_worker_thread(monkeypatch):
+
+    kb, workers, _runner, _maintenance, _sampler = facade()
+    parent = "00-" + "11" * 16 + "-" + "22" * 8 + "-01"
+    saved = []
+
+    def admit(_connection, _request, _job_id, *, initiating_context):
+        saved.append(initiating_context)
+        return {"lane": "bulk"}
+
+    monkeypatch.setattr(service, "admit_reindex", admit)
+
+    async def worker(callback, operation):
+        token = attach(Context())
+        try:
+            return callback(Mock(), operation)
+        finally:
+            detach(token)
+
+    workers.write.side_effect = worker
+    token = attach(extract_carrier({"traceparent": parent}).context)
+    try:
+        await kb.reindex({"kind": "nodes", "all": True})
+    finally:
+        detach(token)
+    assert saved == [{"traceparent": parent}]

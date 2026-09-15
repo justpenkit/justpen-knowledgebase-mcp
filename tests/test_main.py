@@ -77,7 +77,7 @@ async def test_main_runs_to_completion_when_server_exits(monkeypatch: pytest.Mon
     capture_signals(monkeypatch)
     before = asyncio.all_tasks()
 
-    async def quick_exit() -> None:
+    async def quick_exit(**_kwargs) -> None:
         return
 
     monkeypatch.setattr(main_mod, "create_app", lambda config, **kwargs: SimpleNamespace(run_async=quick_exit))
@@ -91,7 +91,7 @@ async def test_main_propagates_server_failure(monkeypatch: pytest.MonkeyPatch, *
     before = asyncio.all_tasks()
     failure = RuntimeError("server startup failed")
 
-    async def failing_server() -> None:
+    async def failing_server(**_kwargs) -> None:
         if stop_requested:
             handlers[signal.SIGTERM]()
         raise failure
@@ -109,7 +109,7 @@ async def test_signal_waits_for_server_cleanup(monkeypatch: pytest.MonkeyPatch, 
     before = asyncio.all_tasks()
     cleaned_up = asyncio.Event()
 
-    async def running_server() -> None:
+    async def running_server(**_kwargs) -> None:
         try:
             handlers[sig]()
             await asyncio.Event().wait()
@@ -128,7 +128,7 @@ async def test_cancelling_main_cleans_up_server(monkeypatch: pytest.MonkeyPatch)
     started = asyncio.Event()
     cleaned_up = asyncio.Event()
 
-    async def running_server() -> None:
+    async def running_server(**_kwargs) -> None:
         try:
             started.set()
             await asyncio.Event().wait()
@@ -150,7 +150,7 @@ def test_cli_exits_with_failure_when_server_crashes() -> None:
     probe = """
 from justpen_knowledgebase_mcp import __main__ as entrypoint
 
-async def failing_server():
+async def failing_server(**_kwargs):
     raise RuntimeError("server startup failed")
 
 from types import SimpleNamespace
@@ -200,7 +200,9 @@ async def test_shutdown_timeout_logs_and_keeps_waiting_for_cleanup(monkeypatch, 
     monkeypatch.setattr(
         main_mod,
         "create_app",
-        lambda config, **kwargs: SimpleNamespace(run_async=lambda: running_server(kwargs["_shutdown_observer"])),
+        lambda config, **kwargs: SimpleNamespace(
+            run_async=lambda **_run_kwargs: running_server(kwargs["_shutdown_observer"])
+        ),
     )
     monkeypatch.setattr(shutdown_mod, "SHUTDOWN_GRACE_SECONDS", 0.01)
     task = asyncio.create_task(main_mod.main(config))
@@ -268,7 +270,7 @@ if sys.argv[2]=='signal':
         async with KnowledgeBase.open(config, _shutdown_observer=observer):
             print('ready',file=sys.stderr,flush=True)
             await asyncio.Event().wait()
-    entry.create_app=lambda config, **kwargs:SimpleNamespace(run_async=lambda:server(kwargs["_shutdown_observer"]))
+    entry.create_app=lambda config, **kwargs:SimpleNamespace(run_async=lambda **_run_kwargs:server(kwargs["_shutdown_observer"]))
 asyncio.run(entry.main(config))
 """
     process = subprocess.Popen(
@@ -355,7 +357,7 @@ async def test_signal_timeout_before_lifespan_cleanup_logs_once(monkeypatch, cap
     release = asyncio.Event()
     entered = asyncio.Event()
 
-    async def server():
+    async def server(**_kwargs):
         try:
             entered.set()
             if trigger == "signal":

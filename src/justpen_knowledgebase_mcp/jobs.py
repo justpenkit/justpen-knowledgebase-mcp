@@ -38,6 +38,8 @@ from .storage.job_recovery import StageScan, recover_intents, staging_disposable
 from .storage.job_retention import JobRetention
 from .storage.jobs import HEARTBEAT_SECONDS, TERMINAL, Claim, JobStore
 from .storage.worker import OperationToken
+from .telemetry.context import capture_job_context
+from .telemetry.events import TelemetryEvents
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -104,6 +106,7 @@ class JobRunner:
 
     def __init__(self, workers: DatabaseWorkers, workspace: WorkspacePaths, policy: WorkspacePolicy) -> None:
         """Allocate process-local lanes; persistence is exclusively in JobStore."""
+        self.events = TelemetryEvents(logger_provider=None, meter_provider=None)
         self.workers = workers
         self.store = EvidenceStore(workspace, policy)
         self._executors = {
@@ -247,6 +250,10 @@ class JobRunner:
             os.close(bucket)
 
     async def _accept_ingest(self, job_id: str, lane: str, options: dict[str, Any], deadline: float) -> dict[str, Any]:
+        initiating_context = capture_job_context()
+        if initiating_context:
+            options = {**options, "_telemetry": initiating_context}
+
         def accept(connection: apsw.Connection, _token: OperationToken) -> dict[str, Any]:
             JobStore.insert(connection, job_id, "ingest", lane, options)
             return {**JobStore.get(connection, job_id), "status": "accepted"}
@@ -518,15 +525,18 @@ class JobRunner:
         self._claims[claim.token] = claim
         heart = asyncio.create_task(self._heartbeat(claim))
         try:
-            claim.check()
-            if claim.kind == "ingest":
-                await self._ingest_step(claim)
-            elif claim.kind == "reindex":
-                await reindex_step(self, claim)
-            else:
-                await self._delete_step(claim)
-        except (McpError, OSError) as exc:
-            await self._fail_claim(claim, exc)
+            with self.events.job_step(claim.kind, claim.payload.get("_telemetry")) as observation:
+                try:
+                    claim.check()
+                    if claim.kind == "ingest":
+                        await self._ingest_step(claim)
+                    elif claim.kind == "reindex":
+                        await reindex_step(self, claim)
+                    else:
+                        await self._delete_step(claim)
+                except (McpError, OSError) as exc:
+                    observation.outcome = "cancelled" if claim.cancelled else "error"
+                    await self._fail_claim(claim, exc)
         finally:
             heart.cancel()
             with contextlib.suppress(asyncio.CancelledError):

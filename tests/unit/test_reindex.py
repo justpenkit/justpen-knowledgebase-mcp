@@ -193,3 +193,11 @@ async def test_index_stream_closes_file_generator_on_publish_failure(monkeypatch
         assert [call.args[-1] for call in publish.call_args_list] == [0, 1]
     runner.close_io_owner.assert_awaited_once()
     stream_context.__exit__.assert_called_once()
+
+
+def test_full_admission_does_not_compare_telemetry_as_selection(monkeypatch):
+    request = reindex.ReindexRequest(kind="nodes", all=True)
+    payload = {**request.model_dump(exclude_none=True), "_telemetry": {"traceparent": "old"}}
+    monkeypatch.setattr(reindex.JobStore, "get", Mock(return_value={"lane": "bulk"}))
+    db = database(cursor(rows=[(NODE, json.dumps(payload))]))
+    assert reindex.admit_reindex(db, request, OTHER, initiating_context={"traceparent": "new"})["reused"]

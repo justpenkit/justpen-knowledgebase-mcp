@@ -23,6 +23,7 @@ from .storage.maintenance import CheckpointMaintenance
 from .storage.search import search
 from .storage.traversal import neighbors
 from .storage.worker import DatabaseWorkers, OperationToken
+from .telemetry.context import capture_job_context
 from .workspace import WorkspacePaths
 
 if TYPE_CHECKING:
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from .config import ServerConfig
+    from .telemetry.events import TelemetryEvents
 
 
 @dataclass
@@ -88,8 +90,10 @@ class KnowledgeBase:
             validated = ReindexRequest.model_validate(request)
         except ValueError as exc:
             raise InvalidParamsError("invalid reindex request") from exc
+        initiating_context = capture_job_context()
         result = await self.workers.write(
-            lambda c, _t: admit_reindex(c, validated, str(uuid4())), OperationToken(deadline)
+            lambda c, _t: admit_reindex(c, validated, str(uuid4()), initiating_context=initiating_context),
+            OperationToken(deadline),
         )
         self.job_runner.wake(result["lane"])
         return bounded_response(result)
@@ -184,6 +188,7 @@ class KnowledgeBase:
         *,
         runtime_context: Callable[[WorkspacePaths], AbstractContextManager[None]] | None = None,
         _shutdown_observer: ShutdownObserver | None = None,
+        _telemetry_events: TelemetryEvents | None = None,
     ) -> AsyncGenerator[KnowledgeBase]:
         """Open resources at application lifespan entry and close in owner order."""
         observer = _shutdown_observer or ShutdownObserver()
@@ -200,6 +205,8 @@ class KnowledgeBase:
                     await workers.start()
                     policy = await workers.read(lambda connection, _token: factory.guard.policy(connection))
                     job_runner = JobRunner(workers, workspace, policy)
+                    if _telemetry_events is not None:
+                        job_runner.events = _telemetry_events
                     await job_runner.start()
                     await status_sampler.start()
                     yield cls(config, workspace, workers, maintenance, job_runner, status_sampler)

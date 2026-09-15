@@ -1,15 +1,51 @@
 """Entrypoint for `python -m justpen_knowledgebase_mcp`."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
 import signal
 import sys
+from importlib.metadata import version
+from typing import TYPE_CHECKING
 
-from .app import create_app
 from .cli import parse_config, temporary_environment
 from .config import ServerConfig
 from .shutdown import ShutdownObserver
+from .telemetry.config import TelemetryConfig, configure_sdk_environment, read_config
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+    from contextlib import AbstractContextManager
+    from types import FrameType
+
+    from fastmcp import FastMCP
+
+    from .telemetry.runtime import TelemetryRuntime
+    from .workspace import WorkspacePaths
+
+
+def create_app(
+    config: ServerConfig,
+    *,
+    runtime_context: Callable[[WorkspacePaths], AbstractContextManager[None]] | None = None,
+    _shutdown_observer: ShutdownObserver | None = None,
+    telemetry: TelemetryRuntime | None = None,
+) -> FastMCP:
+    """Import native instrumentation only after the CLI isolates OTel settings."""
+    from .app import create_app as factory  # noqa: PLC0415 — SDK resolves providers at import time
+
+    return factory(config, runtime_context=runtime_context, _shutdown_observer=_shutdown_observer, telemetry=telemetry)
+
+
+def _initialize_telemetry(config: TelemetryConfig, *, service_version: str) -> TelemetryRuntime:
+    configure_sdk_environment(config)
+    from .telemetry.export import protect_cli_diagnostics  # noqa: PLC0415 — SDK imports follow environment isolation
+    from .telemetry.runtime import initialize  # noqa: PLC0415 — ambient providers must be removed first
+
+    protect_cli_diagnostics()
+    return initialize(config, service_version=service_version)
 
 
 def _setup_logging(level: str) -> None:
@@ -25,8 +61,21 @@ async def main(config: ServerConfig | None = None) -> None:
     config = config or ServerConfig.from_env(os.environ)
     _setup_logging(config.log_level)
 
+    telemetry = _initialize_telemetry(read_config(os.environ), service_version=version("justpen-knowledgebase-mcp"))
+    logging.getLogger("fastmcp").setLevel(config.log_level)
+    try:
+        await _serve(config, telemetry)
+    except BaseException:
+        telemetry.events.lifecycle("mcp.server.failed", {})
+        raise
+    finally:
+        telemetry.events.lifecycle("mcp.server.stopped", {})
+        await telemetry.shutdown()
+
+
+async def _serve(config: ServerConfig, telemetry: TelemetryRuntime) -> None:
     observer = ShutdownObserver()
-    mcp = create_app(config, runtime_context=temporary_environment, _shutdown_observer=observer)
+    mcp = create_app(config, runtime_context=temporary_environment, _shutdown_observer=observer, telemetry=telemetry)
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -36,49 +85,72 @@ async def main(config: ServerConfig | None = None) -> None:
         observer.start()
         stop_event.set()
 
-    for sig in original_handlers:
-        loop.add_signal_handler(sig, request_stop)
-
-    if config.transport == "http":
-        run_server = mcp.run_async(
-            transport="http",
-            host=config.host,
-            port=config.port,
-            path="/mcp",
-            log_level=config.log_level,
-            host_origin_protection=True,
-            allowed_hosts=[config.host],
-            uvicorn_config={"timeout_graceful_shutdown": 30, "log_level": config.log_level.lower()},
-        )
-    else:
-        run_server = mcp.run_async()
-    server_task = asyncio.create_task(run_server, name="mcp-server")
-    stop_task = asyncio.create_task(stop_event.wait(), name="stop-signal")
-
+    installed: list[signal.Signals] = []
+    server_task: asyncio.Task[None] | None = None
+    stop_task: asyncio.Task[bool] | None = None
     try:
+        for sig in original_handlers:
+            loop.add_signal_handler(sig, request_stop)
+            installed.append(sig)
+        if config.transport == "http":
+            run_server = mcp.run_async(
+                transport="http",
+                host=config.host,
+                port=config.port,
+                path="/mcp",
+                log_level=None,
+                middleware=telemetry.asgi_middleware(),
+                host_origin_protection=True,
+                allowed_hosts=[config.host],
+                uvicorn_config={
+                    "timeout_graceful_shutdown": 30,
+                    "log_level": config.log_level.lower(),
+                    "log_config": None,
+                    "access_log": False,
+                },
+            )
+        else:
+            run_server = mcp.run_async(transport="stdio")
+        server_task = asyncio.create_task(run_server, name="mcp-server")
+        stop_task = asyncio.create_task(stop_event.wait(), name="stop-signal")
         done, _ = await asyncio.wait({server_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
         if stop_task in done and not server_task.done():
             observer.start()
             server_task.cancel()
-            # Wait for shutdown without suppressing cancellation of main itself.
+            # Native owners drain before optional exporters are closed by main.
             await _await_cleanup(server_task)
             if server_task.cancelled():
                 return
         await server_task
     finally:
         observer.start()
-        server_task.cancel()
-        stop_task.cancel()
+        if server_task is not None:
+            server_task.cancel()
+        if stop_task is not None:
+            stop_task.cancel()
         try:
-            await _await_cleanup(server_task)
+            if server_task is not None:
+                await _await_cleanup(server_task)
         finally:
             try:
-                await asyncio.gather(stop_task, return_exceptions=True)
+                if stop_task is not None:
+                    await asyncio.gather(stop_task, return_exceptions=True)
                 await observer.close()
             finally:
-                for sig, handler in original_handlers.items():
-                    loop.remove_signal_handler(sig)
-                    signal.signal(sig, handler)
+                _restore_handlers(loop, installed, original_handlers)
+
+
+def _restore_handlers(
+    loop: asyncio.AbstractEventLoop,
+    installed: list[signal.Signals],
+    originals: Mapping[signal.Signals, Callable[[int, FrameType | None], object] | int | None],
+) -> None:
+    for sig in reversed(installed):
+        try:
+            loop.remove_signal_handler(sig)
+            signal.signal(sig, originals[sig])
+        except (OSError, RuntimeError, ValueError):
+            logging.getLogger(__name__).warning("Failed to restore process signal handler")
 
 
 async def _await_cleanup(task: asyncio.Task[None]) -> None:

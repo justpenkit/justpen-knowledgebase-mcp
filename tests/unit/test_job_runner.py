@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from opentelemetry.context import Context, attach, detach
 
 from justpen_knowledgebase_mcp import jobs
 from justpen_knowledgebase_mcp.config import WorkspacePolicy
@@ -15,6 +16,7 @@ from justpen_knowledgebase_mcp.errors import BusyError, ConflictError, LimitErro
 from justpen_knowledgebase_mcp.evidence import IngestRequest, ReadEvidenceRequest
 from justpen_knowledgebase_mcp.models import DeleteRequest
 from justpen_knowledgebase_mcp.storage.evidence import stage_name
+from justpen_knowledgebase_mcp.telemetry.context import extract_carrier
 
 from .helpers import EVIDENCE, NODE, OTHER, claim, cursor, database, job, owner
 
@@ -533,3 +535,26 @@ async def test_retention_loop_wakes_after_each_bounded_pass(runner, failure):
         runner._failure_cache.assert_called_once_with("IO_ERROR: job retention failed")
     else:
         runner._failure_cache.assert_not_called()
+
+
+async def test_ingest_context_captured_before_worker_dispatch(runner, monkeypatch):
+
+    parent = "00-" + "11" * 16 + "-" + "22" * 8 + "-01"
+    inserted = []
+    monkeypatch.setattr(jobs.JobStore, "insert", lambda _c, _id, _kind, _lane, payload: inserted.append(payload))
+    monkeypatch.setattr(jobs.JobStore, "get", lambda *_args: {"state": "queued"})
+
+    async def worker(callback, operation):
+        token = attach(Context())
+        try:
+            return callback(Mock(), operation)
+        finally:
+            detach(token)
+
+    runner.workers.write.side_effect = worker
+    token = attach(extract_carrier({"traceparent": parent}).context)
+    try:
+        await runner._accept_ingest(NODE, "bulk", {"path": "sentinel-secret"}, float("inf"))
+    finally:
+        detach(token)
+    assert inserted[0]["_telemetry"] == {"traceparent": parent}
