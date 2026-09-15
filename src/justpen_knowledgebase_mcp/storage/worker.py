@@ -288,18 +288,18 @@ class DatabaseWorkers:
         # The owner does not dequeue/reuse this connection until cleanup finishes.
         with self._condition:
             owner.current = None
+            owner.connection = None
         # Interrupted INSERT/UPDATE can already have rolled back the transaction.
         connection.set_progress_handler(None)
-        cleanup = OwnerOutcome()
-        with cleanup:
-            if not connection.get_autocommit():
-                connection.execute("ROLLBACK")
-        connection.set_busy_handler(None)
+        cleanup_error = connection.rollback_or_retire()
+        if not connection.retired:
+            connection.set_busy_handler(None)
         with self._condition:
             token.state = "done"
             owner.current = None
+            owner.connection = None if connection.retired else connection
         self._notify(work.future, result, error)
-        if cleanup.error is not None:
+        if cleanup_error is not None:
             # A connection whose rollback failed must not accept another operation.
             raise StorageIOError("database cleanup failed") from None
 

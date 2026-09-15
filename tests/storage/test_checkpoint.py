@@ -8,7 +8,7 @@ import subprocess
 import sys
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 
 import apsw
 import pytest
@@ -16,6 +16,7 @@ import pytest
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import BusyError, ConfigurationError, LimitError, WalBusyError
 from justpen_knowledgebase_mcp.service import KnowledgeBase
+from justpen_knowledgebase_mcp.storage.admission import DbAdmissionGate
 from justpen_knowledgebase_mcp.storage.connection import ManagedConnection, SQLiteRuntime
 from justpen_knowledgebase_mcp.storage.maintenance import CheckpointMaintenance
 from justpen_knowledgebase_mcp.storage.worker import OperationToken
@@ -163,6 +164,7 @@ def test_invalid_restart_statistics_are_not_reuse_proof(small_wal, monkeypatch):
     snapshot = maintenance.run_once("startup")
     assert snapshot["phase"] == "unknown"
     assert snapshot["last_attempt"] != "restart"
+    assert snapshot["checkpoint_mode"] == "RESTART"
 
 
 def test_commit_wake_uses_shared_policy_threshold(small_wal):
@@ -553,3 +555,118 @@ def test_maintenance_close_failure_releases_confirmed_closed_owner_descriptors(s
         maintenance.close_owner()
     assert maintenance.connection is None
     assert maintenance._leader_fd is None
+
+
+def test_reset_publication_busy_never_republishes_reuse_under_shared_gate(small_wal, monkeypatch):
+    _, maintenance, writer = small_wal
+    writer.execute("create table reset_payload(value blob)")
+    writer.execute("insert into reset_payload values(zeroblob(131072))")
+    publish = CheckpointMaintenance._publish
+    publications = []
+
+    def busy_once(self, connection, state):
+        publications.append((state.phase, state.last_attempt, connection.gate.active_token is None))
+        if len(publications) == 1:
+            assert state.last_attempt == "restart"
+            raise apsw.BusyError("injected first reset publication contention")
+        publish(self, connection, state)
+
+    monkeypatch.setattr(CheckpointMaintenance, "_publish", busy_once)
+    snapshot = maintenance.run_once("startup")
+    assert snapshot["phase"] == "unknown"
+    assert publications[0] == ("normal", "restart", True)
+    assert all(phase != "normal" for phase, _, _ in publications[1:])
+    assert json.loads(writer.execute("select maintenance from settings").get)["last_attempt"] == "failed"
+    time.sleep(1.05)
+    assert maintenance.run_once("pressure")["phase"] == "normal"
+
+
+@pytest.mark.parametrize("publication", ["start", "finish"])
+def test_maintenance_failed_rollback_closes_inside_current_gate_and_reopens(small_wal, monkeypatch, publication):
+
+    _, maintenance, writer = small_wal
+    connection = maintenance._open()
+    transaction = DbAdmissionGate.transaction
+    reset_window = DbAdmissionGate.reset_window
+    close_native = ManagedConnection.close_native
+    helper_name = "_start_attempt" if publication == "start" else "_publish"
+    helper = getattr(CheckpointMaintenance, helper_name)
+    failures = []
+    escaped = []
+    scope_states = []
+    closes = []
+
+    def record_error(self, *args):
+        try:
+            return helper(self, *args)
+        except apsw.Error as error:
+            escaped.append(type(error))
+            raise
+
+    def record_state(gate):
+        if gate is connection.gate:
+            try:
+                healthy = connection.get_autocommit()
+            except apsw.ConnectionClosedError:
+                healthy = True
+            scope_states.append((gate.active, healthy))
+
+    @contextmanager
+    def watch_transaction(self, token):
+        try:
+            with transaction(self, token):
+                yield
+        finally:
+            record_state(self)
+
+    @contextmanager
+    def watch_reset(self, mode):
+        try:
+            with reset_window(self, mode) as window:
+                yield window
+        finally:
+            record_state(self)
+
+    def watch_close(self, *, force=False):
+        if self is connection:
+            closes.append((self.gate.active, self.get_autocommit()))
+        close_native(self, force=force)
+
+    monkeypatch.setattr(
+        ManagedConnection, "execute", _fail_publication_then_rollback(connection, publication, failures)
+    )
+    monkeypatch.setattr(ManagedConnection, "close_native", watch_close)
+    monkeypatch.setattr(DbAdmissionGate, "transaction", watch_transaction)
+    monkeypatch.setattr(DbAdmissionGate, "reset_window", watch_reset)
+    monkeypatch.setattr(CheckpointMaintenance, helper_name, record_error)
+    snapshot = maintenance.run_once("startup")
+    assert failures == ["publication", "rollback"]
+    assert all(healthy for _, healthy in scope_states), scope_states
+    assert closes == [(True, False)]
+    assert escaped == [apsw.ConstraintError]
+    assert snapshot["phase"] == "unknown"
+    assert connection.gate.closed
+    assert maintenance.connection is None
+    writer.execute("update settings set query_epoch=query_epoch+1")
+    time.sleep(1.05)
+    assert maintenance.run_once("startup")["phase"] == "normal"
+
+
+def _fail_publication_then_rollback(connection, publication, failures):
+    """Keep the real transaction open at the two precise failure boundaries."""
+    execute = ManagedConnection.execute
+
+    def fail_sql(self, sql, bindings=None, **kwargs):
+        if self is connection:
+            if sql.startswith("UPDATE settings SET maintenance") and not failures:
+                assert bindings is not None
+                state = json.loads(bindings[0])
+                if (state["attempt_finished_at"] is not None) == (publication == "finish"):
+                    failures.append("publication")
+                    raise apsw.ConstraintError("original publication failure")
+            if sql == "ROLLBACK" and failures == ["publication"]:
+                failures.append("rollback")
+                raise apsw.IOError("rollback failure before transaction ended")
+        return execute(self, sql, bindings, **kwargs)
+
+    return fail_sql

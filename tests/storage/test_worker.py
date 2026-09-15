@@ -5,7 +5,9 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 
+import apsw
 import pytest
 
 from justpen_knowledgebase_mcp.config import ServerConfig
@@ -13,10 +15,13 @@ from justpen_knowledgebase_mcp.errors import (
     BusyError,
     CancelledOperationError,
     ConfigurationError,
+    ConflictError,
     InternalError,
     LimitError,
 )
 from justpen_knowledgebase_mcp.service import KnowledgeBase
+from justpen_knowledgebase_mcp.storage.admission import DbAdmissionGate
+from justpen_knowledgebase_mcp.storage.connection import ManagedConnection
 from justpen_knowledgebase_mcp.storage.worker import OperationToken
 
 pytestmark = pytest.mark.integration
@@ -343,3 +348,59 @@ async def test_eight_readers_still_share_one_queue_of_128(tmp_path):
         finally:
             release.set()
             await asyncio.gather(*running, *queued)
+
+
+async def test_failed_worker_rollback_never_releases_gate_with_live_transaction(kb, monkeypatch):
+
+    owner = kb.workers._owners[0]
+    connection = owner.connection
+    execute = ManagedConnection.execute
+    transaction = DbAdmissionGate.transaction
+    close_native = ManagedConnection.close_native
+    failed = []
+    released_states = []
+    closing_states = []
+
+    def fail_rollback(self, sql, bindings=None, **kwargs):
+        if self is connection and sql == "ROLLBACK" and not failed:
+            failed.append(True)
+            raise apsw.IOError("rollback failed while transaction remains active")
+        return execute(self, sql, bindings, **kwargs)
+
+    @contextmanager
+    def watch_gate(self, token):
+        try:
+            with transaction(self, token):
+                yield
+        finally:
+            if self is connection.gate:
+                try:
+                    released_states.append(connection.get_autocommit())
+                except apsw.ConnectionClosedError:
+                    released_states.append(True)
+
+    def watch_close(self, *, force=False):
+        if self is connection:
+            closing_states.append((self.gate.active, owner.current is None, owner.connection is None))
+        close_native(self, force=force)
+
+    def change_then_fail(c, token):
+        c.execute("insert into nodes(uuid,type,key,properties) values('rollback','ip','rollback','{}')")
+        raise ConflictError("original callback failure")
+
+    monkeypatch.setattr(ManagedConnection, "execute", fail_rollback)
+    monkeypatch.setattr(ManagedConnection, "close_native", watch_close)
+    monkeypatch.setattr(DbAdmissionGate, "transaction", watch_gate)
+    with pytest.raises(ConflictError, match="original callback failure"):
+        await kb.workers.write(change_then_fail)
+    await asyncio.shield(owner.closed)
+    assert failed == [True]
+    assert all(released_states), released_states
+    assert closing_states == [(True, True, True)]
+    assert connection.gate.closed
+    other = kb.workers.factory.open_writer()
+    try:
+        assert other.execute("select count(*) from nodes").get == 0
+        other.execute("update settings set query_epoch=query_epoch+1")
+    finally:
+        other.close()

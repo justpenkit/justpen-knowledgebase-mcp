@@ -8,6 +8,7 @@ import math
 import os
 import threading
 import time
+from contextlib import ExitStack
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
@@ -238,21 +239,20 @@ class CheckpointMaintenance:
 
     def _publish(self, connection: ManagedConnection, state: WalState) -> None:
         # Caller owns shared or exclusive gate, never acquire a nested SH scope.
-        connection.execute("BEGIN IMMEDIATE")
         try:
+            connection.execute("BEGIN IMMEDIATE")
             self.factory.guard.check(connection)
             connection.execute("UPDATE settings SET maintenance=? WHERE singleton=1", (state.model_dump_json(),))
             connection.execute("COMMIT")
         except BaseException:
-            if not connection.get_autocommit():
-                connection.execute("ROLLBACK")
+            connection.rollback_or_retire()
             raise
         self.factory.status_cache.update(state)
 
     def _start_attempt(self, connection: ManagedConnection) -> WalState | None:
         with connection.gate.transaction(self._token()):
-            connection.execute("BEGIN IMMEDIATE")
             try:
+                connection.execute("BEGIN IMMEDIATE")
                 self.factory.guard.check(connection)
                 state = WalState.read(connection)
                 self.factory.status_cache.update(state)
@@ -277,8 +277,7 @@ class CheckpointMaintenance:
                     )
                 connection.execute("COMMIT")
             except BaseException:
-                if not connection.get_autocommit():
-                    connection.execute("ROLLBACK")
+                connection.rollback_or_retire()
                 raise
             self.factory.status_cache.update(state)
             return state if due else None
@@ -305,6 +304,9 @@ class CheckpointMaintenance:
                 # No successful start publication: do not run expensive work.
                 self.factory.status_cache.update(WalState(last_attempt="failed"))
         finally:
+            if connection.retired:
+                connection.close()
+                self.connection = None
             fcntl.flock(self._leader_fd, fcntl.LOCK_UN)
         return self.status()
 
@@ -321,6 +323,8 @@ class CheckpointMaintenance:
             }
         )
         self.factory.status_cache.update(failed)
+        if connection.retired:
+            return
         try:
             with connection.gate.transaction(self._token()):
                 self._publish(connection, failed)
@@ -345,29 +349,58 @@ class CheckpointMaintenance:
             or (backlog is not None and backlog >= policy.wal_high_bytes)
         )
         reset = pressure or (valid and log * page >= policy.wal_low_bytes)
-        restarted = False
+        mode: Literal["PASSIVE", "RESTART"] = "PASSIVE"
         result = "passive"
         if reset:
-            try:
-                with connection.gate.reset_window("pressure" if pressure else "opportunistic") as window:
+            with ExitStack() as scopes:
+                try:
+                    window = scopes.enter_context(
+                        connection.gate.reset_window("pressure" if pressure else "opportunistic")
+                    )
+                except BusyError:
+                    result = "skipped_busy"
+                else:
                     self.factory.status_cache.reset(active=True)
                     try:
                         connection.set_busy_timeout(window.busy_timeout_ms)
-                        log, backfilled = connection.wal_checkpoint("main", apsw.SQLITE_CHECKPOINT_RESTART)
-                        restarted = log >= 0 and 0 <= backfilled <= log
-                        result = "restart" if restarted else "invalid"
-                        finished = self._result(
-                            state, policy, log, backfilled, page, allocated, restarted=restarted, result=result
-                        )
-                        self._publish(connection, finished)
+                        mode = "RESTART"
+                        try:
+                            log, backfilled = connection.wal_checkpoint("main", apsw.SQLITE_CHECKPOINT_RESTART)
+                        except apsw.BusyError:
+                            result = "skipped_busy"
+                        else:
+                            restarted = log >= 0 and 0 <= backfilled <= log
+                            result = "restart" if restarted else "invalid"
+                            finished = self._result(
+                                state,
+                                policy,
+                                log,
+                                backfilled,
+                                page,
+                                allocated,
+                                restarted=restarted,
+                                result=result,
+                                checkpoint_mode=mode,
+                            )
+                            # Publication errors must escape; successful reuse
+                            # cannot be republished after losing exclusive scope.
+                            self._publish(connection, finished)
+                            return
                     finally:
                         self.factory.status_cache.reset(active=False)
-                        connection.set_busy_timeout(self.factory.config.db_busy_timeout_ms)
-            except (BusyError, apsw.BusyError):
-                result = "skipped_busy"
-            else:
-                return
-        finished = self._result(state, policy, log, backfilled, page, allocated, restarted=restarted, result=result)
+                        if not connection.retired:
+                            connection.set_busy_timeout(self.factory.config.db_busy_timeout_ms)
+        finished = self._result(
+            state,
+            policy,
+            log,
+            backfilled,
+            page,
+            allocated,
+            restarted=False,
+            result=result,
+            checkpoint_mode=mode,
+        )
         with connection.gate.transaction(self._token()):
             self._publish(connection, finished)
 
@@ -382,6 +415,7 @@ class CheckpointMaintenance:
         *,
         restarted: bool,
         result: str,
+        checkpoint_mode: Literal["PASSIVE", "RESTART"] = "PASSIVE",
     ) -> WalState:
         now = time.time()
         valid = log >= 0 and 0 <= backfilled <= log and isinstance(page, int) and page > 0 and allocated is not None
@@ -410,7 +444,7 @@ class CheckpointMaintenance:
             attempt_started_at=state.attempt_started_at,
             attempt_finished_at=now,
             next_attempt_not_before=now + 1,
-            checkpoint_mode="RESTART" if result in ("restart", "skipped_busy") else "PASSIVE",
+            checkpoint_mode=checkpoint_mode,
             last_attempt=result,
         )
 

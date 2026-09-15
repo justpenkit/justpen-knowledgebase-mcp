@@ -10,7 +10,7 @@ import apsw
 from typing_extensions import override
 
 from ..config import WorkspacePolicy
-from ..errors import BusyError, ConfigurationError, LimitError, WalBusyError
+from ..errors import BusyError, ConfigurationError, LimitError, StorageIOError, WalBusyError
 from .admission import DbAdmissionGate
 from .maintenance import StatusCache, WalState, allocation
 from .schema import SchemaGuard
@@ -31,6 +31,7 @@ class ManagedConnection(apsw.Connection):
 
     def __init__(self, factory: SQLiteRuntime, *, reader: bool = False) -> None:
         """Gate native open, configuration and failure cleanup as one scope."""
+        self._retired = False
         self.gate = DbAdmissionGate(factory.workspace)
         self.policy = WorkspacePolicy()
         self.close_timeout_ms = factory.config.db_busy_timeout_ms
@@ -77,10 +78,39 @@ class ManagedConnection(apsw.Connection):
             force = True
             time.sleep(0.01)
 
+    @property
+    def retired(self) -> bool:
+        """Whether failed transaction cleanup required confirmed native closure."""
+        return self._retired
+
+    def rollback_or_retire(self) -> BaseException | None:
+        """Restore autocommit or close natively before the caller releases its gate.
+
+        Return cleanup failure separately so callers preserve the original SQL
+        or callback error. Gate descriptors belong to the enclosing scope until
+        it unwinds; close() releases them after confirmed native retirement.
+        """
+        self.gate.check_owner()
+        if not self.gate.active:
+            raise RuntimeError("rollback cleanup requires gate scope")
+        outcome = OwnerOutcome()
+        with outcome:
+            if not self.get_autocommit():
+                self.execute("ROLLBACK")
+            if not self.get_autocommit():
+                raise StorageIOError("database rollback did not end transaction")
+        if outcome.error is not None:
+            self._finish_native_close(force=True)
+            self._retired = True
+        return outcome.error
+
     @override
     def close(self, force: bool = False) -> None:
         """Serialize last-close; surface original native failure after cleanup."""
         if self.gate.closed:
+            return
+        if self.retired:
+            self.gate.close()
             return
         with self.gate.transaction(OperationToken(time.monotonic() + self.close_timeout_ms / 1000)):
             error = self._finish_native_close(force=force)
