@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import base64
 import binascii
-import re
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import Field, model_validator
 
 from .identity import EvidenceID, validate_evidence_id
-from .models import ClosedModel, TargetRef
+from .models import ClosedModel, MediaType, TargetRef
 
 INLINE_LIMIT = 256 * 1024
 Encoding = Literal["auto", "utf-8", "utf-16le", "utf-16be", "latin-1"]
@@ -43,7 +42,7 @@ class IngestRequest(ClosedModel):
     path: str | None = None
     text: str | None = None
     base64: str | None = None
-    media_type: str | None = None
+    media_type: MediaType | None = None
     encoding: Encoding = "auto"
     source: str | None = None
     targets: list[TargetRef] = Field(default_factory=list[TargetRef], max_length=100)
@@ -58,8 +57,6 @@ class IngestRequest(ClosedModel):
             raise ValueError("empty path")
         if self.inline_size > INLINE_LIMIT:
             raise ValueError("inline decoded byte limit")
-        if self.media_type is not None and not re.fullmatch(r"[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+", self.media_type):
-            raise ValueError("bare lowercase media type required")
         if not self.text_candidate and self.encoding != "auto":
             raise ValueError("encoding requires text media")
         if self.source is not None and len(self.source.encode("utf-8")) > 256:

@@ -16,6 +16,7 @@ from uuid import UUID
 
 from ..errors import BusyError, InvalidParamsError, StorageIOError
 from ..evidence import INLINE_LIMIT, EvidenceReadResult
+from ..responses import bounded_response
 from .admission import open_lock
 from .disk_budget import CheckSpace
 
@@ -272,7 +273,7 @@ class EvidenceStore:
             "format": request.format,
             "content": content,
         }
-        return EvidenceReadResult.model_validate(result).model_dump(mode="json")
+        return bounded_response(EvidenceReadResult.model_validate(result).model_dump(mode="json"))
 
 
 def _decode_range(raw: bytes, prefix: bytes, encoding: str, offset: int) -> str:

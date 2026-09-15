@@ -6,8 +6,9 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
-from .errors import VALID_ERROR_TYPES, McpError, MissingRecordsError, RecordConflictError, WalBusyError
+from .errors import VALID_ERROR_TYPES, LimitError, McpError, MissingRecordsError, RecordConflictError, WalBusyError
 from .identity import EvidenceID, validate_record_id
+from .mutations import canonical_json
 
 
 class BlockingRecord(BaseModel):
@@ -103,3 +104,10 @@ def exception_response(error: BaseException) -> dict[str, Any]:
         message = message.removeprefix(prefix)
         return error_response(error.error_type, message)
     return error_response("INTERNAL", "operation failed")
+
+
+def bounded_response(data: dict[str, Any]) -> dict[str, Any]:
+    """Enforce the 256 KiB serialized success-envelope budget without changing data."""
+    if len(canonical_json(success_response(data)).encode("utf-8")) > 256 * 1024:
+        raise LimitError("response exceeds byte budget")
+    return data

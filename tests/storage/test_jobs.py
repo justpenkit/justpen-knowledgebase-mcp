@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import os
 import threading
 import time
 from uuid import uuid4
@@ -15,10 +16,12 @@ from justpen_knowledgebase_mcp.errors import (
     BusyError,
     ConflictError,
     InvalidParamsError,
+    LimitError,
     NotFoundError,
     RecordConflictError,
     StorageIOError,
 )
+from justpen_knowledgebase_mcp.evidence import IngestRequest
 from justpen_knowledgebase_mcp.models import DeleteRequest, GetRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage import jobs
@@ -689,3 +692,262 @@ async def test_explicit_encoding_conflict_is_not_silently_overridden(tmp_path):
         assert result["error"] == "CONFLICT"
         record = (await kb.get(GetRequest(kind="evidence", ids=[original["evidence_id"]])))["records"][0]
         assert record["encoding"] == "utf-8"
+
+
+async def test_first_oversized_job_list_item_raises_limit(kb, monkeypatch):
+
+    job_id = str(uuid4())
+    await kb.workers.write(lambda c, t: jobs.JobStore.insert(c, job_id, "ingest", "bulk", {}))
+    real_get = jobs.JobStore.get
+
+    def oversized(connection, identifier):
+        result = real_get(connection, identifier)
+        result["warnings"] = ["\x00" * 256] * 200
+        return result
+
+    monkeypatch.setattr(jobs.JobStore, "get", oversized)
+    with pytest.raises(LimitError, match="response"):
+        await kb.jobs({"limit": 1})
+
+
+async def test_foreground_validation_queue_expires_before_native_admission(tmp_path):
+
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=100)) as kb:
+        entered, release = threading.Event(), threading.Event()
+
+        def blocked():
+            entered.set()
+            release.wait(3)
+
+        active = asyncio.create_task(kb.job_runner.io("short", blocked))
+        assert await asyncio.to_thread(entered.wait, 2)
+        request = asyncio.create_task(kb.ingest_evidence({"base64": "AA=="}))
+        try:
+            with pytest.raises(LimitError):
+                await asyncio.wait_for(asyncio.shield(request), 0.5)
+            assert await kb.workers.read(lambda c, t: c.execute("select count(*) from jobs").get) == 0
+        finally:
+            release.set()
+            await active
+            await asyncio.gather(request, return_exceptions=True)
+
+
+async def test_accumulated_validation_and_bucket_delay_share_deadline(tmp_path, monkeypatch):
+
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=200)) as kb:
+        original = IngestRequest.model_validate
+        attempts = []
+
+        def slow_validation(value):
+            time.sleep(0.14)
+            return original(value)
+
+        def unavailable(*args, **kwargs):
+            attempts.append(time.monotonic())
+            raise BusyError("fixture bucket occupied")
+
+        monkeypatch.setattr(IngestRequest, "model_validate", slow_validation)
+        monkeypatch.setattr(kb.job_runner.store, "acquire_bucket", unavailable)
+        start = time.monotonic()
+        with pytest.raises((BusyError, LimitError)):
+            await kb.ingest_evidence({"base64": "AA=="})
+        assert attempts
+        assert time.monotonic() - start < 0.30
+        assert await kb.workers.read(lambda c, t: c.execute("select count(*) from jobs").get) == 0
+
+
+@pytest.mark.parametrize("expired_after_commit", [False, True])
+async def test_post_acceptance_busy_returns_retained_metadata(tmp_path, monkeypatch, expired_after_commit):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=100)) as kb:
+        original_write = kb.workers.write
+        original_read = kb.workers.read
+        accepted = False
+        foreground = asyncio.current_task()
+        read_calls = 0
+
+        async def committed(callback, token=None):
+            nonlocal accepted
+            result = await original_write(callback, token)
+            accepted = True
+            if expired_after_commit:
+                await asyncio.sleep(0.12)
+            return result
+
+        async def contended(callback, token=None):
+            nonlocal read_calls
+            if asyncio.current_task() is foreground:
+                read_calls += 1
+            if accepted:
+                raise BusyError("fixture metadata reader contention")
+            return await original_read(callback, token)
+
+        monkeypatch.setattr(kb.workers, "write", committed)
+        monkeypatch.setattr(kb.workers, "read", contended)
+        result = await kb.ingest_evidence({"text": "durable input"})
+        assert result["status"] == "accepted"
+        assert result["kind"] == "ingest"
+        assert result["effective_media_type"] == "text/plain"
+        assert read_calls == 0 if expired_after_commit else read_calls > 0
+        assert (
+            await original_read(
+                lambda c, t: c.execute("select count(*) from jobs where uuid=?", (result["job_id"],)).get
+            )
+            == 1
+        )
+
+
+async def test_post_acceptance_native_db_timeout_returns_snapshot(tmp_path, monkeypatch):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=100)) as kb:
+        original_write, original_read = kb.workers.write, kb.workers.read
+        committed = False
+        entered, release = threading.Event(), threading.Event()
+
+        async def write(callback, token=None):
+            nonlocal committed
+            result = await original_write(callback, token)
+            committed = True
+            return result
+
+        async def read(callback, token=None):
+            if not committed:
+                return await original_read(callback, token)
+
+            def delayed(connection, operation):
+                entered.set()
+                release.wait(2)
+                return callback(connection, operation)
+
+            return await original_read(delayed, token)
+
+        monkeypatch.setattr(kb.workers, "write", write)
+        monkeypatch.setattr(kb.workers, "read", read)
+        try:
+            result = await asyncio.wait_for(kb.ingest_evidence({"text": "durable queued input"}), 0.5)
+            assert entered.is_set()
+            assert not release.is_set()
+            assert result["status"] == "accepted"
+            assert result["job_id"]
+        finally:
+            release.set()
+        assert (
+            await original_read(
+                lambda c, t: c.execute("select count(*) from jobs where uuid=?", (result["job_id"],)).get
+            )
+            == 1
+        )
+
+
+async def test_raw_read_bucket_and_database_share_deadline(tmp_path, monkeypatch):
+
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=200)) as kb:
+        result = await kb.ingest_evidence({"base64": "AA=="})
+        acquire, read = kb.job_runner.store.acquire_bucket, kb.workers.read
+
+        def delayed_bucket(*args, **kwargs):
+            time.sleep(0.14)
+            return acquire(*args, **kwargs)
+
+        async def delayed_metadata(callback, token=None):
+            if getattr(callback, "__name__", "") != "metadata":
+                return await read(callback, token)
+
+            def delayed(connection, operation):
+                time.sleep(0.14)
+                return callback(connection, operation)
+
+            return await read(delayed, token)
+
+        monkeypatch.setattr(kb.job_runner.store, "acquire_bucket", delayed_bucket)
+        monkeypatch.setattr(kb.workers, "read", delayed_metadata)
+        start = time.monotonic()
+        with pytest.raises(LimitError):
+            await kb.read_evidence({"evidence_id": result["evidence_id"]})
+        assert time.monotonic() - start < 0.27
+
+
+async def test_cancelled_native_raw_read_retains_bucket_until_drain(kb, monkeypatch):
+    result = await kb.ingest_evidence({"base64": "AA=="})
+    entered, release = threading.Event(), threading.Event()
+    original = kb.job_runner.store.read_slice
+    digest = result["evidence_id"][2:]
+
+    def delayed(*args):
+        entered.set()
+        release.wait(2)
+        return original(*args)
+
+    monkeypatch.setattr(kb.job_runner.store, "read_slice", delayed)
+    task = asyncio.create_task(kb.read_evidence({"evidence_id": result["evidence_id"]}))
+    assert await asyncio.to_thread(entered.wait, 2)
+    try:
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        with pytest.raises(BusyError):
+            kb.job_runner.store.acquire_bucket(digest, exclusive=True, deadline=time.monotonic())
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    fd = kb.job_runner.store.acquire_bucket(digest, exclusive=True, deadline=time.monotonic())
+
+    os.close(fd)
+
+
+async def test_expired_io_entries_keep_queue_bound_until_consumed(kb):
+    entered, release = threading.Event(), threading.Event()
+    invoked = []
+
+    def blocked():
+        entered.set()
+        release.wait(3)
+
+    active = asyncio.create_task(kb.job_runner.io("bulk", blocked))
+    assert await asyncio.to_thread(entered.wait, 2)
+    deadline = time.monotonic() + 0.05
+    queued = [asyncio.create_task(kb.job_runner.io("bulk", lambda: invoked.append(True), deadline)) for _ in range(31)]
+    try:
+        results = await asyncio.gather(*queued, return_exceptions=True)
+        assert all(isinstance(result, LimitError) for result in results)
+        assert kb.job_runner._pending["bulk"] == 32
+        with pytest.raises(BusyError):
+            await kb.job_runner.io("bulk", lambda: None)
+    finally:
+        release.set()
+        await active
+    for _ in range(100):
+        if kb.job_runner._pending["bulk"] == 0:
+            break
+        await asyncio.sleep(0.001)
+    assert kb.job_runner._pending["bulk"] == 0
+    assert invoked == []
+
+
+async def test_inline_native_expiry_drains_then_cleans_unaccepted_input(tmp_path, monkeypatch):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=100)) as kb:
+        stage = kb.job_runner.store.stage_inline
+
+        def delayed(*args):
+            result = stage(*args)
+            time.sleep(0.15)
+            return result
+
+        monkeypatch.setattr(kb.job_runner.store, "stage_inline", delayed)
+        with pytest.raises(LimitError):
+            await kb.ingest_evidence({"base64": "AA=="})
+        assert await kb.workers.read(lambda c, t: c.execute("select count(*) from jobs").get) == 0
+        assert list(kb.workspace.tmp.iterdir()) == []
+
+
+async def test_facade_raw_text_json_expansion_rejects_exact_range(kb):
+    raw = b"\x00" * 65536
+    result = await kb.ingest_evidence({"base64": base64.b64encode(raw).decode()})
+    request = {"evidence_id": result["evidence_id"], "length": len(raw)}
+    with pytest.raises(LimitError, match="response"):
+        await kb.read_evidence(request)
+    read = await kb.read_evidence({**request, "format": "base64"})
+    assert read["returned_range"] == {"offset": 0, "length": len(raw)}
+    assert base64.b64decode(read["content"]) == raw
+    assert len(json.dumps({"status": "ok", "data": read}).encode()) < 262144

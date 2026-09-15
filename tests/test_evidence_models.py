@@ -143,3 +143,23 @@ def test_cursor_owner_rejects_wrong_kind_or_noncanonical_hash(kind, owner):
     binding = CursorBinding(str(uuid4()), 0, kind, owner, "sources", {})
     with pytest.raises(ValueError):
         binding.decode(binding.encode(1))
+
+
+def test_media_type_shared_input_and_public_metadata_bound():
+    valid = "image/" + "x" * 249
+    assert evidence.IngestRequest(text="x", media_type=valid).media_type == valid
+    job = {
+        "job_id": str(uuid4()),
+        "kind": "ingest",
+        "state": "queued",
+        "lane": "short",
+        "attempts": 0,
+        "index_state": "not_applicable",
+        "effective_media_type": valid,
+    }
+    assert models.JobResult.model_validate(job).effective_media_type == valid
+    for invalid in (valid + "x", "image/" + "x" * 300000, "image/é", "image/x\n"):
+        with pytest.raises(ValidationError):
+            evidence.IngestRequest(text="x", media_type=invalid)
+        with pytest.raises(ValidationError):
+            models.JobResult.model_validate({**job, "effective_media_type": invalid})

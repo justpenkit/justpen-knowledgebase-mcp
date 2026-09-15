@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -17,7 +18,7 @@ from .storage.graph import Graph, graph_types
 from .storage.maintenance import CheckpointMaintenance
 from .storage.search import search
 from .storage.traversal import neighbors
-from .storage.worker import DatabaseWorkers
+from .storage.worker import DatabaseWorkers, OperationToken
 from .workspace import WorkspacePaths
 
 if TYPE_CHECKING:
@@ -40,31 +41,36 @@ class KnowledgeBase:
 
     async def ingest_evidence(self, request: IngestRequest | dict[str, Any]) -> dict[str, Any]:
         """Accept raw evidence durably and wait for bounded short storage work."""
+        deadline = time.monotonic() + self.config.query_timeout_ms / 1000
         try:
-            validated = await self.job_runner.io("short", lambda: IngestRequest.model_validate(request))
+            validated = await self.job_runner.io("short", lambda: IngestRequest.model_validate(request), deadline)
         except ValueError as exc:
             raise InvalidParamsError("invalid evidence source") from exc
-        return await self.job_runner.ingest(validated)
+        OperationToken(deadline).check()
+        return await self.job_runner.ingest(validated, deadline)
 
     async def read_evidence(self, request: ReadEvidenceRequest | dict[str, Any]) -> dict[str, Any]:
         """Return a bounded exact byte range from ready owned evidence."""
+        deadline = time.monotonic() + self.config.query_timeout_ms / 1000
         try:
             validated = ReadEvidenceRequest.model_validate(request)
         except ValueError as exc:
             raise InvalidParamsError("invalid evidence range") from exc
-        return await self.job_runner.read(validated)
+        return await self.job_runner.read(validated, deadline)
 
     async def delete(self, request: DeleteRequest) -> dict[str, Any]:
         """Accept one atomic batch and run bounded durable cleanup steps."""
-        return await self.job_runner.delete(request)
+        deadline = time.monotonic() + self.config.query_timeout_ms / 1000
+        return await self.job_runner.delete(request, deadline)
 
     async def jobs(self, request: JobsRequest | dict[str, Any]) -> dict[str, Any]:
         """Read and control bounded durable job metadata."""
+        deadline = time.monotonic() + self.config.query_timeout_ms / 1000
         try:
             validated = JobsRequest.model_validate(request)
         except ValueError as exc:
             raise InvalidParamsError("invalid job operation") from exc
-        return await self.job_runner.control(validated)
+        return await self.job_runner.control(validated, deadline)
 
     async def write(self, request: WriteRequest) -> dict[str, Any]:
         """Atomically merge a validated graph batch in the admitted writer."""

@@ -7,10 +7,11 @@ import contextlib
 import os
 import secrets
 import sys
+import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic import Field, model_validator
@@ -48,6 +49,31 @@ if TYPE_CHECKING:
     from .workspace import WorkspacePaths
 
 T = TypeVar("T")
+
+
+class _IOCall(Generic[T]):
+    """Atomically abandon a queued callback without freeing its executor queue slot."""
+
+    def __init__(self, callback: Callable[[], T], deadline: float | None) -> None:
+        self.callback = callback
+        self.deadline = deadline
+        self.guard = threading.Lock()
+        self.running = False
+        self.abandoned = False
+
+    def run(self) -> T:
+        with self.guard:
+            if self.abandoned:
+                raise LimitError("I/O admission expired")
+            if self.deadline is not None:
+                OperationToken(self.deadline).check()
+            self.running = True
+        return self.callback()
+
+    def abandon_queued(self) -> bool:
+        with self.guard:
+            self.abandoned = not self.running
+            return self.abandoned
 
 
 class JobsRequest(ClosedModel):
@@ -131,26 +157,43 @@ class JobRunner:
         with contextlib.suppress(asyncio.QueueFull):
             self._wake[lane].put_nowait(None)
 
-    async def io(self, lane: str, callback: Callable[[], T]) -> T:
-        """At most one active operation and 32 admitted calls on each I/O lane."""
+    async def io(self, lane: str, callback: Callable[[], T], deadline: float | None = None) -> T:
+        """Cancel expired queued work; drain active native owners before their caller unwinds.
+
+        Active work returns its owned result even after expiry. Foreground callers
+        check the same deadline before their next phase and release owned resources.
+        """
+        if deadline is not None:
+            OperationToken(deadline).check()
         if self._stopping or self._pending[lane] >= 32:
             raise BusyError("I/O lane admission unavailable")
+
+        call = _IOCall(callback, deadline)
         self._pending[lane] += 1
-        future = asyncio.get_running_loop().run_in_executor(self._executors[lane], callback)
+        future = asyncio.get_running_loop().run_in_executor(self._executors[lane], call.run)
+
+        def consumed(done: asyncio.Future[T]) -> None:
+            self._pending[lane] -= 1
+            if not done.cancelled():
+                done.exception()
+
+        future.add_done_callback(consumed)
         try:
-            return await asyncio.shield(future)
-        finally:
-            if future.done():
-                self._pending[lane] -= 1
-            else:
-                future.add_done_callback(lambda _future: self._release_io(lane))
+            async with asyncio.timeout_at(deadline):
+                return await asyncio.shield(future)
+        except TimeoutError as exc:
+            if call.abandon_queued():
+                raise LimitError("I/O admission deadline exceeded") from exc
+            return await _settle(future)
+        except asyncio.CancelledError:
+            if not call.abandon_queued():
+                with contextlib.suppress(Exception):
+                    await _settle(future)
+            raise
 
-    def _release_io(self, lane: str) -> None:
-        self._pending[lane] -= 1
-
-    async def ingest(self, request: IngestRequest) -> dict[str, Any]:
+    async def ingest(self, request: IngestRequest, deadline: float) -> dict[str, Any]:
         """Stage bounded input, accept durably, then await only the caller's deadline."""
-        deadline = time.monotonic() + self.workers.factory.config.query_timeout_ms / 1000
+        OperationToken(deadline).check()
         job_id, input_token = str(uuid4()), str(uuid4())
         options: dict[str, Any] = {
             "media_type": request.effective_media_type,
@@ -162,26 +205,26 @@ class JobRunner:
             "warnings": request.warnings,
         }
         if request.path is not None:
-            source_stat = await self.io("short", lambda: self.store.source_stat(request.path or ""))
+            source_stat = await self.io("short", lambda: self.store.source_stat(request.path or ""), deadline)
             options.update(path=str(self.store.workspace.relative(request.path)), source_stat=source_stat)
             lane = "short" if source_stat[2] <= INLINE_LIMIT else "bulk"
         else:
-            await self._admit_inline(request, job_id, input_token, options, deadline)
+            accepted = await self._admit_inline(request, job_id, input_token, options, deadline)
             self.wake("short")
-            return await self.wait(job_id, deadline)
-        await self.workers.write(
-            lambda c, _t: JobStore.insert(c, job_id, "ingest", lane, options), OperationToken(deadline)
-        )
+            return await self.wait(job_id, deadline, accepted)
+        accepted = await self._accept_ingest(job_id, lane, options, deadline)
         self.wake(lane)
-        return await self.wait(job_id, deadline) if lane == "short" else await self.accepted(job_id)
+        return await self.wait(job_id, deadline, accepted) if lane == "short" else accepted
 
     async def _admit_inline(
         self, request: IngestRequest, job_id: str, token: str, options: dict[str, Any], deadline: float
-    ) -> None:
-        content = await self.io("short", request.inline_bytes)
-        bucket = await self.acquire_bucket("short", job_bucket(job_id), exclusive=True)
+    ) -> dict[str, Any]:
+        content = await self.io("short", request.inline_bytes, deadline)
+        bucket = await self.acquire_bucket("short", job_bucket(job_id), exclusive=True, deadline=deadline)
         try:
-            task = asyncio.create_task(self.io("short", lambda: self.store.stage_inline(content, job_id, token)))
+            task = asyncio.create_task(
+                self.io("short", lambda: self.store.stage_inline(content, job_id, token), deadline)
+            )
             try:
                 staged = await asyncio.shield(task)
             except asyncio.CancelledError:
@@ -190,78 +233,100 @@ class JobRunner:
                 raise
             options.update(input_stage=staged.name, input_token=token, input_size=staged.byte_size)
             try:
-                await self.workers.write(
-                    lambda c, _t: JobStore.insert(c, job_id, "ingest", "short", options), OperationToken(deadline)
-                )
+                return await self._accept_ingest(job_id, "short", options, deadline)
             except BaseException:
                 await self.io("short", lambda: self.store.discard_stage(job_id, token))
                 raise
         finally:
             os.close(bucket)
 
-    async def delete(self, request: DeleteRequest) -> dict[str, Any]:
-        """Atomically accept immutable delete intent; request cancellation only stops waiting."""
-        deadline = time.monotonic() + self.workers.factory.config.query_timeout_ms / 1000
+    async def _accept_ingest(self, job_id: str, lane: str, options: dict[str, Any], deadline: float) -> dict[str, Any]:
+        def accept(connection: apsw.Connection, _token: OperationToken) -> dict[str, Any]:
+            JobStore.insert(connection, job_id, "ingest", lane, options)
+            return {**JobStore.get(connection, job_id), "status": "accepted"}
+
+        return await self.workers.write(accept, OperationToken(deadline))
+
+    async def delete(self, request: DeleteRequest, deadline: float) -> dict[str, Any]:
+        """Atomically accept immutable delete intent; retain its committed metadata."""
         job_id = str(uuid4())
-        await self.workers.write(lambda c, _t: JobStore.admit_delete(c, request, job_id), OperationToken(deadline))
+
+        def accept(connection: apsw.Connection, _token: OperationToken) -> dict[str, Any]:
+            JobStore.admit_delete(connection, request, job_id)
+            return {**JobStore.get(connection, job_id), "status": "accepted"}
+
+        accepted = await self.workers.write(accept, OperationToken(deadline))
         self.wake("short")
-        return await self.wait(job_id, deadline)
+        return await self.wait(job_id, deadline, accepted)
 
-    async def accepted(self, job_id: str) -> dict[str, Any]:
-        """Return accurate current metadata for an already committed job acceptance."""
-        result = await self.workers.read(lambda c, _t: JobStore.get(c, job_id))
-        result["status"] = "accepted"
-        return result
-
-    async def wait(self, job_id: str, deadline: float) -> dict[str, Any]:
-        """Cancellation leaves the accepted durable job alive; no task is tied to this waiter."""
+    async def wait(self, job_id: str, deadline: float, accepted: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Return the latest observed metadata without fresh admission after expiry."""
         while time.monotonic() < deadline:
-            result = await self.workers.read(lambda c, _t: JobStore.get(c, job_id))
-            if result["state"] in TERMINAL:
-                result["status"] = result["state"]
-                return result
+            try:
+                result = await self.workers.read(lambda c, _t: JobStore.get(c, job_id), OperationToken(deadline))
+            except (BusyError, LimitError):
+                if accepted is None:
+                    raise
+            else:
+                if result["state"] in TERMINAL:
+                    return {**result, "status": result["state"]}
+                accepted = {**result, "status": "accepted"}
             await asyncio.sleep(min(0.01, max(0, deadline - time.monotonic())))
-        return await self.accepted(job_id)
+        if accepted is None:
+            raise LimitError("job waiter deadline exceeded")
+        return accepted
 
-    async def control(self, request: JobsRequest) -> dict[str, Any]:
+    async def control(self, request: JobsRequest, deadline: float) -> dict[str, Any]:
         """List or control jobs without exposing locators or copying evidence bodies."""
         if request.action == "list":
-            return await self.workers.read(lambda c, _t: _list_jobs(c, request))
+            return await self.workers.read(lambda c, _t: _list_jobs(c, request), OperationToken(deadline))
         if request.job_id is None:
             raise InvalidParamsError("job id required")
         if request.action == "get":
-            return await self.workers.read(lambda c, _t: JobStore.get(c, request.job_id or ""))
+            return await self.workers.read(
+                lambda c, _t: JobStore.get(c, request.job_id or ""), OperationToken(deadline)
+            )
         callback = JobStore.cancel if request.action == "cancel" else JobStore.retry
-        result = await self.workers.control(lambda c, _t: callback(c, request.job_id or ""))
+        result = await self.workers.control(lambda c, _t: callback(c, request.job_id or ""), OperationToken(deadline))
         self.wake(result["lane"])
         self._retention_event.set()
         return result
 
-    async def acquire_bucket(self, lane: str, digest: str, *, exclusive: bool) -> int:
+    async def acquire_bucket(self, lane: str, digest: str, *, exclusive: bool, deadline: float | None = None) -> int:
         """Yield between NB attempts, so a waiting writer never occupies its reader's I/O lane."""
-        deadline = time.monotonic() + self.workers.factory.config.query_timeout_ms / 1000
+        if deadline is None:
+            deadline = time.monotonic() + self.workers.factory.config.query_timeout_ms / 1000
         while True:
             try:
                 task = asyncio.create_task(
                     self.io(
-                        lane, lambda: self.store.acquire_bucket(digest, exclusive=exclusive, deadline=time.monotonic())
+                        lane,
+                        lambda: self.store.acquire_bucket(digest, exclusive=exclusive, deadline=time.monotonic()),
+                        deadline,
                     )
                 )
                 try:
-                    return await asyncio.shield(task)
+                    fd = await asyncio.shield(task)
+                    try:
+                        OperationToken(deadline).check()
+                    except LimitError:
+                        os.close(fd)
+                        raise
                 except asyncio.CancelledError:
                     fd = await _settle(task)
                     os.close(fd)
                     raise
+                else:
+                    return fd
             except BusyError:
                 if self._stopping or time.monotonic() >= deadline:
                     raise
                 await asyncio.sleep(min(0.005, deadline - time.monotonic()))
 
-    async def read(self, request: ReadEvidenceRequest) -> dict[str, Any]:
+    async def read(self, request: ReadEvidenceRequest, deadline: float) -> dict[str, Any]:
         """Acquire SH bucket first, then recheck readiness in a guarded read snapshot."""
         digest = request.evidence_id[2:]
-        fd = await self.acquire_bucket("short", digest, exclusive=False)
+        fd = await self.acquire_bucket("short", digest, exclusive=False, deadline=deadline)
         try:
 
             def metadata(connection: apsw.Connection, _token: OperationToken) -> tuple[int, str]:
@@ -271,8 +336,10 @@ class JobRunner:
                 require_ready(connection, "evidence", row)
                 return row["byte_size"], row["encoding"]
 
-            size, encoding = await self.workers.read(metadata)
-            return await self.io("short", lambda: self.store.read_slice(digest, size, encoding, request))
+            size, encoding = await self.workers.read(metadata, OperationToken(deadline))
+            result = await self.io("short", lambda: self.store.read_slice(digest, size, encoding, request), deadline)
+            OperationToken(deadline).check()
+            return result
         finally:
             os.close(fd)
 
@@ -597,6 +664,8 @@ def _list_jobs(connection: apsw.Connection, request: JobsRequest) -> dict[str, A
         item = JobStore.get(connection, row[1])
         size += len(canonical_json(item).encode("utf-8"))
         if len(items) == request.limit or size > 250000:
+            if not items:
+                raise LimitError("job item exceeds response budget")
             more = True
             break
         items.append(item)
@@ -604,7 +673,7 @@ def _list_jobs(connection: apsw.Connection, request: JobsRequest) -> dict[str, A
     return {"jobs": items, "next_cursor": binding.encode(last_id) if more else None}
 
 
-async def _settle(task: asyncio.Task[T]) -> T:
+async def _settle(task: asyncio.Future[T]) -> T:
     while not task.done():
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.shield(task)

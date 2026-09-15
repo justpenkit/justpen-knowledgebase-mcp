@@ -15,6 +15,14 @@ from .responses import BlockerDetails
 Kind = Literal["nodes", "relations", "evidence"]
 GraphKind = Literal["nodes", "relations"]
 RecordID = Annotated[str, Field(min_length=36, max_length=36)]
+MediaType = Annotated[
+    str,
+    Field(
+        max_length=255,
+        pattern=r"^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$",
+        description="Bare lowercase media type, at most 255 ASCII bytes.",
+    ),
+]
 
 
 class ClosedModel(BaseModel):
@@ -352,7 +360,7 @@ class JobResult(ClosedModel):
     lane: Literal["short", "bulk"]
     attempts: Annotated[int, Field(ge=0)]
     progress: JobProgress = Field(default_factory=JobProgress)
-    effective_media_type: str | None = None
+    effective_media_type: MediaType | None = None
     index_state: Literal["pending", "ready", "not_applicable", "index_failed"]
     incomplete: bool = False
     evidence_id: EvidenceID | None = None

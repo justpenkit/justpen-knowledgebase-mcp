@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from justpen_knowledgebase_mcp.config import ServerConfig, WorkspacePolicy
-from justpen_knowledgebase_mcp.errors import BusyError, InvalidParamsError, StorageIOError
+from justpen_knowledgebase_mcp.errors import BusyError, InvalidParamsError, LimitError, StorageIOError
 from justpen_knowledgebase_mcp.evidence import ReadEvidenceRequest
 from justpen_knowledgebase_mcp.storage import evidence
 from justpen_knowledgebase_mcp.storage.job_recovery import StageScan
@@ -210,3 +210,16 @@ def test_stage_scan_bounds_enumeration_and_progresses_past_unrecognized_entries(
         assert len(list(store.workspace.tmp.iterdir())) == 140
     finally:
         scan.close()
+
+
+def test_json_escaped_exact_text_range_limit_and_base64(store):
+    raw = b"\x00" * 65536
+    staged = store.stage_inline(raw, str(uuid4()), str(uuid4()))
+    store.publish(staged)
+    request = ReadEvidenceRequest(evidence_id="e_" + staged.sha256, length=len(raw))
+    with pytest.raises(LimitError, match="response"):
+        store.read_slice(staged.sha256, len(raw), "auto", request)
+    request.format = "base64"
+    result = store.read_slice(staged.sha256, len(raw), "auto", request)
+    assert base64.b64decode(result["content"]) == raw
+    assert result["returned_range"] == {"offset": 0, "length": len(raw)}
