@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 import subprocess
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -18,6 +20,7 @@ if TYPE_CHECKING:
 
 
 def capture_signals(monkeypatch: pytest.MonkeyPatch) -> dict[signal.Signals, Callable[[], None]]:
+    monkeypatch.setenv("JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR", "/workspace")
     handlers: dict[signal.Signals, Callable[[], None]] = {}
 
     def add_handler(sig: signal.Signals, callback: Callable[[], None]) -> None:
@@ -59,6 +62,7 @@ def test_cli_invokes_asyncio_run(monkeypatch: pytest.MonkeyPatch) -> None:
             coro.close()  # type: ignore[attr-defined]
 
     monkeypatch.setattr("justpen_knowledgebase_mcp.__main__.asyncio.run", fake_run)
+    monkeypatch.setattr(main_mod, "parse_config", lambda: main_mod.ServerConfig(workspace_dir=Path("/workspace")))
     main_mod.cli()
     assert len(captured) == 1
 
@@ -135,6 +139,7 @@ async def test_cancelling_main_cleans_up_server(monkeypatch: pytest.MonkeyPatch)
     assert asyncio.all_tasks() == before
 
 
+@pytest.mark.integration
 def test_cli_exits_with_failure_when_server_crashes() -> None:
     probe = """
 from justpen_knowledgebase_mcp import __main__ as entrypoint
@@ -145,7 +150,14 @@ async def failing_server():
 entrypoint.mcp.run_async = failing_server
 entrypoint.cli()
 """
-    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=False, timeout=30)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", probe],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+        env={**os.environ, "JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR": "/workspace"},
+    )
     assert result.returncode != 0, result.stderr
     assert "RuntimeError: server startup failed" in result.stderr
     assert "Task exception was never retrieved" not in result.stderr

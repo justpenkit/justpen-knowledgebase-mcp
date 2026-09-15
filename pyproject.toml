@@ -23,7 +23,16 @@ classifiers = [
   "Topic :: Software Development :: Libraries",
   "Typing :: Typed",
 ]
-dependencies = ["fastmcp>=2.0"]
+dependencies = [
+  "apsw>=3.53.4.0,<4",
+  "fastmcp>=4.0.3,<5",
+  "opentelemetry-api>=1.41.0,<2",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.41.0,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.41.0,<2",
+  "opentelemetry-sdk>=1.41.0,<2",
+  "pydantic>=2.0,<3",
+  "starlette>=1.3.1,<2",
+]
 
 [project.urls]
 Homepage = "https://github.com/justpenkit/justpen-knowledgebase-mcp"

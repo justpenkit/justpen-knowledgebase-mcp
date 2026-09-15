@@ -25,4 +25,24 @@ class DemoFailureError(McpError):
     error_type = "demo_failure"
 
 
-VALID_ERROR_TYPES = frozenset({"invalid_params", "internal_error", "demo_failure"})
+VALID_ERROR_TYPES = frozenset(
+    {"invalid_params", "internal_error", "demo_failure", "configuration_error", "path_denied", "io_error"}
+)
+
+
+class ConfigurationError(McpError):
+    """Workspace or native runtime configuration is invalid."""
+
+    error_type = "configuration_error"
+
+
+class PathDeniedError(McpError):
+    """A file fails the workspace containment contract."""
+
+    error_type = "path_denied"
+
+
+class StorageIOError(McpError):
+    """A managed filesystem operation failed."""
+
+    error_type = "io_error"
