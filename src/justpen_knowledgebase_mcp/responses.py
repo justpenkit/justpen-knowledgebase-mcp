@@ -1,11 +1,12 @@
 """Public envelopes and bounded, content-free operational error details."""
 
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer, field_validator
 
-from .errors import VALID_ERROR_TYPES, McpError, WalBusyError
+from .errors import VALID_ERROR_TYPES, McpError, MissingRecordsError, RecordConflictError, WalBusyError
 
 
 class BlockingRecord(BaseModel):
@@ -24,6 +25,11 @@ class BlockerDetails(BaseModel):
     delete_job_id: UUID | None = None
     pending_since: AwareDatetime | None = None
     deletion_owner: BlockingRecord | None = None
+
+    @field_serializer("pending_since")
+    def timestamp_output(self, value: datetime | None) -> str | None:
+        """Preserve fixed six-digit UTC operational timestamps."""
+        return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z") if value else None
 
 
 class MissingDetails(BaseModel):
@@ -68,7 +74,12 @@ def success_response(data: dict[str, Any] | None = None) -> dict[str, Any]:
 
 def error_response(error_type: str, message: str, details: ErrorDetails | None = None) -> dict[str, Any]:
     """Build a checked envelope from a server-authored, content-free message."""
-    return ErrorResult(error=f"{error_type}: {message}", details=details).model_dump(mode="json", exclude_none=True)
+    result = ErrorResult(error=f"{error_type}: {message}", details=details).model_dump(mode="json", exclude_none=True)
+    if isinstance(details, BlockerDetails):
+        result["details"] = details.model_dump(
+            mode="json", exclude={"deletion_owner"} if details.deletion_owner is None else set()
+        )
+    return result
 
 
 def exception_response(error: BaseException) -> dict[str, Any]:
@@ -77,6 +88,8 @@ def exception_response(error: BaseException) -> dict[str, Any]:
         return error_response(
             "BUSY", error.reason, WalRetryDetails(reason=error.reason, retry_after_ms=error.retry_after_ms)
         )
+    if isinstance(error, (RecordConflictError, MissingRecordsError)):
+        return error_response(error.error_type, str(error), error.details)
     if isinstance(error, McpError):
         message = str(error)
         prefix = error.error_type + ": "

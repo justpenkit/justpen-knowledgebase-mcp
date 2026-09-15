@@ -72,10 +72,12 @@ def test_native_db_wal_shm_permissions_are_private(tmp_path):
 
 
 def test_second_writer_obeys_busy_timeout_then_recovers(tmp_path):
-    cfg = ServerConfig(workspace_dir=tmp_path, db_busy_timeout_ms=1)
+    cfg = ServerConfig(workspace_dir=tmp_path)
     with WorkspacePaths(cfg) as ws, SQLiteRuntime(ws, cfg) as runtime:
         first = runtime.connect()
         second = runtime.connect()
+        # Exercise the product lock wait independently of native startup I/O.
+        second.set_busy_timeout(1)
         try:
             first.execute("create table writes(value integer)")
             first.execute("begin immediate")

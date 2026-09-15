@@ -1,9 +1,19 @@
 """Public envelopes reject arbitrary error details."""
 
+from uuid import uuid4
+
 import pytest
 
 from justpen_knowledgebase_mcp import errors
-from justpen_knowledgebase_mcp.responses import ErrorResult, error_response, exception_response, success_response
+from justpen_knowledgebase_mcp.errors import MissingRecordsError, RecordConflictError
+from justpen_knowledgebase_mcp.responses import (
+    BlockerDetails,
+    ErrorResult,
+    MissingDetails,
+    error_response,
+    exception_response,
+    success_response,
+)
 
 
 def test_success_envelope():
@@ -53,3 +63,32 @@ def test_wal_busy_preserves_frozen_retry_metadata_without_parsing_messages():
         "status": "error",
         "error": "BUSY: database queue unavailable",
     }
+
+
+def test_graph_conflict_and_missing_details_survive_sanitized_boundary():
+
+    identifier = uuid4()
+    blocker = BlockerDetails.model_validate({"blocking_record": {"kind": "nodes", "id": identifier}})
+    result = exception_response(RecordConflictError("DEPENDENCIES_EXIST", blocker))
+    assert result["details"]["blocking_record"]["id"] == str(identifier)
+    missing = exception_response(MissingRecordsError(MissingDetails(missing_ids=[identifier])))
+    assert missing["details"]["missing_ids"] == [str(identifier)]
+
+
+def test_ready_blocker_nulls_and_pending_six_digit_timestamp():
+    identifier = uuid4()
+    ready = BlockerDetails.model_validate({"blocking_record": {"kind": "nodes", "id": identifier}})
+    result = exception_response(RecordConflictError("DEPENDENCIES_EXIST", ready))
+    assert result["details"]["delete_job_id"] is None
+    assert result["details"]["pending_since"] is None
+    pending = BlockerDetails.model_validate(
+        {
+            "blocking_record": {"kind": "nodes", "id": identifier},
+            "delete_job_id": uuid4(),
+            "pending_since": "2001-01-01T00:00:00.000000Z",
+        }
+    )
+    assert (
+        exception_response(RecordConflictError("RECORD_DELETING", pending))["details"]["pending_since"]
+        == "2001-01-01T00:00:00.000000Z"
+    )

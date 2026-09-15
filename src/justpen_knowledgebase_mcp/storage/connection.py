@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Self
+from weakref import WeakValueDictionary
 
 import apsw
 from typing_extensions import override
@@ -18,12 +22,40 @@ from .vfs import WorkspaceVFS
 from .worker import OperationToken, OwnerOutcome
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
     from types import TracebackType
 
     from ..config import ServerConfig
     from ..workspace import WorkspacePaths
     from .maintenance import Trigger
+
+
+class _BootstrapMutex:
+    """Weakly registered coordination for one pinned workspace's native startup."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+
+
+_BOOTSTRAP_REGISTRY: WeakValueDictionary[tuple[int, int], _BootstrapMutex] = WeakValueDictionary()
+_BOOTSTRAP_REGISTRY_LOCK = threading.Lock()
+
+
+def _bootstrap_mutex(workspace: WorkspacePaths) -> _BootstrapMutex:
+    identity = workspace.identity(os.fstat(workspace.root_fd))
+    with _BOOTSTRAP_REGISTRY_LOCK:
+        mutex = _BOOTSTRAP_REGISTRY.get(identity)
+        if mutex is None:
+            mutex = _BootstrapMutex()
+            _BOOTSTRAP_REGISTRY[identity] = mutex
+        return mutex
+
+
+def _remaining_wait_ms(deadline: float) -> int:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise LimitError("database startup deadline exceeded")
+    return max(1, int(remaining * 1000))
 
 
 class ManagedConnection(apsw.Connection):
@@ -32,28 +64,32 @@ class ManagedConnection(apsw.Connection):
     def __init__(self, factory: SQLiteRuntime, *, reader: bool = False) -> None:
         """Gate native open, configuration and failure cleanup as one scope."""
         self._retired = False
-        self.gate = DbAdmissionGate(factory.workspace)
-        self.policy = WorkspacePolicy()
-        self.close_timeout_ms = factory.config.db_busy_timeout_ms
-        try:
-            with self.gate.transaction(OperationToken(time.monotonic() + self.close_timeout_ms / 1000)):
-                super().__init__(
-                    str(factory.workspace.db),
-                    vfs=factory.vfs.name,
-                    flags=apsw.SQLITE_OPEN_READWRITE | apsw.SQLITE_OPEN_CREATE | apsw.SQLITE_OPEN_NOFOLLOW,
-                )
-                try:
-                    factory.configure(self)
-                    if reader:
-                        self.pragma("query_only", 1)
-                except BaseException:
-                    self._finish_native_close(force=True)
-                    raise
-        except BaseException:
-            # Native constructor failure owns its partial native resource cleanup.
-            # Configuration failure was explicitly closed while still gated.
-            self.gate.close()
-            raise
+        with factory.bootstrap() as startup:
+            self.startup_deadline = startup.deadline
+            self.gate = DbAdmissionGate(factory.workspace)
+            self.policy = WorkspacePolicy()
+            self.close_timeout_ms = factory.config.db_busy_timeout_ms
+            try:
+                with self.gate.transaction(startup):
+                    super().__init__(
+                        str(factory.workspace.db),
+                        vfs=factory.vfs.name,
+                        flags=apsw.SQLITE_OPEN_READWRITE | apsw.SQLITE_OPEN_CREATE | apsw.SQLITE_OPEN_NOFOLLOW,
+                    )
+                    try:
+                        factory.configure(self)
+                        if reader:
+                            self.pragma("query_only", 1)
+                        startup.check()
+                        self.set_busy_timeout(self.close_timeout_ms)
+                    except BaseException:
+                        self._finish_native_close(force=True)
+                        raise
+            except BaseException:
+                # Native constructor failure owns its partial native resource cleanup.
+                # Configuration failure was explicitly closed while still gated.
+                self.gate.close()
+                raise
 
     def close_native(self, *, force: bool = False) -> None:
         """Call APSW close only while this owner's lifetime scope is active."""
@@ -129,11 +165,24 @@ class SQLiteRuntime:
         if sys.platform not in {"darwin", "linux"}:
             raise ConfigurationError("CONFIGURATION: unsupported SQLite platform")
         self.workspace = workspace
+        self._bootstrap_mutex = _bootstrap_mutex(workspace)
         self.config = config
         self.vfs = WorkspaceVFS(workspace)
         self.guard = SchemaGuard(workspace)
         self.status_cache = StatusCache()
         self.wake_maintenance: Callable[[Trigger], None] | None = None
+
+    @contextmanager
+    def bootstrap(self) -> Generator[OperationToken]:
+        """Bound native initialization waits before entering any DB admission gate."""
+        token = OperationToken(time.monotonic() + self.config.db_busy_timeout_ms / 1000)
+        if not self._bootstrap_mutex.lock.acquire(timeout=max(0, token.deadline - time.monotonic())):
+            raise LimitError("database startup deadline exceeded")
+        try:
+            token.check()
+            yield token
+        finally:
+            self._bootstrap_mutex.lock.release()
 
     def connect(self) -> ManagedConnection:
         """Open a durable WAL connection; call only in its eventual owner thread."""
@@ -142,7 +191,7 @@ class SQLiteRuntime:
     def configure(self, connection: ManagedConnection) -> None:
         """Configure inside the factory-owned open scope; no independent SQL owner."""
         connection.enable_load_extension(enable=False)
-        connection.set_busy_timeout(self.config.db_busy_timeout_ms)
+        connection.set_busy_timeout(_remaining_wait_ms(connection.startup_deadline))
         if self._enable_wal(connection) != "wal":
             raise ConfigurationError("CONFIGURATION: WAL unavailable")
         connection.pragma("foreign_keys", 1)
@@ -153,6 +202,7 @@ class SQLiteRuntime:
             connection.pragma("checkpoint_fullfsync", 1)
         if connection.execute("select json_valid('{}'), sqlite_compileoption_used('ENABLE_FTS5')").get != (1, 1):
             raise ConfigurationError("CONFIGURATION: JSON and FTS5 required")
+        connection.set_busy_timeout(_remaining_wait_ms(connection.startup_deadline))
         self.guard.initialize(connection)
         policy = self.guard.policy(connection)
         connection.policy = policy
@@ -185,11 +235,11 @@ class SQLiteRuntime:
             if size is None or size >= connection.policy.wal_low_bytes:
                 self.wake_maintenance("low")
 
-    def _enable_wal(self, connection: apsw.Connection) -> object:
+    def _enable_wal(self, connection: ManagedConnection) -> object:
         # Concurrent journal-mode upgrades can return BUSY without invoking the
         # busy handler (shared-to-exclusive lock conflict). Retry the completed
         # statement within one startup budget; do not restart the full timeout.
-        deadline = time.monotonic() + self.config.db_busy_timeout_ms / 1000
+        deadline = connection.startup_deadline
         while True:
             try:
                 return connection.pragma("journal_mode", "wal")

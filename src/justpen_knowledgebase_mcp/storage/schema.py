@@ -30,60 +30,76 @@ CREATE TABLE settings (
  terminal_job_counts TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE jobs (
- id INTEGER PRIMARY KEY, uuid TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
+ id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
  state TEXT NOT NULL, requested_at TEXT NOT NULL, updated_at TEXT NOT NULL,
  lease_token TEXT, lease_expires_at TEXT, progress TEXT NOT NULL DEFAULT '{}',
  cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1)),
  error_code TEXT, payload TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE nodes (
- id INTEGER PRIMARY KEY, uuid TEXT NOT NULL UNIQUE, type TEXT NOT NULL,
+ id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT NOT NULL UNIQUE, type TEXT NOT NULL,
  key TEXT NOT NULL, properties TEXT NOT NULL CHECK(json_valid(properties)),
- metadata TEXT NOT NULL DEFAULT '{}', lifecycle TEXT NOT NULL DEFAULT 'active',
- delete_job_id INTEGER REFERENCES jobs(id), created_at TEXT, updated_at TEXT,
+ metadata TEXT NOT NULL DEFAULT '{}', lifecycle TEXT NOT NULL DEFAULT 'ready',
+ delete_job_id TEXT, delete_cascade INTEGER, delete_requested_at INTEGER, created_at INTEGER, updated_at INTEGER, observed_at INTEGER,
+ CHECK((lifecycle='ready' AND delete_job_id IS NULL AND delete_cascade IS NULL AND delete_requested_at IS NULL) OR
+ (lifecycle='delete_pending' AND delete_job_id IS NOT NULL AND delete_cascade IS NOT NULL AND delete_cascade IN (0,1) AND typeof(delete_cascade)='integer' AND typeof(delete_requested_at)='integer')),
  UNIQUE(type,key)
 );
 CREATE TABLE relations (
- id INTEGER PRIMARY KEY, uuid TEXT NOT NULL UNIQUE,
+ id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT NOT NULL UNIQUE,
  source_id INTEGER NOT NULL REFERENCES nodes(id), type TEXT NOT NULL,
  target_id INTEGER NOT NULL REFERENCES nodes(id), key TEXT NOT NULL,
  properties TEXT NOT NULL CHECK(json_valid(properties)), metadata TEXT NOT NULL DEFAULT '{}',
- lifecycle TEXT NOT NULL DEFAULT 'active', delete_job_id INTEGER REFERENCES jobs(id),
- created_at TEXT, updated_at TEXT, CHECK(source_id != target_id),
+ lifecycle TEXT NOT NULL DEFAULT 'ready', delete_job_id TEXT, delete_cascade INTEGER, delete_requested_at INTEGER,
+ created_at INTEGER, updated_at INTEGER, observed_at INTEGER, CHECK(source_id != target_id),
+ CHECK((lifecycle='ready' AND delete_job_id IS NULL AND delete_cascade IS NULL AND delete_requested_at IS NULL) OR
+ (lifecycle='delete_pending' AND delete_job_id IS NOT NULL AND delete_cascade IS NOT NULL AND delete_cascade IN (0,1) AND typeof(delete_cascade)='integer' AND typeof(delete_requested_at)='integer')),
  UNIQUE(source_id,type,target_id,key)
 );
 CREATE INDEX relations_outgoing ON relations(source_id,type,target_id,id);
+CREATE INDEX relations_outgoing_id ON relations(source_id,id);
+CREATE INDEX relations_incoming_id ON relations(target_id,id);
 CREATE INDEX relations_incoming ON relations(target_id,type,source_id,id);
 CREATE TABLE evidence (
- id INTEGER PRIMARY KEY, uuid TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL UNIQUE,
+ id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL UNIQUE,
  byte_size INTEGER NOT NULL CHECK(byte_size>=0), media_type TEXT, encoding TEXT,
- blob_path TEXT NOT NULL, lifecycle TEXT NOT NULL DEFAULT 'active',
- delete_job_id INTEGER REFERENCES jobs(id), index_generation INTEGER NOT NULL DEFAULT 0,
+ blob_path TEXT NOT NULL, lifecycle TEXT NOT NULL DEFAULT 'ready',
+ delete_job_id TEXT, delete_cascade INTEGER, delete_requested_at INTEGER, index_generation INTEGER NOT NULL DEFAULT 0,
  index_owner_job_id INTEGER REFERENCES jobs(id), index_owner_token TEXT,
- created_at TEXT, updated_at TEXT
+ created_at INTEGER, updated_at INTEGER,
+ CHECK((lifecycle='ready' AND delete_job_id IS NULL AND delete_cascade IS NULL AND delete_requested_at IS NULL) OR
+ (lifecycle='delete_pending' AND delete_job_id IS NOT NULL AND delete_cascade IS NOT NULL AND delete_cascade IN (0,1) AND typeof(delete_cascade)='integer' AND typeof(delete_requested_at)='integer'))
 );
 CREATE TABLE evidence_sources (
- id INTEGER PRIMARY KEY, evidence_id INTEGER NOT NULL REFERENCES evidence(id),
+ id INTEGER PRIMARY KEY AUTOINCREMENT, evidence_id INTEGER NOT NULL REFERENCES evidence(id),
  source TEXT NOT NULL, first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
  UNIQUE(evidence_id,source)
 );
 CREATE TABLE node_evidence (
- id INTEGER PRIMARY KEY, node_id INTEGER NOT NULL REFERENCES nodes(id),
+ id INTEGER PRIMARY KEY AUTOINCREMENT, node_id INTEGER NOT NULL REFERENCES nodes(id),
  evidence_id INTEGER NOT NULL REFERENCES evidence(id), UNIQUE(node_id,evidence_id)
 );
 CREATE INDEX node_evidence_reverse ON node_evidence(evidence_id,node_id);
 CREATE TABLE relation_evidence (
- id INTEGER PRIMARY KEY, relation_id INTEGER NOT NULL REFERENCES relations(id),
+ id INTEGER PRIMARY KEY AUTOINCREMENT, relation_id INTEGER NOT NULL REFERENCES relations(id),
  evidence_id INTEGER NOT NULL REFERENCES evidence(id), UNIQUE(relation_id,evidence_id)
 );
 CREATE INDEX relation_evidence_reverse ON relation_evidence(evidence_id,relation_id);
+CREATE INDEX node_evidence_owner_id ON node_evidence(node_id,id);
+CREATE INDEX relation_evidence_owner_id ON relation_evidence(relation_id,id);
+CREATE INDEX node_evidence_reverse_id ON node_evidence(evidence_id,id);
+CREATE INDEX relation_evidence_reverse_id ON relation_evidence(evidence_id,id);
+CREATE INDEX evidence_sources_owner_id ON evidence_sources(evidence_id,id);
 CREATE TABLE search_documents (
- id INTEGER PRIMARY KEY, node_id INTEGER REFERENCES nodes(id), relation_id INTEGER REFERENCES relations(id),
+ id INTEGER PRIMARY KEY AUTOINCREMENT, node_id INTEGER REFERENCES nodes(id), relation_id INTEGER REFERENCES relations(id),
  evidence_id INTEGER REFERENCES evidence(id), pointer TEXT, label TEXT, text TEXT NOT NULL,
  byte_start INTEGER, byte_end INTEGER, line_start INTEGER, line_end INTEGER,
  overlap_owner INTEGER, index_generation INTEGER,
  CHECK((node_id IS NOT NULL)+(relation_id IS NOT NULL)+(evidence_id IS NOT NULL)=1)
 );
+CREATE INDEX search_documents_node ON search_documents(node_id,id);
+CREATE INDEX search_documents_relation ON search_documents(relation_id,id);
+CREATE INDEX search_documents_evidence ON search_documents(evidence_id,id);
 CREATE VIRTUAL TABLE search_fts USING fts5(text,content='search_documents',content_rowid='id');
 CREATE TRIGGER search_insert AFTER INSERT ON search_documents BEGIN
  INSERT INTO search_fts(rowid,text) VALUES(new.id,new.text);
@@ -96,6 +112,22 @@ CREATE TRIGGER search_update AFTER UPDATE ON search_documents BEGIN
  INSERT INTO search_fts(rowid,text) VALUES(new.id,new.text);
 END;
 """
+
+
+def _intent_ddl() -> str:
+    """Build immutable owner intents and sparse recovery indexes in sole v1 DDL."""
+    return "".join(
+        f"""
+CREATE INDEX {owner}_pending_owner ON {owner}(id) WHERE lifecycle='delete_pending';
+CREATE INDEX {owner}_pending_job ON {owner}(delete_job_id,id) WHERE lifecycle='delete_pending';
+CREATE TRIGGER {owner}_immutable_intent BEFORE UPDATE ON {owner}
+WHEN old.lifecycle='delete_pending' AND
+ (new.lifecycle IS NOT old.lifecycle OR new.delete_job_id IS NOT old.delete_job_id OR
+ new.delete_cascade IS NOT old.delete_cascade OR new.delete_requested_at IS NOT old.delete_requested_at)
+BEGIN SELECT RAISE(ABORT,'immutable delete intent'); END;
+"""
+        for owner in ("nodes", "relations", "evidence")
+    )
 
 
 def _property_ddl(owner: str) -> str:
@@ -159,7 +191,7 @@ class SchemaGuard:
         try:
             exists = connection.execute("SELECT 1 FROM sqlite_schema WHERE name='settings'").get
             if not exists:
-                connection.execute(DDL + _property_ddl("node") + _property_ddl("relation"))
+                connection.execute(DDL + _property_ddl("node") + _property_ddl("relation") + _intent_ddl())
                 connection.execute(
                     "INSERT INTO settings(singleton,workspace_id,schema_version,catalog_version,"
                     "catalog_fingerprint,index_format_version,managed_paths,policy,terminal_job_counts) VALUES(1,?,?,?,?,?,?,?,?)",

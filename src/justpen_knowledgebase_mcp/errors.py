@@ -1,6 +1,9 @@
 """Bounded public failure codes; exception messages must be content-free."""
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from .responses import BlockerDetails, MissingDetails
 
 WalBusyReason = Literal["WAL_PRESSURE", "RESET_PENDING", "RESET_IN_PROGRESS", "WAL_RESET_BLOCKED"]
 
@@ -113,3 +116,21 @@ class IndexingError(McpError):
     """Derived indexing failed without exposing its input."""
 
     error_type = "INDEX_ERROR"
+
+
+class RecordConflictError(ConflictError):
+    """A server-selected bounded operational blocker."""
+
+    def __init__(self, reason: str, details: "BlockerDetails") -> None:
+        """Carry typed details; the response boundary validates their shape."""
+        self.details = details
+        super().__init__(reason)
+
+
+class MissingRecordsError(NotFoundError):
+    """Atomic batch rejection with bounded missing UUIDs."""
+
+    def __init__(self, details: "MissingDetails") -> None:
+        """Carry the server-selected missing targets."""
+        self.details = details
+        super().__init__("requested records missing")

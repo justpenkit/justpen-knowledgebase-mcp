@@ -1,0 +1,224 @@
+"""Closed graph requests; nested model field sets preserve metadata presence."""
+
+from __future__ import annotations
+
+from typing import Annotated, Any, Literal, Self
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .identity import parse_timestamp
+from .mutations import validate_properties
+
+Kind = Literal["nodes", "relations", "evidence"]
+GraphKind = Literal["nodes", "relations"]
+RecordID = Annotated[str, Field(min_length=36, max_length=36)]
+
+
+class ClosedModel(BaseModel):
+    """Reject coercion and unknown public fields."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class NodeRef(ClosedModel):
+    """Exactly one existing UUID or zero-based node batch index."""
+
+    id: RecordID | None = None
+    node_index: Annotated[int, Field(ge=0, le=99)] | None = None
+
+    @model_validator(mode="after")
+    def exclusive(self) -> Self:
+        """Require a single non-null reference field."""
+        if self.model_fields_set not in ({"id"}, {"node_index"}) or (self.id is None and self.node_index is None):
+            raise ValueError("exactly one id or node_index required")
+        if self.id is not None:
+            UUID(self.id)
+        return self
+
+
+class TargetRef(ClosedModel):
+    """An evidence association's graph target."""
+
+    kind: GraphKind
+    id: RecordID
+
+
+class Mutation(ClosedModel):
+    """Shared node/relation patch fields and bounded evidence mutations."""
+
+    id: RecordID | None = None
+    type: str | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+    source: str | None = None
+    observed_at: str | None = None
+    remove_properties: list[str] = Field(default_factory=list, max_length=100)
+    evidence_add: list[RecordID] = Field(default_factory=list, max_length=100)
+    evidence_remove: list[RecordID] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_mutation(self) -> Self:
+        """Validate metadata without losing explicit null or omission."""
+        if self.id is None and (self.type is None or "properties" not in self.model_fields_set):
+            raise ValueError("creation requires type and properties")
+        if self.id is not None:
+            UUID(self.id)
+        if "observed_at" in self.model_fields_set:
+            if self.observed_at is None:
+                raise ValueError("observed_at cannot be null")
+            parse_timestamp(self.observed_at)
+        if self.source is not None and len(self.source.encode("utf-8")) > 256:
+            raise ValueError("source exceeds 256 bytes")
+        validate_properties(self.properties)
+        for identifiers in (self.evidence_add, self.evidence_remove):
+            for identifier in identifiers:
+                UUID(identifier)
+            if len(identifiers) != len(set(identifiers)):
+                raise ValueError("duplicate evidence mutation")
+        if set(self.evidence_add) & set(self.evidence_remove):
+            raise ValueError("conflicting evidence mutation")
+        return self
+
+
+class NodeWrite(Mutation):
+    """Node upsert or ID patch with optional label presence."""
+
+    label: str | None = None
+
+    @field_validator("label")
+    @classmethod
+    def label_limit(cls, value: str | None) -> str | None:
+        """Bound label in UTF-8 bytes."""
+        if value is not None and len(value.encode("utf-8")) > 512:
+            raise ValueError("label exceeds 512 bytes")
+        return value
+
+
+class RelationWrite(Mutation):
+    """Relation upsert or ID patch; existing endpoints are immutable."""
+
+    source_ref: NodeRef | None = None
+    target_ref: NodeRef | None = None
+
+    @model_validator(mode="after")
+    def endpoints(self) -> Self:
+        """Require both graph endpoints for creation."""
+        if self.id is None and (self.source_ref is None or self.target_ref is None):
+            raise ValueError("creation requires both endpoints")
+        return self
+
+
+class WriteRequest(ClosedModel):
+    """One atomic batch with independent record and link budgets."""
+
+    nodes: list[NodeWrite] = Field(default_factory=list[NodeWrite], max_length=100)
+    relations: list[RelationWrite] = Field(default_factory=list[RelationWrite], max_length=100)
+
+    @model_validator(mode="after")
+    def budgets(self) -> Self:
+        """Enforce aggregate budgets across both record kinds."""
+        records: list[Mutation] = [*self.nodes, *self.relations]
+        if not 1 <= len(records) <= 100:
+            raise ValueError("write requires 1 to 100 records")
+        if sum(len(record.evidence_add) + len(record.evidence_remove) for record in records) > 100:
+            raise ValueError("write exceeds 100 link mutations")
+        return self
+
+
+class GetRequest(ClosedModel):
+    """Bounded record or single-owner association retrieval."""
+
+    kind: Kind
+    ids: list[RecordID] = Field(min_length=1, max_length=100)
+    view: Literal["record", "links", "sources"] = "record"
+    limit: Annotated[int, Field(ge=1, le=100)] = 20
+    cursor: str | None = None
+
+    @model_validator(mode="after")
+    def view_rules(self) -> Self:
+        """Bind association views to exactly one valid owner."""
+        for identifier in self.ids:
+            UUID(identifier)
+        if self.view != "record" and len(self.ids) != 1:
+            raise ValueError("association view requires one id")
+        if self.view == "sources" and self.kind != "evidence":
+            raise ValueError("sources is evidence-only")
+        if self.view == "record" and self.cursor is not None:
+            raise ValueError("record view uses remaining_ids")
+        return self
+
+
+class DeleteRequest(ClosedModel):
+    """Atomic admission of a bounded unique target set."""
+
+    kind: Kind
+    ids: list[RecordID] = Field(min_length=1, max_length=100)
+    cascade: bool = False
+
+    @model_validator(mode="after")
+    def unique_ids(self) -> Self:
+        """Reject duplicate targets before database state checks."""
+        for identifier in self.ids:
+            UUID(identifier)
+        if len(set(self.ids)) != len(self.ids):
+            raise ValueError("duplicate delete ids")
+        return self
+
+
+class TypesRequest(ClosedModel):
+    """Controlled type discovery with optional detail selection."""
+
+    kind: GraphKind
+    type: str | None = None
+    limit: Annotated[int, Field(ge=1, le=100)] = 20
+    cursor: str | None = None
+
+
+class MutationResult(ClosedModel):
+    """Compact mutation acknowledgment, never a duplicate full property payload."""
+
+    id: RecordID
+    created: bool
+    updated: bool
+    links_added: Annotated[int, Field(ge=0, le=100)]
+    links_removed: Annotated[int, Field(ge=0, le=100)]
+
+
+class WriteResult(ClosedModel):
+    """Bounded per-kind acknowledgments for an atomic graph write."""
+
+    nodes: list[MutationResult] = Field(max_length=100)
+    relations: list[MutationResult] = Field(max_length=100)
+
+
+class RecordViewResult(ClosedModel):
+    """Full records and explicit missing or response-budget remainder IDs."""
+
+    records: list[dict[str, Any]] = Field(max_length=100)
+    missing_ids: list[RecordID] = Field(max_length=100)
+    remaining_ids: list[RecordID] = Field(max_length=100)
+
+
+class LinksViewResult(ClosedModel):
+    """Stable association page for one graph or evidence owner."""
+
+    links: list[RecordID | TargetRef] = Field(max_length=100)
+    next_cursor: str | None
+
+
+class EvidenceSource(ClosedModel):
+    """Provenance label and observation bounds, without a managed path."""
+
+    source: str
+    first_seen_at: str
+    last_seen_at: str
+
+
+class SourcesViewResult(ClosedModel):
+    """One bounded evidence provenance page."""
+
+    sources: list[EvidenceSource] = Field(max_length=100)
+    next_cursor: str | None
+
+
+GetResult = RecordViewResult | LinksViewResult | SourcesViewResult

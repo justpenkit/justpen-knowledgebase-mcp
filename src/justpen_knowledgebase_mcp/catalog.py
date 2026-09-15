@@ -1,8 +1,16 @@
 """Frozen v1 catalog data; validation and discovery consume this single manifest."""
 
 import hashlib
+import ipaddress
 import json
-from typing import Any
+import re
+import unicodedata
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+from .mutations import validate_properties
 
 CATALOG_VERSION = 1
 # Canonical serialized contract stays immutable; callers receive a fresh tree.
@@ -449,3 +457,144 @@ CATALOG_FINGERPRINT = hashlib.sha256(
 def catalog_manifest() -> dict[str, Any]:
     """Return an isolated copy of the fixed executable catalog contract."""
     return json.loads(CATALOG_JSON)
+
+
+def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
+    """Enforce the canonical manifest's required properties without coercion."""
+    validate_properties(properties)
+    definitions = catalog_manifest().get(kind, {})
+    if type_name not in definitions:
+        raise ValueError("unknown catalog type")
+    for field, rule in definitions[type_name]["required"].items():
+        if field not in properties or not _valid_field(properties[field], rule):
+            raise ValueError(f"/properties/{field}: expected {rule}")
+
+
+def _valid_field(value: object, rule: str | list[str]) -> bool:
+    if isinstance(rule, list):
+        return type(value) is str and value in rule
+    if rule == "port":
+        return type(value) is int and 1 <= value <= 65535
+    if type(value) is not str:
+        return False
+    validators: dict[str, Callable[[str], bool]] = {
+        "ip": _valid_ip,
+        "dns": _valid_dns,
+        "http_url": _valid_url,
+        "host": lambda text: _valid_ip(text) or _valid_dns(text),
+        "dns_or_explicit_empty": lambda text: text == "" or _valid_dns(text),
+        "sha256": lambda text: re.fullmatch(r"[0-9a-f]{64}", text) is not None,
+        "method": lambda text: re.fullmatch(r"[A-Z][A-Z0-9!#$%&'*+.^_`|~-]{0,31}", text) is not None,
+        "alpn_list": _valid_alpn,
+    }
+    if rule in validators:
+        return validators[rule](value)
+    return _valid_text(value, rule)
+
+
+def _valid_alpn(value: str) -> bool:
+    tokens = value.split(",")
+    return value == "" or (
+        len(value.encode("utf-8")) <= 1024
+        and len(tokens) == len(set(tokens))
+        and all(re.fullmatch(r"[A-Za-z0-9./_-]{1,255}", token) is not None for token in tokens)
+    )
+
+
+def _valid_text(value: str, rule: str) -> bool:
+    if rule == "selector" and value == "":
+        return True
+    maximum = {"selector": 1024, "realm": 1024, "location": 4096}.get(rule)
+    if maximum is None and rule.startswith("text("):
+        maximum = int(rule[5:-1])
+    return (
+        maximum is not None
+        and 1 <= len(value.encode("utf-8")) <= maximum
+        and value == value.strip()
+        and not any(unicodedata.category(char) == "Cc" for char in value)
+    )
+
+
+def _valid_ip(value: str) -> bool:
+
+    try:
+        if "%" in value or (":" in value and "." in value):
+            return False
+        address = ipaddress.ip_address(value)
+        if isinstance(address, ipaddress.IPv6Address):
+            groups = [
+                format(int.from_bytes(address.packed[index : index + 2], "big"), "x") for index in range(0, 16, 2)
+            ]
+            best_start, best_length = -1, 1
+            for start in range(8):
+                end = start
+                while end < 8 and groups[end] == "0":
+                    end += 1
+                if end - start > best_length:
+                    best_start, best_length = start, end - start
+            if best_start >= 0:
+                expected = ":".join(groups[:best_start]) + "::" + ":".join(groups[best_start + best_length :])
+            else:
+                expected = ":".join(groups)
+            return expected == value
+        return str(address) == value
+    except ValueError:
+        return False
+
+
+def _valid_dns(value: str) -> bool:
+
+    return (
+        len(value) <= 253
+        and not ("." in value and re.fullmatch(r"[0-9.]+", value) is not None)
+        and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is not None for label in value.split("."))
+    )
+
+
+def _valid_url(value: str) -> bool:
+
+    if not value.isascii() or len(value) > 8192:
+        return False
+    match = re.fullmatch(r"(https?)://(\[[^\]]+\]|[^/:?#]+)(?::([0-9]+))?(/[^?#]*)(?:\?([^#]+))?", value)
+    if match is None:
+        return False
+    scheme, host, port, path, query = match.groups()
+    if host.startswith("["):
+        if ":" not in host or not _valid_ip(host[1:-1]):
+            return False
+    elif not (_valid_dns(host) or (_valid_ip(host) and ":" not in host)):
+        return False
+    if port is not None and (
+        port.startswith("0") or not 1 <= int(port) <= 65535 or int(port) == (443 if scheme == "https" else 80)
+    ):
+        return False
+    if any(segment in (".", "..") for segment in path.split("/")):
+        return False
+    pchar = r"(?:[A-Za-z0-9._~!$&'()*+,;=:@/]|%[0-9A-F]{2})*"
+    return re.fullmatch(pchar, path) is not None and (
+        query is None or re.fullmatch(pchar.replace("@/", "@/?"), query) is not None
+    )
+
+
+def catalog_schema(kind: str, type_name: str) -> dict[str, Any]:
+    """Expose JSON types and exact format references from the sole manifest."""
+    manifest = catalog_manifest()
+    if kind not in ("nodes", "relations") or type_name not in manifest[kind]:
+        raise ValueError("unknown catalog type")
+    definition = manifest[kind][type_name]
+    properties: dict[str, Any] = {}
+    for name, rule in definition["required"].items():
+        if isinstance(rule, list):
+            properties[name] = {"type": "string", "enum": rule}
+        elif rule == "port":
+            properties[name] = {"type": "integer", "minimum": 1, "maximum": 65535, "format": rule}
+        else:
+            properties[name] = {"type": "string", "format": rule}
+    return {
+        "type": "object",
+        "required": list(definition["required"]),
+        "properties": properties,
+        "additionalProperties": True,
+        "x-maxUtf8Bytes": manifest["common"]["properties_bytes"],
+        "x-maxDepth": manifest["common"]["depth"],
+    }

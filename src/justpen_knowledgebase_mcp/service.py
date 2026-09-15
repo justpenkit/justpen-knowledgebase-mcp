@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .shutdown import ShutdownObserver
 from .storage.connection import SQLiteRuntime
+from .storage.graph import Graph, graph_types
 from .storage.maintenance import CheckpointMaintenance
 from .storage.worker import DatabaseWorkers
 from .workspace import WorkspacePaths
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from .config import ServerConfig
+    from .models import GetRequest, TypesRequest, WriteRequest
 
 
 @dataclass
@@ -28,6 +30,18 @@ class KnowledgeBase:
     workspace: WorkspacePaths
     workers: DatabaseWorkers
     maintenance: CheckpointMaintenance
+
+    async def write(self, request: WriteRequest) -> dict[str, Any]:
+        """Atomically merge a validated graph batch in the admitted writer."""
+        return await self.workers.write(lambda connection, token: Graph.write(connection, token, request))
+
+    async def get(self, request: GetRequest) -> dict[str, Any]:
+        """Read bounded canonical records in one guarded snapshot."""
+        return await self.workers.read(lambda connection, token: Graph.get(connection, token, request))
+
+    async def types(self, request: TypesRequest) -> dict[str, Any]:
+        """Discover controlled types with ready-only snapshot counts."""
+        return await self.workers.read(lambda connection, token: graph_types(connection, token, request))
 
     @classmethod
     @asynccontextmanager
