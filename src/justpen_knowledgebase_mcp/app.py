@@ -8,6 +8,7 @@ from fastmcp import FastMCP
 from .config import ServerConfig
 from .service import KnowledgeBase
 from .shutdown import ShutdownObserver
+from .stdio import KnowledgeBaseMCP
 from .tools import register_all
 from .tools.request_presence import get_service
 from .workspace import WorkspacePaths
@@ -30,6 +31,6 @@ def create_app(
         ) as service:
             yield {"knowledgebase": service}
 
-    server = FastMCP("justpen-knowledgebase-mcp", lifespan=lifespan, strict_input_validation=True)
+    server = KnowledgeBaseMCP("justpen-knowledgebase-mcp", lifespan=lifespan, strict_input_validation=True)
     register_all(server)
     return server

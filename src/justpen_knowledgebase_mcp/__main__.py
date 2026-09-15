@@ -40,7 +40,16 @@ async def main(config: ServerConfig | None = None) -> None:
         loop.add_signal_handler(sig, request_stop)
 
     if config.transport == "http":
-        run_server = mcp.run_async(transport="http", host=config.host, port=config.port, path="/mcp")
+        run_server = mcp.run_async(
+            transport="http",
+            host=config.host,
+            port=config.port,
+            path="/mcp",
+            log_level=config.log_level,
+            host_origin_protection=True,
+            allowed_hosts=[config.host],
+            uvicorn_config={"timeout_graceful_shutdown": 30, "log_level": config.log_level.lower()},
+        )
     else:
         run_server = mcp.run_async()
     server_task = asyncio.create_task(run_server, name="mcp-server")

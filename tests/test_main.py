@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import select
@@ -242,14 +243,14 @@ def initialize(self, factory, *, reader=False):
         if live_count==1:
             self.execute("insert into nodes(uuid,type,key,properties) values ('committed','ip','a','{}')")
         if live_count==4 and sys.argv[2]!='signal':
-            print('ready',flush=True)
+            print('ready',file=sys.stderr,flush=True)
 def close_native(self, *, force=False):
     global live_count
     with closing_lock:
         live_count-=1
         last=live_count==0
     if last:
-        print('closing',flush=True)
+        print('closing',file=sys.stderr,flush=True)
         time.sleep(60)
     return native_close(self,force=force)
 # Keep the actual factory/gate and owner-thread lifetime; delay only native close.
@@ -265,7 +266,7 @@ if sys.argv[2]=='signal':
     # actual FastMCP stdio transport, not a stand-in reading stdin.
     async def server(observer):
         async with KnowledgeBase.open(config, _shutdown_observer=observer):
-            print('ready',flush=True)
+            print('ready',file=sys.stderr,flush=True)
             await asyncio.Event().wait()
     entry.create_app=lambda config, **kwargs:SimpleNamespace(run_async=lambda:server(kwargs["_shutdown_observer"]))
 asyncio.run(entry.main(config))
@@ -278,23 +279,42 @@ asyncio.run(entry.main(config))
         text=True,
     )
     try:
-        assert process.stdout is not None
-        assert select.select([process.stdout], [], [], 10)[0]
-        assert process.stdout.readline().strip() == "ready"
+        assert process.stderr is not None
+        assert select.select([process.stderr], [], [], 10)[0]
+        assert process.stderr.readline().strip() == "ready"
+        if trigger != "signal":
+            # Native connections precede lifespan readiness. Initialize the real
+            # transport before testing an idle signal or normal EOF teardown.
+            assert process.stdin is not None
+            assert process.stdout is not None
+            process.stdin.write(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "clientInfo": {"name": "slow-close-probe", "version": "1"},
+                        },
+                    }
+                )
+                + "\n"
+            )
+            process.stdin.flush()
+            assert select.select([process.stdout], [], [], 10)[0]
+            assert "result" in json.loads(process.stdout.readline())
         if trigger != "eof":
             process.send_signal(signal.SIGTERM)
         else:
             assert process.stdin is not None
             process.stdin.close()
             process.stdin = None
-        if trigger != "idle-stdin-signal":
-            assert select.select([process.stdout], [], [], 10)[0]
-            assert process.stdout.readline().strip() == "closing"
-        assert process.stderr is not None
         # The timeout line arrives while native owner cleanup is still pending.
         stderr_seen = b""
         deadline = time.monotonic() + 10
-        while b"shutdown_timeout" not in stderr_seen:
+        while b"shutdown_timeout" not in stderr_seen or b"closing" not in stderr_seen:
             assert select.select([process.stderr], [], [], max(0, deadline - time.monotonic()))[0], stderr_seen
             chunk = os.read(process.stderr.fileno(), 4096)
             assert chunk, stderr_seen
