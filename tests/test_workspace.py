@@ -2,6 +2,7 @@
 
 import os
 import stat
+import sys
 import tempfile
 from pathlib import Path
 
@@ -114,6 +115,12 @@ def test_intermediate_directory_replaced_by_symlink_during_open(tmp_path, monkey
 
 @pytest.mark.parametrize("root_spelling", ["/tmp", "/var"])  # noqa: S108 - exercise OS root alias with a unique TemporaryDirectory
 def test_platform_root_alias_prefixes(tmp_path, root_spelling):
+    if sys.platform != "darwin":
+        pytest.skip("Darwin root aliases are not a portable filesystem layout")
+    alias = Path(root_spelling)
+    expected_root = Path("/private") / alias.name
+    if not alias.is_symlink() or alias.resolve() != expected_root or not expected_root.is_dir():
+        pytest.skip("Host does not expose the expected Darwin root alias")
     canonical = tmp_path.resolve()
     if root_spelling == "/tmp":  # noqa: S108 - exercise OS root alias with a unique TemporaryDirectory
         with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
