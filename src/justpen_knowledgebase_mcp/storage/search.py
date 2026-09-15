@@ -27,7 +27,7 @@ def search(connection: apsw.Connection, token: OperationToken, request: SearchRe
         workspace, epoch, request.kind, None, "search", request.model_dump(exclude={"cursor", "limit"})
     )
     try:
-        after = binding.decode(request.cursor) if request.cursor else 0
+        after = binding.decode(request.cursor) if request.cursor is not None else 0
     except ValueError as exc:
         raise InvalidParamsError("invalid cursor") from exc
     expression, values = (

@@ -389,3 +389,16 @@ async def test_maximum_accepted_ast_executes_with_exact_result(tmp_path):
             if evaluate(document, predicate)
         ]
         assert result["canonical_scan_count"] == 0
+
+
+async def test_empty_cursor_is_invalid_while_omitted_or_null_starts_first_page(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        written = await kb.write(
+            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"name": "a.example"}}]})
+        )
+        expected_ids = [written["nodes"][0]["id"]]
+        for request in ({"kind": "nodes"}, {"kind": "nodes", "cursor": None}):
+            result = await kb.search(request)
+            assert [item["id"] for item in result["results"]] == expected_ids
+        with pytest.raises(InvalidParamsError):
+            await kb.search({"kind": "nodes", "cursor": ""})
