@@ -138,7 +138,7 @@ async def test_pre_admission_input_is_protected_from_other_process_orphan_cleanu
 
 
 async def test_heartbeat_retries_real_writer_contention_without_losing_lease(tmp_path, monkeypatch):
-    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, db_busy_timeout_ms=20)) as kb:
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         job_id = str(uuid4())
         await kb.workers.control(lambda c, t: JobStore.insert(c, job_id, "fixture", "bulk", {}))
         claim = await kb.workers.control(lambda c, t: JobStore.claim(c, "bulk", "fixture"))
@@ -161,23 +161,30 @@ async def test_heartbeat_retries_real_writer_contention_without_losing_lease(tmp
 
         with worker(tmp_path, "writer") as child:
             await asyncio.to_thread(await_barrier, child)
-            monkeypatch.setattr(kb.workers, "control", observe)
-            initial_expiry = claim.expires_at
-            heartbeat = asyncio.create_task(kb.job_runner._heartbeat(claim))
-            await asyncio.wait_for(retried.wait(), 3)
-            assert not claim.lost
-            assert claim.expires_at == initial_expiry
-            os.write(child[2], b"1")
-            await asyncio.to_thread(child[0].communicate, timeout=10)
-            for _ in range(200):
-                if claim.expires_at > initial_expiry:
-                    break
-                await asyncio.sleep(0.005)
-            assert claim.expires_at > initial_expiry
-            assert not claim.lost
-            heartbeat.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await heartbeat
+            with monkeypatch.context() as contention:
+                contention.setattr(
+                    kb.workers.factory,
+                    "config",
+                    kb.config.model_copy(update={"db_busy_timeout_ms": 20}),
+                )
+                contention.setattr(kb.workers, "control", observe)
+                initial_expiry = claim.expires_at
+                heartbeat = asyncio.create_task(kb.job_runner._heartbeat(claim))
+                try:
+                    await asyncio.wait_for(retried.wait(), 3)
+                    assert not claim.lost
+                    assert claim.expires_at == initial_expiry
+                    os.write(child[2], b"1")
+                    await asyncio.to_thread(child[0].communicate, timeout=10)
+                    for _ in range(200):
+                        if claim.expires_at > initial_expiry:
+                            break
+                        await asyncio.sleep(0.005)
+                    assert claim.expires_at > initial_expiry
+                    assert not claim.lost
+                finally:
+                    heartbeat.cancel()
+                    await asyncio.gather(heartbeat, return_exceptions=True)
 
 
 async def test_recovery_keyset_reaches_owner101_with_million_ready_rows(tmp_path):

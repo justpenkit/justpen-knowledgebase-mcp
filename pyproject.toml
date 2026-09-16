@@ -60,6 +60,7 @@ dev = [
   "pytest-cov>=5.0",
   "ruff>=0.15",
   "taplo>=0.9.3",
+  "typing-extensions>=4.6,<5",
   "yamlfix>=1.16",
 ]
 

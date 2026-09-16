@@ -1350,6 +1350,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
     { name = "taplo" },
+    { name = "typing-extensions" },
     { name = "yamlfix" },
 ]
 docs = [
@@ -1385,6 +1386,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=5.0" },
     { name = "ruff", specifier = ">=0.15" },
     { name = "taplo", specifier = ">=0.9.3" },
+    { name = "typing-extensions", specifier = ">=4.6,<5" },
     { name = "yamlfix", specifier = ">=1.16" },
 ]
 docs = [{ name = "mkdocs-material", specifier = ">=9.5" }]

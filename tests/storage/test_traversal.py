@@ -231,7 +231,7 @@ async def test_pending_visibility_matches_graph_readiness(tmp_path):
         edge_ids = [item["id"] for item in created["relations"]]
         await admit(kb, "relations", edge_ids[:1])
         assert len((await kb.neighbors(NeighborsRequest(seed_ids=ids[:1])))["edges"]) == 1
-        assert len((await kb.search(SearchRequest(kind="nodes")))["results"]) == 3
+        assert len((await kb.search(SearchRequest(kind="nodes")))["items"]) == 3
         await admit(kb, "nodes", ids[2:])
         assert (await kb.neighbors(NeighborsRequest(seed_ids=ids[:1])))["edges"] == []
-        assert (await kb.search(SearchRequest(kind="relations")))["results"] == []
+        assert (await kb.search(SearchRequest(kind="relations")))["items"] == []

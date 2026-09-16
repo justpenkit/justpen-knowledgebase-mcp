@@ -129,10 +129,40 @@ async def test_inline_failure_retains_input_then_retry_and_counter_equivalence(k
     assert counts == {"completed": 1, "failed_cancelled": 0}
 
 
-async def test_text_storage_waits_for_same_durable_job_index_completion(tmp_path):
+async def test_text_storage_waits_for_same_durable_job_index_completion(tmp_path, monkeypatch):
 
-    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=200)) as service:
-        result = await service.ingest_evidence({"text": "raw is searchable", "media_type": "application/x-yaml"})
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as service:
+        indexing, release = asyncio.Event(), asyncio.Event()
+        ingest_step = service.job_runner._ingest_step
+        wait = service.job_runner.wait
+
+        async def hold_indexing(claim):
+            if claim.progress.get("awaiting_text_index"):
+                indexing.set()
+                await release.wait()
+            await ingest_step(claim)
+
+        async def expire_at_wait_boundary(job_id, _deadline, accepted=None):
+            assert accepted is not None
+            await asyncio.wait_for(indexing.wait(), 2)
+            return await wait(job_id, time.monotonic(), accepted)
+
+        try:
+            with monkeypatch.context() as foreground:
+                foreground.setattr(service.job_runner, "_ingest_step", hold_indexing)
+                foreground.setattr(service.job_runner, "wait", expire_at_wait_boundary)
+                accepted = await service.ingest_evidence(
+                    {"text": "raw is searchable", "media_type": "application/x-yaml"}
+                )
+                assert accepted["status"] == "accepted"
+                assert accepted["state"] == "queued"
+                assert accepted["index_state"] == "pending"
+                assert accepted["incomplete"] is True
+                assert accepted["effective_media_type"] == "application/x-yaml"
+        finally:
+            release.set()
+        result = await wait(accepted["job_id"], time.monotonic() + 3, accepted)
+        assert result["job_id"] == accepted["job_id"]
         assert result["status"] == "completed"
         assert result["state"] == "completed"
         assert result["index_state"] == "ready"
