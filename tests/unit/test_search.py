@@ -108,6 +108,18 @@ def test_builtin_filters_parameterize_all_user_values():
 
 
 @pytest.mark.parametrize(
+    ("kind", "include_evidence", "match_count"),
+    [("nodes", False, 2), ("nodes", True, 4), ("relations", True, 4), ("evidence", True, 2)],
+)
+def test_words_candidate_expressions_are_bound_for_each_match_unit(kind, include_evidence, match_count):
+    expressions = ('"common"', '"rare unsafe\'"')
+    sql, values = search._text_candidates(kind, expressions, include_evidence=include_evidence)
+    assert sql.count("MATCH ?") == match_count
+    assert values == list(expressions) * (2 if kind != "evidence" and include_evidence else 1)
+    assert "unsafe" not in sql
+
+
+@pytest.mark.parametrize(
     ("direction", "outgoing", "incoming", "expected"),
     [
         ("both", 2, 7, 2),

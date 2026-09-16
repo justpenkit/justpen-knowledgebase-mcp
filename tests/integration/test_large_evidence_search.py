@@ -5,6 +5,7 @@ import base64
 import json
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -13,8 +14,150 @@ from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.evidence import IngestRequest, ReadEvidenceRequest
 from justpen_knowledgebase_mcp.models import SearchRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
+from justpen_knowledgebase_mcp.storage import search as search_storage
 
 pytestmark = pytest.mark.integration
+
+
+async def test_words_common_first_rare_second_narrows_verified_candidates(tmp_path, monkeypatch):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        created = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {
+                            "type": "domain",
+                            "properties": {
+                                "name": f"item-{index}.example",
+                                "body": "common obscureneedle" if index == 79 else "common ordinary",
+                            },
+                        }
+                        for index in range(80)
+                    ]
+                }
+            )
+        )
+        calls = 0
+        original = search_storage.owner_match
+
+        def counted(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(search_storage, "owner_match", counted)
+        started = time.perf_counter()
+        result = await kb.search(SearchRequest(kind="nodes", query="common obscureneedle", query_mode="words"))
+        elapsed = time.perf_counter() - started
+        print(f"words_candidate_measurement verified_candidates={calls} elapsed_seconds={elapsed:.6f}")
+        assert [item["id"] for item in result["items"]] == [created["nodes"][79]["id"]]
+        assert calls == 1, f"verified_candidates={calls} elapsed_seconds={elapsed:.6f}"
+
+
+async def test_words_search_keeps_record_and_evidence_match_units(tmp_path, monkeypatch):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        created = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {"type": "domain", "properties": {"name": "direct.example", "body": "common obscureneedle"}},
+                        {
+                            "type": "domain",
+                            "properties": {
+                                "name": "leaves.example",
+                                "first": "common",
+                                "second": "obscureneedle",
+                                "status": 403,
+                            },
+                        },
+                        {"type": "domain", "properties": {"name": "separate.example"}},
+                        {"type": "domain", "properties": {"name": "linked.example", "status": 403}},
+                    ]
+                }
+            )
+        )
+        identifiers = [node["id"] for node in created["nodes"]]
+        for body, target in (
+            ("common alone", identifiers[2]),
+            ("obscureneedle alone", identifiers[2]),
+            ("common obscureneedle together", identifiers[3]),
+        ):
+            await kb.ingest_evidence(
+                IngestRequest.model_validate({"text": body, "targets": [{"kind": "nodes", "id": target}]})
+            )
+
+        expected = [identifiers[index] for index in (0, 1, 3)]
+        for phrase in ("common obscureneedle", "obscureneedle common", "common common obscureneedle"):
+            request = SearchRequest(kind="nodes", query=phrase, query_mode="words")
+            result = await kb.search(request)
+            assert [item["id"] for item in result["items"]] == expected
+            assert all(item["matches"] for item in result["items"])
+        direct = await kb.search(
+            SearchRequest(kind="nodes", query="common obscureneedle", query_mode="words", include_evidence=False)
+        )
+        assert [item["id"] for item in direct["items"]] == expected[:2]
+        filtered = await kb.search(
+            SearchRequest(
+                kind="nodes",
+                query="common obscureneedle",
+                query_mode="words",
+                properties={"path": "/status", "op": "eq", "value": 403},
+            )
+        )
+        assert [item["id"] for item in filtered["items"]] == expected[1:]
+
+        page_request = SearchRequest(kind="nodes", query="common obscureneedle", query_mode="words", limit=1)
+        pages = []
+        while True:
+            page = await kb.search(page_request)
+            pages.extend(item["id"] for item in page["items"])
+            if page["cursor"] is None:
+                assert not page["has_more"]
+                break
+            assert page["has_more"]
+            page_request = page_request.model_copy(update={"cursor": page["cursor"]})
+        assert pages == expected
+        ranked = await kb.search(
+            SearchRequest(kind="nodes", query="common obscureneedle", query_mode="words", sort="relevance")
+        )
+        assert {item["id"] for item in ranked["items"]} == set(expected)
+        assert ranked["cursor"] is None
+
+        requests = [
+            SearchRequest(kind="nodes", query="common obscureneedle", query_mode="words", limit=1),
+            SearchRequest(kind="nodes", query="obscureneedle common", query_mode="words"),
+            SearchRequest(kind="nodes", query="common common obscureneedle", query_mode="words"),
+            SearchRequest(
+                kind="nodes",
+                query="common obscureneedle",
+                query_mode="words",
+                properties={"path": "/status", "op": "eq", "value": 403},
+            ),
+            SearchRequest(kind="nodes", query="common obscureneedle", query_mode="words", sort="relevance"),
+        ]
+
+        async def results():
+            compared = []
+            for request in requests:
+                page = await kb.search(request)
+                compared.append(page)
+                if page["cursor"] is not None:
+                    compared.append(await kb.search(request.model_copy(update={"cursor": page["cursor"]})))
+            return compared
+
+        optimized_items_and_cursors = await results()
+
+        def reference_candidates(kind, expressions, include_evidence):
+            candidate = search_storage.TEXT_CANDIDATE[kind]
+            filters = [expressions[0]]
+            if kind != "evidence" and include_evidence:
+                candidate += " UNION " + search_storage.LINKED_CANDIDATE[kind]
+                filters.append(expressions[0])
+            return candidate, filters
+
+        monkeypatch.setattr(search_storage, "_text_candidates", reference_candidates)
+        reference_items_and_cursors = await results()
+        assert optimized_items_and_cursors == reference_items_and_cursors
 
 
 async def test_literal_acceptance_matrix(tmp_path):
@@ -108,6 +251,12 @@ async def test_chunk_boundary_graph_filter_and_words_units(tmp_path):
         assert (await kb.search(SearchRequest(kind="evidence", query="boundary phrase")))["items"]
         assert not (await kb.search(SearchRequest(kind="nodes", query="access denied", query_mode="words")))["items"]
         assert (await kb.search(SearchRequest(kind="evidence", query="boundary denied", query_mode="words")))["items"]
+        assert [
+            item["id"]
+            for item in (await kb.search(SearchRequest(kind="nodes", query="boundary denied", query_mode="words")))[
+                "items"
+            ]
+        ] == [nodes[0]["id"]]
         assert result["state"] == "completed"
 
 

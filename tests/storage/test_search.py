@@ -9,6 +9,7 @@ import pytest
 
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import InvalidParamsError, LimitError
+from justpen_knowledgebase_mcp.evidence import IngestRequest
 from justpen_knowledgebase_mcp.models import GetRequest, SearchRequest, WriteRequest
 from justpen_knowledgebase_mcp.query import evaluate
 from justpen_knowledgebase_mcp.service import KnowledgeBase
@@ -371,6 +372,44 @@ async def test_relation_properties_refresh_and_builtin_filters(tmp_path):
                 SearchRequest(kind="relations", properties={"path": "/status", "op": "exists", "value": True})
             )
         )["items"]
+
+
+async def test_relation_words_intersect_direct_and_single_linked_evidence_units(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        written = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {"type": "hostname", "properties": {"name": "first.example"}},
+                        {"type": "hostname", "properties": {"name": "second.example"}},
+                    ],
+                    "relations": [
+                        {
+                            "type": "aliases",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 1},
+                            "properties": {"vantage": "common", "second": "obscureneedle"},
+                        },
+                        {
+                            "type": "aliases",
+                            "source_ref": {"node_index": 1},
+                            "target_ref": {"node_index": 0},
+                            "properties": {"vantage": "unrelated"},
+                        },
+                    ],
+                }
+            )
+        )
+        direct_id, linked_id = (relation["id"] for relation in written["relations"])
+        target = [{"kind": "relations", "id": linked_id}]
+        await kb.ingest_evidence(IngestRequest.model_validate({"text": "common only", "targets": target}))
+        await kb.ingest_evidence(IngestRequest.model_validate({"text": "obscureneedle only", "targets": target}))
+        query = SearchRequest(kind="relations", query="common obscureneedle", query_mode="words")
+        assert [item["id"] for item in (await kb.search(query))["items"]] == [direct_id]
+        await kb.ingest_evidence(
+            IngestRequest.model_validate({"text": "common obscureneedle together", "targets": target})
+        )
+        assert [item["id"] for item in (await kb.search(query))["items"]] == [direct_id, linked_id]
 
 
 async def test_maximum_accepted_ast_executes_with_exact_result(tmp_path):

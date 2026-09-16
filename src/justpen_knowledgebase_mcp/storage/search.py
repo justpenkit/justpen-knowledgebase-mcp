@@ -46,11 +46,10 @@ def search(connection: apsw.Connection, token: OperationToken, request: SearchRe
     )
     clauses, filters = _builtin_filters(request)
     if text_query is not None:
-        candidate_sql = TEXT_CANDIDATE[request.kind]
-        filters.append(text_query.expressions[0])
-        if request.kind != "evidence" and request.include_evidence:
-            candidate_sql = " UNION ".join((candidate_sql, LINKED_CANDIDATE[request.kind]))
-            filters.append(text_query.expressions[0])
+        candidate_sql, text_filters = _text_candidates(
+            request.kind, text_query.expressions, include_evidence=request.include_evidence
+        )
+        filters.extend(text_filters)
         clauses.append(f"o.id IN ({candidate_sql})")
     sql = (
         "SELECT o.id,o.uuid,NULL,NULL,json_object('media_type',o.media_type,'index_state',o.index_state,'byte_size',o.byte_size),1 FROM evidence o WHERE {conditions} ORDER BY o.id"
@@ -197,6 +196,25 @@ def _ranked_output(output: dict[str, Any], ranked: list[tuple[float, int, dict[s
         output["items"].append(item)
 
 
+def _text_candidates(kind: str, expressions: tuple[str, ...], *, include_evidence: bool) -> tuple[str, list[str]]:
+    """Intersect FTS hits within each verifier unit before mapping linked owners."""
+    direct = " INTERSECT ".join([TEXT_CANDIDATE[kind]] * len(expressions))
+    filters = list(expressions)
+    if kind == "evidence" or not include_evidence:
+        return direct, filters
+    if len(expressions) == 1:
+        linked = LINKED_CANDIDATE[kind]
+    else:
+        evidence = " INTERSECT ".join([TEXT_CANDIDATE["evidence"]] * len(expressions))
+        # Parenthesized compound SELECTs keep direct owner IDs and evidence IDs
+        # separate until each intersection is complete.
+        direct = "".join(("SELECT * FROM (", direct, ")"))
+        prefix, suffix = _LINKED_INTERSECTION[kind]
+        linked = "".join((prefix, evidence, suffix))
+    filters.extend(expressions)
+    return " UNION ".join((direct, linked)), filters
+
+
 _TEXT_CANDIDATE = (
     "SELECT d.{owner} FROM search_fts JOIN search_documents d ON d.id=search_fts.rowid WHERE search_fts MATCH ?"
 )
@@ -207,4 +225,14 @@ TEXT_CANDIDATE = {
 LINKED_CANDIDATE = {
     "nodes": "SELECT l.node_id FROM search_fts JOIN search_documents d ON d.id=search_fts.rowid JOIN node_evidence l ON l.evidence_id=d.evidence_id WHERE search_fts MATCH ?",
     "relations": "SELECT l.relation_id FROM search_fts JOIN search_documents d ON d.id=search_fts.rowid JOIN relation_evidence l ON l.evidence_id=d.evidence_id WHERE search_fts MATCH ?",
+}
+_LINKED_INTERSECTION = {
+    "nodes": (
+        "SELECT l.node_id FROM (",
+        ") AS matched JOIN node_evidence l ON l.evidence_id=matched.evidence_id",
+    ),
+    "relations": (
+        "SELECT l.relation_id FROM (",
+        ") AS matched JOIN relation_evidence l ON l.evidence_id=matched.evidence_id",
+    ),
 }
