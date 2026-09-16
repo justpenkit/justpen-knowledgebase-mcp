@@ -165,11 +165,11 @@ def checkpoint_worker_variant(
         connection.execute("create table corpus(id integer primary key, payload blob)")
         page_size = connection.pragma("page_size")
         maintenance = None
-        if not automatic:
-            maintenance = pool.submit(open_maintenance, owners, path, deadline).result()
-            # A WAL hook replaces SQLite's automatic hook, so install ONLY for auto0.
-            connection.set_wal_hook(partial(observe_frames, frame_state))
         try:
+            if not automatic:
+                maintenance = pool.submit(open_maintenance, owners, path, deadline).result()
+                # A WAL hook replaces SQLite's automatic hook, so install ONLY for auto0.
+                connection.set_wal_hook(partial(observe_frames, frame_state))
             for first in range(0, raw_bytes // 16384, 16):
                 check_deadline(deadline)
                 rows = [(index, bytes([index % 256]) * 16384) for index in range(first, first + 16)]

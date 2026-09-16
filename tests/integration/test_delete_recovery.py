@@ -1,12 +1,16 @@
 """Durable deletion jobs complete bounded steps across parents and lost metadata."""
 
 import asyncio
+import json
 from uuid import uuid4
 
 import pytest
 
+from justpen_knowledgebase_mcp.catalog import validate_record
 from justpen_knowledgebase_mcp.errors import ConflictError, RecordConflictError
+from justpen_knowledgebase_mcp.identity import identity_key
 from justpen_knowledgebase_mcp.models import DeleteRequest
+from justpen_knowledgebase_mcp.storage.graph import _validate_endpoints, row_by_id
 from justpen_knowledgebase_mcp.storage.job_recovery import recover_intents
 from justpen_knowledgebase_mcp.storage.jobs import JobStore
 
@@ -16,7 +20,12 @@ pytestmark = pytest.mark.integration
 async def test_two_parent_jobs_lost_metadata_cancel_and_bounded_completion(kb):
     await kb.job_runner.close()
     created = await kb.write(
-        {"nodes": [{"type": "hostname", "properties": {"name": name}} for name in ["first", "second", "survivor"]]}
+        {
+            "nodes": [
+                {"type": "endpoint", "properties": {"url": f"https://example.com/{name}", "method": "GET"}}
+                for name in ["first", "second", "survivor"]
+            ]
+        }
     )
     first, second, survivor = [node["id"] for node in created["nodes"]]
 
@@ -24,11 +33,35 @@ async def test_two_parent_jobs_lost_metadata_cancel_and_bounded_completion(kb):
         ids = dict(connection.execute("select uuid,id from nodes"))
         for owner in [first, second]:
             connection.executemany(
-                "insert into relations(uuid,source_id,target_id,type,key,properties) values(?,?,?,'subdomain_of',?,'{}')",
-                ((str(uuid4()), ids[owner], ids[survivor], str(index)) for index in range(350)),
+                "insert into relations(uuid,source_id,target_id,type,key,properties) values(?,?,?,'redirects_to',?,?)",
+                (
+                    (
+                        str(uuid4()),
+                        ids[owner],
+                        ids[survivor],
+                        identity_key("relations", "redirects_to", {"context": f"observation-{index}"}),
+                        json.dumps({"context": f"observation-{index}"}),
+                    )
+                    for index in range(350)
+                ),
             )
 
     await kb.workers.write(populate)
+
+    def validate_fixture(connection, _token):
+        for source, target, kind, key, raw in connection.execute(
+            "select source_id,target_id,type,key,properties from relations"
+        ):
+            properties = json.loads(raw)
+            validate_record("relations", kind, properties)
+            source_row = row_by_id(connection, "nodes", source)
+            target_row = row_by_id(connection, "nodes", target)
+            assert source_row is not None
+            assert target_row is not None
+            _validate_endpoints(kind, source_row, target_row)
+            assert key == identity_key("relations", kind, properties)
+
+    await kb.workers.read(validate_fixture)
     jobs = [str(uuid4()), str(uuid4())]
     for owner, job_id in zip([first, second], jobs, strict=True):
         await kb.workers.write(

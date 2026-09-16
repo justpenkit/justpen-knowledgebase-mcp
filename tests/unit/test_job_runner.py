@@ -558,3 +558,58 @@ async def test_ingest_context_captured_before_worker_dispatch(runner, monkeypatc
     finally:
         detach(token)
     assert inserted[0]["_telemetry"] == {"traceparent": parent}
+
+
+@pytest.mark.parametrize("error", [BusyError("capacity"), LimitError("deadline")])
+async def test_admission_interruption_retains_durable_job(runner, monkeypatch, error):
+    capability = claim(progress={"bytes": 1})
+    runner._ingest_step = AsyncMock(side_effect=error)
+    runner._fail_claim = AsyncMock()
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job(progress='{"bytes":42}')))
+    released = Mock()
+    monkeypatch.setattr(jobs.JobStore, "release", released)
+    await runner._run_claim(capability)
+    runner._fail_claim.assert_not_awaited()
+    runner.store.discard_stage.assert_not_called()
+    assert released.call_args.args[2] == {"bytes": 42}
+    assert not runner._claims
+
+
+@pytest.mark.parametrize("error", [BusyError("pressure"), LimitError("capacity")])
+async def test_start_defers_optional_retention_sampling(runner, monkeypatch, error):
+    runner.recover = AsyncMock()
+    monkeypatch.setattr(jobs.JobRetention, "reconcile", Mock())
+    runner.workers.read.side_effect = error
+    runner._lane = AsyncMock()
+    runner._recovery_loop = AsyncMock()
+    runner._retention_loop = AsyncMock()
+    await runner.start()
+    assert len(runner._tasks) == 4
+    assert runner.retention_status()["stale"]
+    assert not runner.retention_status()["available"]
+
+
+@pytest.mark.parametrize("failure", [BusyError("reset"), LimitError("deadline"), ConflictError("CLAIM_LOST")])
+async def test_pressure_deferral_keeps_lease_when_control_unavailable(runner, failure):
+    runner._stop_event.set()
+    runner.workers.control.side_effect = failure
+    await runner._defer_claim(claim(), BusyError("pressure"))
+    runner.store.discard_stage.assert_not_called()
+    assert runner.last_error is None
+
+
+@pytest.mark.parametrize(("stopping", "lost"), [(True, False), (False, True)])
+async def test_pressure_backoff_shutdown_and_lost_claim_do_not_release(runner, stopping, lost):
+    runner._stop_event.set()
+    runner._stopping = stopping
+    await runner._defer_claim(claim(lost=lost), BusyError("pressure"))
+    runner.workers.control.assert_not_awaited()
+
+
+async def test_start_does_not_hide_permanent_sampling_failure(runner, monkeypatch):
+    runner.recover = AsyncMock()
+    monkeypatch.setattr(jobs.JobRetention, "reconcile", Mock())
+    runner.workers.read.side_effect = StorageIOError("managed I/O failure")
+    with pytest.raises(StorageIOError):
+        await runner.start()
+    assert not runner._tasks

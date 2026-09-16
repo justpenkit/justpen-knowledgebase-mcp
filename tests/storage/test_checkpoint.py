@@ -670,3 +670,36 @@ def _fail_publication_then_rollback(connection, publication, failures):
         return execute(self, sql, bindings, **kwargs)
 
     return fail_sql
+
+
+@pytest.mark.parametrize("phase", ["pressure", "unknown"])
+async def test_startup_defers_optional_samples_until_maintenance_recovers(small_wal, phase):
+    factory, maintenance, writer = small_wal
+    maintenance.run_once("startup")
+    state = json.loads(writer.execute("select maintenance from settings").get)
+    state.update(phase=phase, next_attempt_not_before=0.0)
+    writer.execute("update settings set maintenance=?", (json.dumps(state),))
+    leader = os.open(factory.workspace.locks / "checkpoint.lock", os.O_RDWR)
+    fcntl.flock(leader, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        async with KnowledgeBase.open(factory.config) as peer:
+            status = await peer.status()
+            assert not status["database"]["available"]
+            assert peer.job_runner.retention_status()["stale"]
+            assert not peer.job_runner.retention_status()["available"]
+            assert await peer.workers.control(lambda c, _t: c.execute("select 1").get) == 1
+            with pytest.raises(WalBusyError):
+                await peer.workers.read(lambda _c, _t: pytest.fail("pressure bypassed"))
+            fcntl.flock(leader, fcntl.LOCK_UN)
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    assert await peer.workers.write(lambda c, _t: c.execute("select 2").get) == 2
+                    break
+                except WalBusyError:
+                    assert time.monotonic() < deadline
+                    await asyncio.sleep(0.05)
+            await peer.job_runner.retention_pass(force=True)
+            assert peer.job_runner.retention_status()["available"]
+    finally:
+        os.close(leader)

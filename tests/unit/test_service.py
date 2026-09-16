@@ -130,7 +130,7 @@ async def test_lifespan_closes_owned_resources_in_order_even_after_failure(monke
     factory = Mock(close=Mock(side_effect=lambda: calls.append("factory")))
     workers = Mock(
         start=AsyncMock(),
-        read=AsyncMock(return_value=WorkspacePolicy()),
+        control=AsyncMock(return_value=WorkspacePolicy()),
         close=AsyncMock(side_effect=lambda: calls.append("workers")),
     )
     maintenance = Mock(start=AsyncMock(), close=AsyncMock(side_effect=lambda: calls.append("maintenance")))

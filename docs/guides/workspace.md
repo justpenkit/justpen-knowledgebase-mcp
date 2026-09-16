@@ -31,9 +31,9 @@ round-robin or a completion-time promise.
 ## WAL pressure and retry
 
 The persisted workspace policy, not a per-process environment override, controls
-WAL and retention thresholds. Below the low watermark maintenance tries a
-nonblocking opportunistic reset. Under pressure it performs bounded drain/reset
-attempts. `kb_status.wal` exposes phase, `stale_normal`, cache ages, cooldown
+WAL and retention thresholds. At or above the low watermark for logical WAL
+frames, while below pressure, maintenance tries a nonblocking opportunistic
+reset. Under pressure it performs bounded drain/reset attempts. `kb_status.wal` exposes phase, `stale_normal`, cache ages, cooldown
 fields, retry advice, and whether evaluation was requested. A cached normal
 sample can be stale; a failed cache refresh is not a healthy zero.
 

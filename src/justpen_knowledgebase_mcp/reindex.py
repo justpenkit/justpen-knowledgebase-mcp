@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar
 
 from pydantic import Field, model_validator
 
-from .errors import ConflictError, IndexingError, InvalidParamsError, McpError, NotFoundError
+from .errors import BusyError, ConflictError, IndexingError, InvalidParamsError, LimitError, McpError, NotFoundError
 from .evidence import Encoding, is_text_candidate
 from .identity import EvidenceID, validate_record_id
 from .models import ClosedModel, Kind, MediaType, RecordID
@@ -81,6 +81,9 @@ async def index_evidence(runner: JobRunner, claim: Claim, evidence_id: str) -> d
         if state == "ready":
             incomplete, count = await _index_stream(runner, claim, owner)
         await _guarded(runner, claim, lambda c: finish_item(c, owner, state, incomplete=incomplete))
+    except (BusyError, LimitError):
+        # Retain generation ownership and committed chunks until this job resumes.
+        raise
     except (McpError, OSError) as exc:
         failed_state = "index_failed" if isinstance(exc, (IndexingError, OSError)) else "pending"
 
@@ -89,8 +92,10 @@ async def index_evidence(runner: JobRunner, claim: Claim, evidence_id: str) -> d
             finish_item(connection, owner, failed_state, incomplete=True)
 
         # Replaced generation/claim owns its own coverage and release.
-        with contextlib.suppress(ConflictError):
-            await runner.workers.write(failure)
+        with contextlib.suppress(ConflictError, BusyError, LimitError):
+            # Internal coverage cleanup is reset-gated but not product-admitted.
+            # A reset must never replace the original permanent failure with BUSY.
+            await runner.workers.control(failure)
         raise
     return {
         "evidence_id": evidence_id,

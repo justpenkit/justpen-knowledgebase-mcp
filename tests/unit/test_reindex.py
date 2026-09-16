@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from justpen_knowledgebase_mcp import reindex
-from justpen_knowledgebase_mcp.errors import ConflictError, IndexingError, InvalidParamsError, NotFoundError
+from justpen_knowledgebase_mcp.errors import (
+    ConflictError,
+    IndexingError,
+    InvalidParamsError,
+    NotFoundError,
+    WalBusyError,
+)
 from justpen_knowledgebase_mcp.storage.fulltext import IndexOwner
 from justpen_knowledgebase_mcp.text import TextChunk
 
@@ -19,7 +25,13 @@ def runner_for(db):
     async def dispatch(callback):
         return callback(db, Mock())
 
-    return Mock(workers=Mock(write=AsyncMock(side_effect=dispatch), read=AsyncMock(side_effect=dispatch)))
+    return Mock(
+        workers=Mock(
+            write=AsyncMock(side_effect=dispatch),
+            read=AsyncMock(side_effect=dispatch),
+            control=AsyncMock(side_effect=dispatch),
+        )
+    )
 
 
 @pytest.mark.parametrize("media", ["text/plain", "application/octet-stream"])
@@ -201,3 +213,23 @@ def test_full_admission_does_not_compare_telemetry_as_selection(monkeypatch):
     monkeypatch.setattr(reindex.JobStore, "get", Mock(return_value={"lane": "bulk"}))
     db = database(cursor(rows=[(NODE, json.dumps(payload))]))
     assert reindex.admit_reindex(db, request, OTHER, initiating_context={"traceparent": "new"})["reused"]
+
+
+async def test_pressure_does_not_clear_item_ownership_or_mask_permanent_failure(monkeypatch):
+    runner = runner_for(database())
+    runner.workers.control = runner.workers.write
+    monkeypatch.setattr(reindex.JobStore, "fence", Mock(return_value=job()))
+    monkeypatch.setattr(
+        reindex, "claim_item", Mock(return_value=IndexOwner(1, EVIDENCE, 2, 1, OTHER, "utf-8", "text/plain", 8))
+    )
+    monkeypatch.setattr(reindex, "clear_item_batch", Mock(return_value=True))
+    finish = Mock()
+    monkeypatch.setattr(reindex, "finish_item", finish)
+    monkeypatch.setattr(reindex, "_index_stream", AsyncMock(side_effect=WalBusyError("WAL_PRESSURE", 1000)))
+    with pytest.raises(WalBusyError):
+        await reindex.index_evidence(runner, claim(), EVIDENCE)
+    finish.assert_not_called()
+    monkeypatch.setattr(reindex, "_index_stream", AsyncMock(side_effect=IndexingError("TEXT_DECODE_FAILED")))
+    runner.workers.control = AsyncMock(side_effect=WalBusyError("RESET_PENDING", 1000))
+    with pytest.raises(IndexingError, match="TEXT_DECODE_FAILED"):
+        await reindex.index_evidence(runner, claim(), EVIDENCE)

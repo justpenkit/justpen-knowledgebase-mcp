@@ -11,10 +11,11 @@ bytes are capped at 256 KiB. Paths are server-workspace paths.
 larger path work returns `status: "accepted"`. Fields include job/evidence IDs,
 lane, state, progress, effective media type, index state/incomplete coverage,
 warnings, attempts, and retention state. SHA-256 identity is calculated from the
-exact stored bytes.
+exact stored bytes. Missing targets produce `TARGET_NOT_FOUND` warnings while
+preserving the evidence.
 
 **Errors:** `INVALID` for source/base64/encoding/media/target rules;
-`PATH_DENIED` for containment or unsafe files; `NOT_FOUND` for missing targets;
+`PATH_DENIED` for containment or unsafe files;
 `CONFLICT` for incompatible metadata on existing bytes or `RECORD_DELETING`;
 `IO_ERROR`, `BUSY`, `LIMIT`, or `INDEX_ERROR` for bounded runtime failure.
 

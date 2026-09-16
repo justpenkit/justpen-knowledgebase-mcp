@@ -174,3 +174,48 @@ def test_fresh_collision_is_checked_after_ownership_acquisition(tmp_path, monkey
         benchmark.main()
     assert failure.value.code == 2
     assert (tmp_path / "report.json").read_bytes() == original
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("status", ["completed", "partial"])
+@pytest.mark.parametrize("mismatch", [None, "source", "counts"])
+async def test_variants_accepts_provenanced_complete_corpus_only(tmp_path, monkeypatch, status, mismatch):
+    monkeypatch.syspath_prepend(str(SCRIPT_ROOT))
+    benchmark = load_script("benchmark_knowledgebase")
+    source = tmp_path / "source"
+    source.mkdir()
+    output = tmp_path / "output"
+    output.mkdir()
+    measure = benchmark.Measurements(output, "smoke", 60, "variants")
+    measure.corpus_output = source
+    original = json.dumps(
+        {
+            "status": status,
+            "scale": "smoke",
+            "seed": benchmark.SEED,
+            "completed": {} if mismatch == "counts" else measure.report["requested"],
+            "provenance_at_start": {"python_source_sha256": {"src/core.py": "old"}},
+        }
+    ).encode()
+    (source / "report.json").write_bytes(original)
+    monkeypatch.setattr(
+        sys.modules["kb_benchmark_resume"],
+        "core_hashes",
+        lambda: {"src/core.py": "new" if mismatch == "source" else "old"},
+    )
+    variants = Mock(return_value={"verified": True})
+    monkeypatch.setattr(benchmark, "run_variants", variants)
+    if mismatch:
+        with pytest.raises(RuntimeError, match=r"source changed|incomplete"):
+            await measure.run()
+        variants.assert_not_called()
+    else:
+        await measure.run()
+        assert measure.report["status"] == "completed"
+        assert measure.report["source_report_sha256"] == hashlib.sha256(original).hexdigest()
+        assert measure.report["variants"] == {"verified": True}
+    assert (source / "report.json").read_bytes() == original
+    assert not list(source.glob("report-attempt-*.json"))
+    if status == "completed":
+        with pytest.raises(RuntimeError, match="source changed" if mismatch == "source" else "partial"):
+            benchmark.previous_attempt(source, "smoke", benchmark.SEED)

@@ -164,3 +164,43 @@ def test_checkpoint_worker_failure_closes_connections_on_owner_threads(tmp_path,
     assert len(ownership) == 2
     assert len({owner for owner, _closed in ownership}) == 2
     assert all(owner == closed for owner, closed in ownership)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("failure", ["pragma", "hook"])
+def test_checkpoint_setup_failure_closes_maintenance_on_owner(tmp_path, monkeypatch, failure):
+    variants = load_script("kb_benchmark_variants")
+    original = variants.audit_connection
+    ownership = []
+    foreground = threading.get_ident()
+
+    class ConnectionProxy:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+        def pragma(self, *args):
+            if failure == "pragma" and threading.get_ident() != foreground:
+                raise RuntimeError("setup pragma")
+            return self.connection.pragma(*args)
+
+        def set_wal_hook(self, *_args):
+            raise RuntimeError("setup hook")
+
+    @contextmanager
+    def tracked(*args, **kwargs):
+        opener = threading.get_ident()
+        with original(*args, **kwargs) as connection:
+            try:
+                yield ConnectionProxy(connection)
+            finally:
+                ownership.append((opener, threading.get_ident()))
+
+    monkeypatch.setattr(variants, "audit_connection", tracked)
+    with pytest.raises(RuntimeError, match="setup " + failure):
+        variants.checkpoint_worker_variant(tmp_path, time.monotonic() + 30, 0, 262144, 65536)
+    assert len(ownership) == 2
+    assert len({opener for opener, _ in ownership}) == 2
+    assert all(opener == closer for opener, closer in ownership)

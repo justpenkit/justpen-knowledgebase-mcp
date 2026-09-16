@@ -50,12 +50,16 @@ def core_hashes() -> dict[str, str]:
     }
 
 
-def previous_attempt(output: Path, scale: str, seed: int) -> dict[str, Any]:
+def source_attempt(output: Path, scale: str, seed: int) -> dict[str, Any]:
     """Validate provenance before opening a mutable runtime or archiving anything."""
     source = output / "report.json"
     previous = json.loads(source.read_text())
-    if previous.get("scale") != scale or previous.get("seed") != seed or previous.get("status") != "partial":
-        raise RuntimeError("resume requires this scale/seed's terminal partial attempt")
+    if (
+        previous.get("scale") != scale
+        or previous.get("seed") != seed
+        or previous.get("status") not in {"partial", "completed"}
+    ):
+        raise RuntimeError("source requires this scale/seed's terminal partial or completed attempt")
     provenance = previous.get("provenance_at_start")
     if provenance is None:
         raise RuntimeError("missing start provenance")
@@ -63,6 +67,14 @@ def previous_attempt(output: Path, scale: str, seed: int) -> dict[str, Any]:
     if recorded != core_hashes():
         raise RuntimeError("product source changed; resume compatibility not established")
     previous["archived_report_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    return previous
+
+
+def previous_attempt(output: Path, scale: str, seed: int) -> dict[str, Any]:
+    """Resume only a partial attempt after immutable source validation."""
+    previous = source_attempt(output, scale, seed)
+    if previous["status"] != "partial":
+        raise RuntimeError("resume requires a terminal partial attempt")
     return previous
 
 

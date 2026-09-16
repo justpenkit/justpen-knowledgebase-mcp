@@ -4,9 +4,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from justpen_knowledgebase_mcp.errors import ConflictError, NotFoundError
+from justpen_knowledgebase_mcp.errors import ConflictError, NotFoundError, RecordConflictError
 from justpen_knowledgebase_mcp.query import TextQuery
-from justpen_knowledgebase_mcp.storage import fulltext
+from justpen_knowledgebase_mcp.storage import fulltext, graph
 from justpen_knowledgebase_mcp.text import TextChunk
 
 from .helpers import EVIDENCE, NODE, OTHER, cursor, database, owner
@@ -82,7 +82,12 @@ def test_owner_uses_one_best_complete_evidence_unit(monkeypatch):
         ((1, 2, 9, "auto", "text/plain", "ready", 8), 1, ConflictError),
     ],
 )
-def test_claim_item_respects_lifecycle_and_other_jobs(row, active, error):
+def test_claim_item_respects_lifecycle_and_other_jobs(monkeypatch, row, active, error):
+    monkeypatch.setattr(
+        graph,
+        "row_by_id",
+        Mock(return_value=owner(uuid=EVIDENCE, lifecycle="delete_pending", delete_job_id=NODE, delete_requested_at=3)),
+    )
     db = database(cursor(rows=[] if row is None else [row]), cursor(value=active))
     with pytest.raises(error):
         fulltext.claim_item(db, EVIDENCE, 1, OTHER)
@@ -163,3 +168,13 @@ def test_saturation_preserves_missing_word_and_overlap_rejection(monkeypatch):
     result = fulltext.match_unit(database(cursor(rows=[overlap, document])), Mock(), "evidence", 1, EVIDENCE, QUERY)
     assert result is not None
     assert result["score"] == -2.0
+
+
+def test_pending_item_claim_has_typed_evidence_intent(monkeypatch):
+    pending = owner(uuid=EVIDENCE, lifecycle="delete_pending", delete_job_id=NODE, delete_requested_at=3)
+    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=pending))
+    db = database(cursor(rows=[(1, 2, None, "auto", "text/plain", "delete_pending", 8)]))
+    with pytest.raises(RecordConflictError) as raised:
+        fulltext.claim_item(db, EVIDENCE, 1, OTHER)
+    assert str(raised.value.details.delete_job_id) == NODE
+    assert raised.value.details.blocking_record.kind == "evidence"

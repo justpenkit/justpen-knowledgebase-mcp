@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import apsw
 from kb_benchmark_instrumentation import Instrumentation
 from kb_benchmark_lifecycle import run_lifecycle
-from kb_benchmark_resume import archive_attempt, benchmark_owner, previous_attempt, reconcile
+from kb_benchmark_resume import archive_attempt, benchmark_owner, previous_attempt, reconcile, source_attempt
 from kb_benchmark_variants import checkpoint_worker_comparison, run_variants
 
 from justpen_knowledgebase_mcp.config import ServerConfig
@@ -334,7 +334,7 @@ class Measurements:
         if self.phase == "variants":
             if self.corpus_output is None:
                 raise RuntimeError("variant phase requires a closed corpus output")
-            previous = previous_attempt(self.corpus_output, self.scale, SEED)
+            previous = source_attempt(self.corpus_output, self.scale, SEED)
             if previous["completed"] != self.report["requested"]:
                 raise RuntimeError("variant source corpus is incomplete")
             self.report["source_report_sha256"] = previous["archived_report_sha256"]

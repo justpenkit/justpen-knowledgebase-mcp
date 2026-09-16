@@ -103,7 +103,7 @@ def test_persist_preserves_metadata_presence_and_refreshes_indexes(monkeypatch, 
     properties = Mock()
     text = Mock()
     monkeypatch.setattr(graph, "refresh_properties", properties)
-    monkeypatch.setattr(graph, "refresh_record_text", text)
+    monkeypatch.setattr(graph.fulltext, "refresh_record_text", text)
     previous = owner(metadata='{"label":"old","source":"original"}') if existing else None
     mutation = NodeWrite(type="domain", properties={"name": "example.com"}, label=None)
     result, created = graph._persist(db, "nodes", mutation, previous, mutation.properties, (None, None))
@@ -158,7 +158,16 @@ def test_record_projection_and_effective_lifecycle(monkeypatch, kind):
     db = database()
     db.execute.return_value.get = 3
     monkeypatch.setattr(graph, "pending_blocker", Mock(return_value=None))
-    row = owner(source_id=2, target_id=3, sha256="a" * 64, byte_size=4, media_type="text/plain", encoding="utf-8")
+    row = owner(
+        index_state="ready",
+        incomplete=0,
+        source_id=2,
+        target_id=3,
+        sha256="a" * 64,
+        byte_size=4,
+        media_type="text/plain",
+        encoding="utf-8",
+    )
     result = graph._record(db, kind, row)
     assert result["lifecycle"] == "ready"
     assert result["link_count"] == (6 if kind == "evidence" else 3)
@@ -239,7 +248,7 @@ def test_relation_persistence_binds_endpoint_ids_and_observation(monkeypatch):
     )
     monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner(type="subdomain_of")))
     monkeypatch.setattr(graph, "refresh_properties", Mock())
-    monkeypatch.setattr(graph, "refresh_record_text", Mock())
+    monkeypatch.setattr(graph.fulltext, "refresh_record_text", Mock())
     db = database()
     _row, created = graph._persist(db, "relations", mutation, None, {}, (source, target))
     assert created
@@ -266,3 +275,39 @@ def test_sources_association_invalid_cursor_and_missing_owner(monkeypatch):
     lookup.return_value = None
     with pytest.raises(NotFoundError):
         graph.Graph.get(database(), Mock(), GetRequest(kind="evidence", ids=[EVIDENCE], view="sources"))
+
+
+@pytest.mark.parametrize("view", ["sources", "links"])
+def test_pending_association_owner_returns_authoritative_blocker(monkeypatch, view):
+    row = owner(uuid=EVIDENCE, lifecycle="delete_pending", delete_job_id=OTHER, delete_requested_at=3)
+    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=row))
+    with pytest.raises(RecordConflictError) as raised:
+        graph.Graph.get(
+            database(cursor(value=(NODE, 1)), cursor(), cursor()),
+            Mock(),
+            GetRequest(kind="evidence", ids=[EVIDENCE], view=view),
+        )
+    assert str(raised.value.details.delete_job_id) == OTHER
+    assert raised.value.details.blocking_record.kind == "evidence"
+
+
+@pytest.mark.parametrize(
+    ("state", "incomplete"), [("pending", 1), ("ready", 0), ("not_applicable", 0), ("index_failed", 1)]
+)
+def test_evidence_record_projects_current_bounded_coverage(state, incomplete):
+    row = owner(
+        uuid=EVIDENCE,
+        sha256="a" * 64,
+        byte_size=8,
+        media_type="text/plain",
+        encoding="utf-8",
+        index_state=state,
+        incomplete=incomplete,
+        index_owner_token=OTHER,
+    )
+    db = database()
+    db.execute.return_value.get = 0
+    record = graph._record(db, "evidence", row)
+    assert record["index_state"] == state
+    assert record["incomplete"] is bool(incomplete)
+    assert "index_owner_token" not in record

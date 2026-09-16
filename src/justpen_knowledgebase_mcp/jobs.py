@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import secrets
 import sys
@@ -26,6 +27,7 @@ from .errors import (
     NotFoundError,
     RecordConflictError,
     StorageIOError,
+    WalBusyError,
 )
 from .evidence import INLINE_LIMIT, IngestRequest, ReadEvidenceRequest
 from .models import ClosedModel, DeleteRequest, RecordID, RetentionPolicyView, RetentionStatus
@@ -136,7 +138,8 @@ class JobRunner:
         """Recover owner intent before beginning bounded durable polling."""
         await self.recover()
         await self.workers.control(lambda c, _t: JobRetention.reconcile(c))
-        await self.retention_pass(force=True)
+        with contextlib.suppress(BusyError, LimitError):
+            await self.retention_pass(force=True)
         self._tasks = [asyncio.create_task(self._lane(lane)) for lane in ("short", "bulk")]
         self._tasks.append(asyncio.create_task(self._recovery_loop()))
         self._tasks.append(asyncio.create_task(self._retention_loop()))
@@ -534,6 +537,9 @@ class JobRunner:
                         await reindex_step(self, claim)
                     else:
                         await self._delete_step(claim)
+                except (BusyError, LimitError) as exc:
+                    observation.outcome = "error"
+                    await self._defer_claim(claim, exc)
                 except (McpError, OSError) as exc:
                     observation.outcome = "cancelled" if claim.cancelled else "error"
                     await self._fail_claim(claim, exc)
@@ -543,6 +549,25 @@ class JobRunner:
                 await heart
             self._claims.pop(claim.token, None)
             self._retention_event.set()
+
+    async def _defer_claim(self, claim: Claim, error: BusyError | LimitError) -> None:
+        # Keep the heartbeat and input ownership during backoff. Wake notifications
+        # cannot bypass this delay; shutdown can, leaving the lease to expire.
+        delay = error.retry_after_ms / 1000 if isinstance(error, WalBusyError) else 1.0
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
+        if self._stopping or claim.lost:
+            return
+
+        def release(connection: apsw.Connection, _token: OperationToken) -> None:
+            row = JobStore.fence(connection, claim)
+            # A batch may have committed since the in-memory claim was loaded.
+            JobStore.release(connection, claim, json.loads(row["progress"]))
+
+        # Reset gates still apply. An unavailable control lane leaves the durable
+        # lease intact for normal expiry/recovery, never a terminal pressure error.
+        with contextlib.suppress(BusyError, LimitError, ConflictError):
+            await self.workers.control(release)
 
     async def _heartbeat(self, claim: Claim) -> None:
         while not self._stopping:

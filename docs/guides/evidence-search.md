@@ -83,10 +83,10 @@ rejected. Server outputs use fixed six-digit UTC.
 
 ID-order cursors bind the workspace, query epoch, kind, and filters. They are
 live pagination positions rather than snapshots or authorization tokens. Pending
-rows can be skipped between pages, and mutation/reindex/delete admission can
-invalidate a cursor. Search coverage describes the current live workspace; a
-completed full reindex job can separately report generation changes or busy
-items it skipped.
+rows can be skipped between pages. Ordinary mutations and delete admission
+change live page contents; full-reindex admission or retry invalidates cursors.
+Search coverage describes the current live workspace; a completed full reindex
+job can separately report generation changes or busy items it skipped.
 
 ## Raw reads and jobs
 
@@ -111,8 +111,9 @@ the response may be inline `completed` or durable `accepted`. A failed job keeps
 
 Calling delete again for a pending record returns `CONFLICT` with the owning
 `job_id` and intent time. `DEPENDENCIES_EXIST` names bounded blockers and their
-owner. With `cascade: false`, deleting a relation never deletes linked evidence;
-it removes only the relation-to-evidence link as part of relation cleanup.
+owner. A relation with evidence links requires `cascade: true` or prior explicit
+unlinking; `cascade: false` returns `DEPENDENCIES_EXIST`. Relation cleanup removes
+links and preserves the linked evidence.
 
 Every operation that tries to use pending evidence—raw read, source/link page,
 new link, duplicate ingest publication, or reindex—uses the same

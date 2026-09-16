@@ -203,7 +203,7 @@ class KnowledgeBase:
                 try:
                     await maintenance.start()
                     await workers.start()
-                    policy = await workers.read(lambda connection, _token: factory.guard.policy(connection))
+                    policy = await workers.control(lambda connection, _token: factory.guard.policy(connection))
                     job_runner = JobRunner(workers, workspace, policy)
                     if _telemetry_events is not None:
                         job_runner.events = _telemetry_events

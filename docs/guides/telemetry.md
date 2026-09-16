@@ -62,8 +62,9 @@ session resource. This is conditional continuation. It does not promise that
 every live client or harness always propagates W3C context.
 
 Codex and Claude tool-call metadata shapes are recognized without treating them
-as graph identity. Durable job steps create root spans linked to the initiating
-request rather than keeping a span open across a crash.
+as graph identity. Ingest and reindex job steps create root spans linked to the
+initiating request across restarts. Delete steps emit bounded telemetry without
+persisting an initiating request link.
 
 Exported request data uses fixed method, transport, outcome, known-tool, and
 known-error categories. Metrics never label request, session, or job IDs.

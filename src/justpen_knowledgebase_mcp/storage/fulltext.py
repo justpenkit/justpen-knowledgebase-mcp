@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from ..errors import ConflictError, NotFoundError
 from ..mutations import canonical_json
 from ..text import TextChunk, record_text_units, tokens
+from . import graph
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -218,7 +219,10 @@ def claim_item(connection: apsw.Connection, uuid: str, job_id: int, claim_token:
         raise NotFoundError("evidence not found")
     identifier, generation, owner, encoding, media_type, lifecycle, byte_size = row
     if lifecycle != "ready":
-        raise ConflictError("RECORD_DELETING")
+        pending = graph.row_by_id(connection, "evidence", uuid)
+        if pending is None:
+            raise NotFoundError("evidence not found")
+        graph.require_ready(connection, "evidence", pending)
     if owner is not None and owner != job_id:
         # The job ID reserves the item across queued/reclaimed lease transitions.
         # The item token fences writes only; it may still belong to an older attempt.

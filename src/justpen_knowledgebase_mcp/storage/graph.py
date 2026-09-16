@@ -16,8 +16,7 @@ from ..identity import format_timestamp, identity_json, identity_key, parse_time
 from ..models import GetRequest, Mutation, NodeRef, RelationWrite, WriteRequest, WriteResult
 from ..mutations import canonical_json, merge_properties
 from ..responses import BlockerDetails
-from . import graph_sql as sql
-from .fulltext import refresh_record_text
+from . import fulltext, graph_sql as sql
 from .properties import refresh_properties
 
 if TYPE_CHECKING:
@@ -243,7 +242,7 @@ def _persist(
         if row is None:
             raise NotFoundError("record disappeared")
     refresh_properties(connection, kind, row, properties)
-    refresh_record_text(connection, kind, row)
+    fulltext.refresh_record_text(connection, kind, row)
     return row, created
 
 
@@ -362,11 +361,12 @@ def _record(connection: apsw.Connection, kind: str, row: dict[str, Any]) -> dict
             for field in ("source_id", "target_id"):
                 record[field] = connection.execute("SELECT uuid FROM nodes WHERE id=?", (row[field],)).get
     else:
-        record.update({field: row[field] for field in ("sha256", "byte_size", "media_type", "encoding")})
+        record.update({field: row[field] for field in ("sha256", "byte_size", "media_type", "encoding", "index_state")})
         record["link_count"] = sum(
             connection.execute(sql.EVIDENCE_LINK_COUNT[table], (row["id"],)).get
             for table in ("node_evidence", "relation_evidence")
         )
+        record["incomplete"] = bool(row["incomplete"])
         record["source_count"] = connection.execute(
             "SELECT count(*) FROM evidence_sources WHERE evidence_id=?", (row["id"],)
         ).get
@@ -389,6 +389,7 @@ def _associations(connection: apsw.Connection, request: GetRequest) -> dict[str,
     owner = row_by_id(connection, request.kind, request.ids[0])
     if owner is None:
         raise NotFoundError("association owner missing")
+    require_ready(connection, request.kind, owner)
     binding = _binding(
         connection,
         request.kind,
