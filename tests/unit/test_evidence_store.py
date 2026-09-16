@@ -1,6 +1,7 @@
 """Evidence copy/publication decisions with descriptor and filesystem operations isolated."""
 
 import hashlib
+import json
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -175,7 +176,11 @@ def test_canonical_publish_records_provenance_targets_and_next_phase(monkeypatch
             "targets": [{"kind": "nodes", "id": NODE}, {"kind": "nodes", "id": OTHER}],
         }
     )
-    monkeypatch.setattr(evidence_records.JobStore, "fence", Mock(return_value=job()))
+    monkeypatch.setattr(
+        evidence_records.JobStore,
+        "fence",
+        Mock(return_value=job(blob_sha256="a" * 64, progress=json.dumps({"verified_sha256": "a" * 64, "bytes": 3}))),
+    )
     record = owner(
         uuid=EVIDENCE,
         media_type="text/plain",

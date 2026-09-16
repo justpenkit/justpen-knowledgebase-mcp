@@ -4,6 +4,8 @@ import asyncio
 import time
 from unittest.mock import Mock
 
+import pytest
+
 from justpen_knowledgebase_mcp.config import WorkspacePolicy
 from justpen_knowledgebase_mcp.errors import LimitError
 from justpen_knowledgebase_mcp.status import StatusSampler
@@ -159,3 +161,48 @@ async def test_unsupported_dbstat_after_success_keeps_complete_last_known_measur
     assert derived["text_projection_bytes"] == 4096
     assert derived["fts_index_bytes"] == 8192
     assert derived["property_index_bytes"] == 12288
+
+
+@pytest.mark.parametrize("derived", [False, True])
+@pytest.mark.parametrize("completion", ["success", "error"])
+async def test_close_stops_when_completed_read_consumes_cancellation(monkeypatch, derived, completion):
+    started = asyncio.Event()
+    consumed = asyncio.Event()
+    sleeps = []
+
+    async def interval(seconds):
+        sleeps.append(seconds)
+        if not derived and len(sleeps) == 1:
+            return
+        await asyncio.Event().wait()
+
+    async def read(callback, token=None):
+        assert callback is (sample_derived_storage if derived else sample_status)
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            # DatabaseWorkers returns an already-completed native result even
+            # when cancellation arrives while that result is being delivered.
+            consumed.set()
+            if completion == "error":
+                raise LimitError("completed native deadline") from None
+            return {"available": False, "reason": "DBSTAT_UNAVAILABLE"} if derived else cheap_sample()
+
+    monkeypatch.setattr(asyncio, "sleep", interval)
+    sampler = StatusSampler(Mock(read=read))
+    task = asyncio.create_task(sampler._run_derived() if derived else sampler._run())
+    if derived:
+        sampler._derived_task = task
+    else:
+        sampler._task = task
+    await asyncio.wait_for(started.wait(), 1)
+    closing = asyncio.create_task(sampler.close())
+    try:
+        await asyncio.wait_for(asyncio.shield(closing), 0.2)
+        assert consumed.is_set()
+        assert task.done()
+        assert sleeps == ([] if derived else [30])
+    finally:
+        task.cancel()
+        await closing

@@ -37,6 +37,7 @@ from .reindex import index_evidence, reindex_step
 from .storage.evidence import EvidenceStore, StagedEvidence, job_bucket, stage_name
 from .storage.evidence_records import EvidenceRecords
 from .storage.graph import require_ready, row_by_id
+from .storage.job_ownership import row_progress
 from .storage.job_recovery import StageScan, recover_intents, staging_disposable
 from .storage.job_retention import JobRetention
 from .storage.jobs import HEARTBEAT_SECONDS, TERMINAL, Claim, JobStore
@@ -679,6 +680,7 @@ class JobRunner:
         if claim.progress.get("awaiting_text_index"):
             await self._continue_ingest_index(claim)
             return
+        claim.progress = await self.workers.control(lambda c, _t: row_progress(JobStore.fence(c, claim)))
         verified = None
         if "verified_sha256" in claim.progress:
             # The durable outstanding locator protects reuse from orphan cleanup;

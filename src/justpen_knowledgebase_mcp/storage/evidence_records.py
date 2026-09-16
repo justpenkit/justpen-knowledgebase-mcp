@@ -6,12 +6,13 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
-from ..errors import ConflictError
+from ..errors import ConflictError, StorageIOError
 from ..evidence import is_text_candidate
 from ..identity import format_timestamp
 from . import graph_sql
 from .fulltext import index_owner_active
 from .graph import require_ready, row_by_id
+from .job_ownership import row_progress
 from .jobs import Claim, JobStore
 
 if TYPE_CHECKING:
@@ -27,6 +28,9 @@ class EvidenceRecords:
         row = JobStore.fence(connection, claim)
         if row["cancel_requested"]:
             raise ConflictError("JOB_CANCELLED")
+        row_progress(row)
+        if row["blob_sha256"] != sha256:
+            raise StorageIOError("IO_ERROR: published digest does not match job ownership")
         existing = EvidenceRecords.check_existing(connection, claim, sha256)
         deduplicated = existing is not None
         options = claim.payload

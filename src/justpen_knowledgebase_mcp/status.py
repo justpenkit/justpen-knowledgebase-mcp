@@ -202,6 +202,7 @@ class StatusSampler:
         self._derived_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
         self._derived_lock = asyncio.Lock()
+        self._stopping = False
 
     async def start(self) -> None:
         """Collect cheap counters before scheduling both independent loops."""
@@ -278,17 +279,21 @@ class StatusSampler:
         return result
 
     async def _run(self) -> None:
-        while True:
+        while not self._stopping:
             await asyncio.sleep(30)
             await self.refresh()
 
     async def _run_derived(self) -> None:
-        while True:
+        while not self._stopping:
             await self.refresh_derived()
-            await asyncio.sleep(300)
+            if not self._stopping:
+                await asyncio.sleep(300)
 
     async def close(self) -> None:
         """Cancel and join both samplers before database owners are drained."""
+        # A completed native read may consume cancellation while delivering its
+        # result; it must still exit the loop without starting another interval.
+        self._stopping = True
         for task in (self._task, self._derived_task):
             if task is not None:
                 task.cancel()

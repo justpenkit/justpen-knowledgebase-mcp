@@ -8,15 +8,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from pydantic import ValidationError
-
 from ..errors import ConflictError, InvalidParamsError, NotFoundError, StorageIOError
 from ..evidence import is_text_candidate
 from ..identity import format_timestamp
 from ..models import JobProgress, JobResult
 from .deletions import DeleteIntent, GraphDeletion
 from .graph import row_by_id
-from .job_ownership import checkpoint_ownership, progress_object
+from .job_ownership import checkpoint_ownership, row_progress
 
 if TYPE_CHECKING:
     import apsw
@@ -256,11 +254,11 @@ class JobStore:
         result = json.loads(row["result"])
         malformed_progress = False
         try:
-            decoded = progress_object(row["progress"])
+            decoded = row_progress(row)
             progress = JobProgress.model_validate(
                 {key: value for key, value in decoded.items() if key in JobProgress.model_fields}
             ).model_dump()
-        except (StorageIOError, ValidationError):
+        except StorageIOError:
             progress = JobProgress().model_dump()
             malformed_progress = True
         pending_owner = row["state"] in TERMINAL and protected(connection, job_id)

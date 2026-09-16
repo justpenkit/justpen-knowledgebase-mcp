@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from uuid import UUID
 
 from ..errors import ConflictError, StorageIOError
 from .evidence import stage_name
-from .job_ownership import OTHER_BLOB_OWNER_SQL, ownership_object, progress_object
+from .job_ownership import OTHER_BLOB_OWNER_SQL, ownership_object, row_progress
 from .jobs import TERMINAL, adjust_terminal_count, job_row, protected
 
 if TYPE_CHECKING:
@@ -60,7 +59,7 @@ def _eligible(connection: apsw.Connection, row: dict[str, Any], now: float) -> b
 def _ownership(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Malformed metadata is diagnostic state, never deletion authority."""
     _canonical_uuid(row["uuid"])
-    return ownership_object(row["payload"]), progress_object(row["progress"])
+    return ownership_object(row["payload"]), row_progress(row)
 
 
 def _canonical_uuid(value: object) -> str:
@@ -100,10 +99,7 @@ def _recorded_tokens(row: dict[str, Any]) -> list[str]:
 def recorded_blob(row: dict[str, Any]) -> str | None:
     """Validate the recorded digest before it enters any filesystem operation."""
     _ownership(row)
-    locator = row.get("blob_sha256")
-    if locator is not None and (not isinstance(locator, str) or re.fullmatch("[0-9a-f]{64}", locator) is None):
-        raise StorageIOError("IO_ERROR: malformed published blob locator")
-    return locator
+    return row.get("blob_sha256")
 
 
 def _prune(connection: apsw.Connection, row: dict[str, Any]) -> None:

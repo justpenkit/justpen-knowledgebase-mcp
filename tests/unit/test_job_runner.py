@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import json
 import threading
 from contextlib import nullcontext
 from pathlib import Path
@@ -229,6 +230,7 @@ async def test_claim_dispatch_and_heartbeat_ownership_cleanup(runner, monkeypatc
 
 async def test_ingest_publication_orders_blob_before_canonical_metadata(runner, monkeypatch):
     calls = []
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job()))
     staged = SimpleNamespace(sha256="a" * 64, byte_size=3)
     runner._copy_input = AsyncMock(return_value=staged)
     monkeypatch.setattr(jobs.JobStore, "checkpoint", Mock(side_effect=lambda *_args: calls.append("checkpoint")))
@@ -239,6 +241,11 @@ async def test_ingest_publication_orders_blob_before_canonical_metadata(runner, 
     assert calls == ["checkpoint", "check", "blob", "record"]
     assert list(runner._orphans) == [stage_name(NODE, OTHER)]
     calls.clear()
+    monkeypatch.setattr(
+        jobs.JobStore,
+        "fence",
+        Mock(return_value=job(blob_sha256="a" * 64, progress=json.dumps({"verified_sha256": "a" * 64, "bytes": 3}))),
+    )
     runner.store.verify_blob.return_value = staged
     runner.store.recheck_blob.side_effect = lambda *_args: calls.append("recheck")
     await runner._ingest_step(claim(progress={"verified_sha256": "a" * 64, "bytes": 3}))

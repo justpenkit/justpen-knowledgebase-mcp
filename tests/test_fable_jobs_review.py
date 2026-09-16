@@ -96,6 +96,7 @@ async def test_dedup_ingest_completes_without_competing_with_active_index_owner(
             },
         )
         claim = cast("Claim", JobStore.claim(connection, "short", "ingest"))
+        JobStore.checkpoint(connection, claim, {"verified_sha256": digest, "bytes": 4})
         EvidenceRecords.publish_record(connection, claim, digest, 4)
         return (
             connection.execute("SELECT state FROM jobs WHERE uuid=?", (dedup_id,)).get,
@@ -644,6 +645,7 @@ async def test_dedup_repair_warning_and_late_owner_race(kb, late_owner):
                 },
             )
             claim = cast("Claim", JobStore.claim(connection, "short", "ingest"))
+            JobStore.checkpoint(connection, claim, {"verified_sha256": digest, "bytes": 3})
             result = EvidenceRecords.publish_record(connection, claim, digest, 3)
             if late_owner:
                 JobStore.insert(connection, owner_id, "reindex", "bulk", {"kind": "evidence", "ids": [identifier]})

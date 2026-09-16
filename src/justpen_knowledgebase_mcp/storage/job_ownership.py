@@ -6,7 +6,10 @@ import json
 import re
 from typing import Any, NoReturn, cast
 
+from pydantic import ValidationError
+
 from ..errors import ConflictError, StorageIOError
+from ..models import JobProgress
 
 OTHER_BLOB_OWNER_SQL = "SELECT 1 FROM jobs WHERE blob_sha256=? AND uuid<>? LIMIT 1"
 
@@ -37,15 +40,34 @@ def ownership_object(raw: str) -> dict[str, Any]:
 
 def progress_object(raw: str) -> dict[str, Any]:
     """Reject malformed verified metadata even when the durable locator is absent."""
-    value = ownership_object(raw)
+    return _validate_progress(ownership_object(raw))
+
+
+def _validate_progress(value: dict[str, Any]) -> dict[str, Any]:
+    try:
+        JobProgress.model_validate({key: item for key, item in value.items() if key in JobProgress.model_fields})
+    except ValidationError as exc:
+        raise StorageIOError("IO_ERROR: malformed job progress counters") from exc
     digest = value.get("verified_sha256")
     if "verified_sha256" in value and (not isinstance(digest, str) or re.fullmatch("[0-9a-f]{64}", digest) is None):
         raise StorageIOError("IO_ERROR: malformed published blob locator")
     return value
 
 
+def row_progress(row: dict[str, Any]) -> dict[str, Any]:
+    """Validate this row only; diagnostic JSON never becomes physical ownership."""
+    progress = progress_object(row["progress"])
+    current = row.get("blob_sha256")
+    if current is not None and (not isinstance(current, str) or re.fullmatch("[0-9a-f]{64}", current) is None):
+        raise StorageIOError("IO_ERROR: malformed published blob locator")
+    if progress.get("verified_sha256") != current:
+        raise StorageIOError("IO_ERROR: job blob ownership metadata disagrees")
+    return progress
+
+
 def checkpoint_ownership(row: dict[str, Any], progress: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     """Generic progress cannot discard an outstanding publication/retry locator."""
+    previous = row_progress(row)
     current = row.get("blob_sha256")
     updated = dict(progress)
     if "verified_sha256" in updated:
@@ -57,10 +79,7 @@ def checkpoint_ownership(row: dict[str, Any], progress: dict[str, Any]) -> tuple
     else:
         digest = current
     if current is not None:
-        previous = progress_object(row["progress"])
-        if previous.get("verified_sha256") != current:
-            raise StorageIOError("IO_ERROR: malformed verified blob checkpoint")
         for key in ("verified_sha256", "bytes", "stage_token"):
             if key in previous and ("verified_sha256" not in progress or key not in updated):
                 updated[key] = previous[key]
-    return updated, digest
+    return _validate_progress(updated), digest
