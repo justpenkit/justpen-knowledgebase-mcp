@@ -197,6 +197,7 @@ async def test_status_derived_page_bytes_are_separate_from_canonical(tmp_path):
             return projection, properties
 
         size, properties = await kb.workers.read(expected)
+        await kb.status_sampler.refresh_derived()
         status = await kb.status()
         storage = status["database"]["sample"]["derived_storage"]
         assert storage["available"] is True

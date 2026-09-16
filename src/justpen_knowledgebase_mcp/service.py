@@ -61,6 +61,9 @@ class KnowledgeBase:
                 else "loopback"
                 if self.config.is_loopback
                 else "non_loopback",
+                "allowed_hosts": []
+                if self.config.transport == "stdio"
+                else [self.config.host, *self.config.allowed_hosts],
                 "database": self.status_sampler.snapshot(),
                 "wal": wal,
                 "retention": self.job_runner.retention_status(),

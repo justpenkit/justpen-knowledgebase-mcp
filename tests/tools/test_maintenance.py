@@ -6,11 +6,24 @@ from fastmcp import Client
 from justpen_knowledgebase_mcp.app import create_app
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import BusyError
+from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.status import StatusSampler
 
 from . import envelope
 
 pytestmark = pytest.mark.integration
+
+
+async def test_status_reports_effective_http_hosts(tmp_path):
+    config = ServerConfig(
+        workspace_dir=tmp_path,
+        transport="http",
+        host="127.0.0.1",
+        allowed_hosts=("kb.example.test", "192.0.2.4"),
+    )
+    async with KnowledgeBase.open(config) as kb:
+        result = await kb.status()
+    assert result["allowed_hosts"] == ["127.0.0.1", "kb.example.test", "192.0.2.4"]
 
 
 async def test_status_is_sql_free_and_keeps_stale_snapshot(kb, monkeypatch):

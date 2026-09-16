@@ -5,11 +5,40 @@ from unittest.mock import Mock
 import apsw
 import pytest
 
+from justpen_knowledgebase_mcp.config import WorkspacePolicy
 from justpen_knowledgebase_mcp.errors import LimitError
 from justpen_knowledgebase_mcp.status import DerivedStorage
+from justpen_knowledgebase_mcp.storage import status
 from justpen_knowledgebase_mcp.storage.status import sample_derived_storage
 
 from .helpers import cursor, database
+
+
+def test_cheap_sample_never_runs_page_allocation_scan(monkeypatch):
+    monkeypatch.setattr(
+        status,
+        "coverage",
+        lambda _connection: {
+            "ready": 0,
+            "pending": 0,
+            "failed": 0,
+            "incomplete": 0,
+            "not_applicable": 0,
+        },
+    )
+    db = database(
+        cursor(rows=[(1, 1, 1, WorkspacePolicy().model_dump_json())]),
+        cursor(rows=[("running", 2)]),
+        cursor(value=3),
+        cursor(value=4),
+    )
+
+    result = status.sample_status(db, Mock())
+
+    assert result["jobs"]["running"] == 2
+    assert result["property_index_fallback"] == {"nodes": 3, "relations": 4}
+    assert "derived_storage" not in result
+    assert db.execute.call_count == 4
 
 
 def test_unsupported_dbstat_has_nullable_bytes_and_closes_schema_cursor():

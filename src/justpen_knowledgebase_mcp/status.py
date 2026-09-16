@@ -10,7 +10,8 @@ from pydantic import Field
 from .config import WorkspacePolicy
 from .errors import McpError
 from .models import ClosedModel, IndexCoverage, RetentionStatus
-from .storage.status import sample_status
+from .storage.status import sample_derived_storage, sample_status
+from .storage.worker import OperationToken
 
 if TYPE_CHECKING:
     from .storage.worker import DatabaseWorkers
@@ -39,11 +40,15 @@ class DerivedStorage(ClosedModel):
     """Selected SQLite B-tree page allocation; excludes canonical records, raw blobs and WAL."""
 
     available: bool = False
-    reason: Literal["DBSTAT_UNAVAILABLE"] | None = "DBSTAT_UNAVAILABLE"
+    reason: Literal["DBSTAT_UNAVAILABLE"] | None = None
     measurement: Literal["sqlite_page_allocation"] = "sqlite_page_allocation"
     text_projection_bytes: Count | None = None
     fts_index_bytes: Count | None = None
     property_index_bytes: Count | None = None
+    cached_at: float | None = None
+    cache_age: float | None = None
+    stale: bool = True
+    last_error: Annotated[str, Field(max_length=32)] | None = None
 
 
 class DatabaseSample(ClosedModel):
@@ -175,6 +180,7 @@ class StatusResult(ClosedModel):
     canonical_session_source: Literal["JUSTPEN_SESSION_ID"] = "JUSTPEN_SESSION_ID"
     bind_scope: Literal["stdio", "loopback", "non_loopback"]
     authentication: Literal["none"] = "none"
+    allowed_hosts: list[str]
     database: DatabaseStatus
     wal: WalStatus
     retention: RetentionStatus
@@ -184,19 +190,23 @@ class StatusResult(ClosedModel):
 
 
 class StatusSampler:
-    """One initial and then nonoverlapping 30-second ordinary reader sample."""
+    """Separate lifespan-owned cheap and derived reader samples."""
 
     def __init__(self, workers: "DatabaseWorkers") -> None:
         """Allocate cache only; the service explicitly owns start and close."""
         self.workers = workers
         self._cache = DatabaseStatus()
+        self._derived_cache = DerivedStorage()
         self._task: asyncio.Task[None] | None = None
+        self._derived_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
+        self._derived_lock = asyncio.Lock()
 
     async def start(self) -> None:
-        """Collect an initial bounded sample before scheduling periodic work."""
+        """Collect cheap counters before scheduling both independent loops."""
         await self.refresh()
         self._task = asyncio.create_task(self._run(), name="kb-status-sampler")
+        self._derived_task = asyncio.create_task(self._run_derived(), name="kb-derived-storage-sampler")
 
     async def refresh(self) -> None:
         """Ordinary admission and its absolute deadline apply to all aggregates."""
@@ -217,12 +227,53 @@ class StatusSampler:
             else:
                 self._cache = DatabaseStatus(available=True, stale=False, cached_at=time.time(), sample=sample)
 
+    async def refresh_derived(self) -> None:
+        """Measure page allocation on the existing reader with a one-second budget."""
+        async with self._derived_lock:
+            try:
+                value = DerivedStorage.model_validate(
+                    await self.workers.read(sample_derived_storage, OperationToken(time.monotonic() + 1))
+                )
+            except (McpError, OSError, ValueError) as exc:
+                self._derived_cache = self._derived_cache.model_copy(
+                    update={
+                        "stale": True,
+                        "last_error": exc.error_type
+                        if isinstance(exc, McpError)
+                        else "IO_ERROR"
+                        if isinstance(exc, OSError)
+                        else "INTERNAL",
+                    }
+                )
+            else:
+                if not value.available:
+                    self._derived_cache = self._derived_cache.model_copy(
+                        update={
+                            "reason": self._derived_cache.reason
+                            if self._derived_cache.available
+                            else "DBSTAT_UNAVAILABLE",
+                            "stale": True,
+                            "last_error": "DBSTAT_UNAVAILABLE",
+                        }
+                    )
+                else:
+                    self._derived_cache = value.model_copy(update={"cached_at": time.time(), "stale": False})
+
     def snapshot(self) -> dict[str, Any]:
         """Materialize cached data without database/file work or waiting."""
         result = self._cache.model_dump(mode="json")
         stamp = self._cache.cached_at
         age = None if stamp is None else max(0, time.time() - stamp)
         result.update(cache_age=age, stale=self._cache.stale or age is None or age >= 60)
+        if result["sample"] is not None:
+            derived = self._derived_cache.model_dump(mode="json")
+            derived_stamp = self._derived_cache.cached_at
+            derived_age = None if derived_stamp is None else max(0, time.time() - derived_stamp)
+            derived.update(
+                cache_age=derived_age,
+                stale=self._derived_cache.stale or derived_age is None or derived_age >= 600,
+            )
+            result["sample"]["derived_storage"] = derived
         return result
 
     async def _run(self) -> None:
@@ -230,9 +281,17 @@ class StatusSampler:
             await asyncio.sleep(30)
             await self.refresh()
 
+    async def _run_derived(self) -> None:
+        while True:
+            await self.refresh_derived()
+            await asyncio.sleep(300)
+
     async def close(self) -> None:
-        """Cancel and join the sampler before database owners are drained."""
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+        """Cancel and join both samplers before database owners are drained."""
+        for task in (self._task, self._derived_task):
+            if task is not None:
+                task.cancel()
+        for task in (self._task, self._derived_task):
+            if task is not None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task

@@ -117,6 +117,7 @@ async def test_status_uses_only_cached_collaborators(phase):
     )
     runner.retention_status.return_value = RetentionStatus(policy=policy).model_dump()
     result = await kb.status()
+    assert result["allowed_hosts"] == []
     assert result["wal"]["reason"] == (
         None if phase == "normal" else "RESET_PENDING" if phase == "reset" else "WAL_PRESSURE"
     )

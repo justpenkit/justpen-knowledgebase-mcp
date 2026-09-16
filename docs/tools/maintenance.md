@@ -5,7 +5,8 @@
 **Input:** none.
 
 **Output:** one cached snapshot with `single_workspace`/`single_engagement`
-scope, bind scope, `authentication: "none"`, database/WAL/retention/index
+scope, bind scope, effective HTTP `allowed_hosts` (an empty list for stdio),
+`authentication: "none"`, database/WAL/retention/index
 samples, process-local queues, and fixed capabilities. Samples explicitly report
 availability, cache age, and staleness. Status is SQL-free at call time and
 cannot measure external reader age.
@@ -16,12 +17,18 @@ and property projections/indexes. These include page slack; they exclude canonic
 graph records, raw evidence files, free pages and WAL. They are not filesystem
 allocated-block counts or a raw-to-index expansion ratio.
 
-The initial/30-second sampler streams selected B-tree pages under ordinary reader
-admission and its existing deadline, checking cancellation between pages. Missing
-`dbstat` support reports `available: false`, `DBSTAT_UNAVAILABLE`, and null bytes.
-A deadline or storage failure preserves the prior database sample as stale (or
-unavailable before the first successful sample); no partial byte total is published.
-Sample age applies to the byte totals too. Native page I/O has no hard latency bound.
+Cheap database counters are sampled at startup and every 30 seconds. A separate
+reader task starts the derived-storage scan without delaying the initial counters,
+then samples no more often than every 300 seconds. It streams selected B-tree pages
+under a one-second absolute budget and checks cancellation between pages. Missing
+`dbstat` support leaves a never-measured cache unavailable and stale, with
+`DBSTAT_UNAVAILABLE` as its reason and last error and null timestamps/bytes.
+After a successful scan, later lack of `dbstat` keeps the complete prior bytes
+and timestamp available but stale, with `DBSTAT_UNAVAILABLE` as the last error.
+Its own `cached_at`, `cache_age`, `stale`, and `last_error`
+describe the byte totals independently: they become stale after 600 seconds or a
+failed attempt. A failure preserves the complete last-known byte totals without
+staling a successful cheap counter sample. Native page I/O has no hard latency bound.
 
 WAL diagnostics include `maintenance_alive`, `maintenance_error`, and
 `maintenance_failed_permanently`. A permanent local maintenance fault rejects

@@ -97,19 +97,6 @@ async def test_invalid_tool_model_never_dispatches(monkeypatch):
 async def test_status_sampler_retains_prior_sample_and_sanitizes_failure(monkeypatch):
     coverage = {"ready": 1, "pending": 0, "failed": 0, "incomplete": 0, "not_applicable": 0}
     monkeypatch.setattr(storage_status, "coverage", Mock(return_value=coverage))
-    monkeypatch.setattr(
-        storage_status,
-        "sample_derived_storage",
-        Mock(
-            return_value={
-                "available": True,
-                "reason": None,
-                "text_projection_bytes": 4096,
-                "fts_index_bytes": 8192,
-                "property_index_bytes": 4096,
-            }
-        ),
-    )
     db = database(
         cursor(rows=[(1, 1, 1, WorkspacePolicy().model_dump_json())]),
         cursor(rows=[("running", 2)]),
@@ -119,7 +106,19 @@ async def test_status_sampler_retains_prior_sample_and_sanitizes_failure(monkeyp
     sample = storage_status.sample_status(db, Mock())
     assert sample["jobs"]["running"] == 2
     assert sample["property_index_fallback"] == {"nodes": 3, "relations": 4}
-    reader = AsyncMock(return_value=sample)
+
+    async def read(callback, _token=None):
+        if callback is storage_status.sample_status:
+            return sample
+        return {
+            "available": True,
+            "reason": None,
+            "text_projection_bytes": 4096,
+            "fts_index_bytes": 8192,
+            "property_index_bytes": 4096,
+        }
+
+    reader = AsyncMock(side_effect=read)
     sampler = status.StatusSampler(Mock(read=reader))
     await sampler.start()
     try:
@@ -128,7 +127,8 @@ async def test_status_sampler_retains_prior_sample_and_sanitizes_failure(monkeyp
         reader.side_effect = OSError("private database path")
         await sampler.refresh()
         after = sampler.snapshot()
-        assert after["sample"] == before["sample"]
+        assert after["sample"]["jobs"] == before["sample"]["jobs"]
+        assert after["sample"]["property_index_fallback"] == before["sample"]["property_index_fallback"]
         assert after["stale"]
         assert after["last_error"] == "IO_ERROR"
     finally:

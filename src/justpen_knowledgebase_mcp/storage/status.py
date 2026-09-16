@@ -43,7 +43,6 @@ def sample_status(connection: apsw.Connection, token: OperationToken) -> dict[st
         "jobs": counts,
         "index_coverage": coverage(connection),
         "property_index_fallback": fallback,
-        "derived_storage": sample_derived_storage(connection, token),
     }
 
 
@@ -78,6 +77,7 @@ def sample_derived_storage(connection: apsw.Connection, token: OperationToken) -
                                 token.check()
                                 sizes[category] += page_size
     except apsw.SQLError:
+        token.check()
         return {"available": False, "reason": "DBSTAT_UNAVAILABLE"}
     token.check()
     return {"available": True, "reason": None, **sizes}
