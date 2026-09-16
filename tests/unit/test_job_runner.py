@@ -13,7 +13,7 @@ from opentelemetry.context import Context, attach, detach
 
 from justpen_knowledgebase_mcp import jobs
 from justpen_knowledgebase_mcp.config import WorkspacePolicy
-from justpen_knowledgebase_mcp.errors import BusyError, ConflictError, LimitError, StorageIOError
+from justpen_knowledgebase_mcp.errors import BusyError, ConflictError, LimitError, NotFoundError, StorageIOError
 from justpen_knowledgebase_mcp.evidence import IngestRequest, ReadEvidenceRequest
 from justpen_knowledgebase_mcp.models import DeleteRequest
 from justpen_knowledgebase_mcp.storage.evidence import stage_name
@@ -676,3 +676,87 @@ async def test_completion_counter_refresh_does_not_refresh_old_expensive_sample(
     assert runner.retention_status()["cached_at"] == 1
     assert runner.retention_status()["stale"]
     snapshot.assert_not_called()
+
+
+@pytest.mark.parametrize("canonical_owner", [False, True])
+async def test_blob_purge_proves_and_acknowledges_under_digest_bucket(runner, monkeypatch, canonical_owner):
+    digest = "a" * 64
+    held = False
+    events = []
+
+    async def acquire(lane, value, *, exclusive):
+        nonlocal held
+        assert (lane, value, exclusive) == ("short", digest, True)
+        held = True
+        return 9
+
+    def close(fd):
+        nonlocal held
+        assert fd == 9
+        assert held
+        held = False
+
+    def prove(_connection, job_id, value):
+        assert held
+        assert (job_id, value) == (NODE, digest)
+        events.append("proof")
+        return not canonical_owner
+
+    def unlink(value):
+        assert held
+        assert value == digest
+        assert events == ["proof"]
+        events.append("durable absence")
+
+    def acknowledge(_connection, job_id, value):
+        assert held
+        assert (job_id, value) == (NODE, digest)
+        assert events == (["proof"] if canonical_owner else ["proof", "durable absence"])
+        events.append("acknowledge")
+
+    def finalize(_connection, job_id):
+        assert held
+        assert job_id == NODE
+        assert events[-1] == "acknowledge"
+        events.append("finalize")
+
+    runner.acquire_bucket = AsyncMock(side_effect=acquire)
+    runner.store.unlink_orphan_blob.side_effect = unlink
+    monkeypatch.setattr(jobs.os, "close", close)
+    monkeypatch.setattr(jobs.JobRetention, "blob_disposable", prove)
+    monkeypatch.setattr(jobs.JobRetention, "acknowledge_blob", acknowledge)
+    monkeypatch.setattr(jobs.JobRetention, "finalize", finalize)
+    await runner._purge_blob_step(NODE, digest)
+    assert events[-1] == "finalize"
+    assert not held
+    assert runner.store.unlink_orphan_blob.call_count == int(not canonical_owner)
+    assert runner._retention_dirty
+    assert runner._retention_event.is_set()
+
+
+@pytest.mark.parametrize("failure", ["uncertain", "proof_io", "unlink_io", "already_finalized"])
+async def test_blob_purge_failure_preserves_locator_and_releases_bucket(runner, monkeypatch, failure):
+    error = {
+        "uncertain": ConflictError("OWNERSHIP_UNRESOLVED"),
+        "proof_io": StorageIOError("proof unavailable"),
+        "unlink_io": OSError("unlink or sync failed"),
+        "already_finalized": NotFoundError("already finalized"),
+    }[failure]
+    proof = Mock(return_value=True, side_effect=error if failure != "unlink_io" else None)
+    acknowledge, finalize, close = Mock(), Mock(), Mock()
+    monkeypatch.setattr(jobs.JobRetention, "blob_disposable", proof)
+    monkeypatch.setattr(jobs.JobRetention, "acknowledge_blob", acknowledge)
+    monkeypatch.setattr(jobs.JobRetention, "finalize", finalize)
+    monkeypatch.setattr(jobs.os, "close", close)
+    if failure == "unlink_io":
+        runner.store.unlink_orphan_blob.side_effect = error
+    if failure == "already_finalized":
+        await runner._purge_blob_step(NODE, "a" * 64)
+    else:
+        with pytest.raises(type(error)):
+            await runner._purge_blob_step(NODE, "a" * 64)
+    assert runner.store.unlink_orphan_blob.call_count == int(failure == "unlink_io")
+    acknowledge.assert_not_called()
+    finalize.assert_not_called()
+    close.assert_called_once_with(9)
+    assert runner._retention_attention == (failure == "uncertain")

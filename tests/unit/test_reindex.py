@@ -211,7 +211,7 @@ def test_full_admission_does_not_compare_telemetry_as_selection(monkeypatch):
     request = reindex.ReindexRequest(kind="nodes", all=True)
     payload = {**request.model_dump(exclude_none=True), "_telemetry": {"traceparent": "old"}}
     monkeypatch.setattr(reindex.JobStore, "get", Mock(return_value={"lane": "bulk"}))
-    db = database(cursor(rows=[(NODE, json.dumps(payload))]))
+    db = database(cursor(rows=[(NODE, json.dumps(payload), 0)]))
     assert reindex.admit_reindex(db, request, OTHER, initiating_context={"traceparent": "new"})["reused"]
 
 
