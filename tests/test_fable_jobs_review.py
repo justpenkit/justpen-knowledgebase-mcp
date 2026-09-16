@@ -10,7 +10,13 @@ from uuid import uuid4
 
 import pytest
 
-from justpen_knowledgebase_mcp.errors import BusyError, ConfigurationError, ConflictError, StorageIOError
+from justpen_knowledgebase_mcp.errors import (
+    BusyError,
+    ConfigurationError,
+    ConflictError,
+    PathDeniedError,
+    StorageIOError,
+)
 from justpen_knowledgebase_mcp.jobs import JobRunner
 from justpen_knowledgebase_mcp.reindex import ReindexRequest, admit_reindex
 from justpen_knowledgebase_mcp.service import KnowledgeBase
@@ -722,3 +728,77 @@ async def test_nonfinite_peer_is_retained_and_blocks_orphan_disposal(kb, orphan_
         await kb.workers.read(lambda c, _t: c.execute("SELECT purge_pending FROM jobs WHERE uuid=?", (peer_id,)).get)
         == 0
     )
+
+
+@pytest.mark.parametrize("depth", [0, 1])
+async def test_unpublished_verified_checkpoint_purges_absent_digest_path(kb, depth):
+    await kb.job_runner.close()
+    runner = JobRunner(kb.workers, kb.workspace, kb.job_runner.store.policy)
+    job_id = str(uuid4())
+    try:
+
+        def accept(connection, _token):
+            JobStore.insert(connection, job_id, "ingest", "short", {})
+            return JobStore.claim(connection, "short", "ingest")
+
+        claim = cast("Claim", await kb.workers.control(accept))
+        staged = await runner.io("short", lambda: runner.store.stage_inline(b"never published", job_id, claim.token))
+        await kb.workers.control(
+            lambda c, _t: JobStore.checkpoint(
+                c, claim, {"verified_sha256": staged.sha256, "bytes": staged.byte_size, "stage_token": claim.token}
+            )
+        )
+        if depth:
+            (kb.workspace.evidence / staged.sha256[:2]).mkdir()
+        await kb.workers.control(lambda c, _t: JobStore.finish(c, claim, "failed", {}))
+        await kb.workers.control(lambda c, _t: c.execute("UPDATE jobs SET finished_at=1 WHERE uuid=?", (job_id,)))
+        await kb.workers.control(lambda c, _t: JobRetention.batch(c, runner.store.policy, (0.0, 0)))
+        await runner._purge_step(job_id)
+        assert not (kb.workspace.tmp / staged.name).exists()
+        await runner._purge_step(job_id)
+        await runner._purge_step(job_id)
+        assert await kb.workers.read(lambda c, _t: c.execute("SELECT 1 FROM jobs WHERE uuid=?", (job_id,)).get) is None
+        assert not (kb.workspace.evidence / runner.store.blob_name(staged.sha256)).exists()
+    finally:
+        await runner.close()
+
+
+@pytest.mark.parametrize("change", ["absent_root", "replaced_root", "symlink_root", "symlink_digest"])
+async def test_orphan_unlink_rejects_changed_root_and_symlink_descendants(kb, orphan_case, change):
+    runner, job_id, digest, path = orphan_case
+    original = kb.workspace.evidence if change != "symlink_digest" else path.parent.parent
+    moved = original.with_name(original.name + "-saved")
+    original.rename(moved)
+    try:
+        if change == "replaced_root":
+            original.mkdir()
+        elif change in {"symlink_root", "symlink_digest"}:
+            original.symlink_to(moved, target_is_directory=True)
+        with pytest.raises((OSError, StorageIOError, PathDeniedError)):
+            await runner._purge_step(job_id)
+    finally:
+        if original.is_symlink():
+            original.unlink()
+        elif original.exists():
+            original.rmdir()
+        moved.rename(original)
+    assert path.read_bytes() == b"orphan proof"
+    assert await kb.workers.read(lambda c, _t: recorded_blob(job_row(c, job_id))) == digest
+
+
+async def test_orphan_absence_sync_failure_retains_locator_for_retry(kb, orphan_case, monkeypatch):
+    runner, job_id, digest, path = orphan_case
+    path.unlink()
+    sync = os.fsync
+    with monkeypatch.context() as patch:
+
+        def fail_sync(_fd):
+            raise OSError("injected absence sync failure")
+
+        patch.setattr(os, "fsync", fail_sync)
+        with pytest.raises(OSError, match="absence sync failure"):
+            await runner._purge_step(job_id)
+    assert os.fsync is sync
+    assert await kb.workers.read(lambda c, _t: recorded_blob(job_row(c, job_id))) == digest
+    await runner._purge_step(job_id)
+    assert await kb.workers.read(lambda c, _t: c.execute("SELECT 1 FROM jobs WHERE uuid=?", (job_id,)).get) is None

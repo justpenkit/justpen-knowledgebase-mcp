@@ -159,3 +159,49 @@ def test_workspace_startup_checks_pinned_identity_devices_and_unwinds(monkeypatc
             assert value.managed_fd(value.tmp) == 6
         assert value.root_fd == -1
         assert [call.args for call in close.call_args_list] == [(9,), (4,), (5,), (6,), (7,), (3,)]
+
+
+@pytest.mark.parametrize(
+    "failure", [None, "missing_child", "missing_leaf", "unsafe_leaf", "changed_root", "sync", "access"]
+)
+def test_orphan_absence_requires_pinned_root_and_durable_safe_traversal(paths, monkeypatch, failure):
+    paths._fds[paths.evidence] = 8
+    sync, unlink, close = Mock(), Mock(), Mock()
+    monkeypatch.setattr(workspace.os, "fsync", sync)
+    monkeypatch.setattr(workspace.os, "unlink", unlink)
+    monkeypatch.setattr(workspace.os, "close", close)
+    monkeypatch.setattr(paths, "open_directory", Mock(return_value=6))
+    opened = Mock(return_value=7)
+    monkeypatch.setattr(paths, "_directory", opened)
+    if failure == "missing_child":
+        opened.side_effect = FileNotFoundError()
+    elif failure == "missing_leaf":
+        monkeypatch.setattr(workspace.os, "stat", Mock(side_effect=FileNotFoundError()))
+    elif failure == "unsafe_leaf":
+        monkeypatch.setattr(workspace.os, "stat", Mock(return_value=SimpleNamespace(st_mode=stat.S_IFREG, st_nlink=2)))
+    elif failure == "changed_root":
+        monkeypatch.setattr(
+            workspace.os,
+            "fstat",
+            Mock(side_effect=[SimpleNamespace(st_dev=1, st_ino=2), SimpleNamespace(st_dev=1, st_ino=9)]),
+        )
+    elif failure == "sync":
+        sync.side_effect = OSError(errno.EIO, "sync")
+    elif failure == "access":
+        opened.side_effect = PermissionError(errno.EACCES, "access")
+    if failure in {"unsafe_leaf", "changed_root", "sync", "access"}:
+        with pytest.raises((PathDeniedError, StorageIOError, OSError)):
+            paths.unlink_orphan_evidence("aa/bb/digest")
+    else:
+        paths.unlink_orphan_evidence("aa/bb/digest")
+        sync.assert_called_once()
+    if failure != "sync" and failure is not None:
+        unlink.assert_not_called()
+    assert close.call_args is not None
+    assert close.call_args.args == ((6,) if failure in {"missing_child", "changed_root", "access"} else (7,))
+
+
+@pytest.mark.parametrize("name", ["/aa/bb/hash", "aa/../hash", "hash"])
+def test_orphan_unlink_rejects_invalid_relative_names(paths, name):
+    with pytest.raises(PathDeniedError, match="INVALID_EVIDENCE_PATH"):
+        paths.unlink_orphan_evidence(name)

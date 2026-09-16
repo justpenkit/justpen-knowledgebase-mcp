@@ -220,6 +220,36 @@ class WorkspacePaths:
         finally:
             os.close(parent)
 
+    def unlink_orphan_evidence(self, relative_name: str) -> None:
+        """Unlink a proven orphan; only missing descendants of the pinned evidence root are absent."""
+        path = Path(relative_name)
+        if path.is_absolute() or ".." in path.parts or len(path.parts) != 3:
+            raise PathDeniedError("PATH_DENIED: INVALID_EVIDENCE_PATH")
+        parent = self.open_directory(self.evidence)
+        try:
+            if self.identity(os.fstat(parent)) != self.identity(os.fstat(self._fds[self.evidence])):
+                raise StorageIOError("IO_ERROR: MANAGED_DIRECTORY_CHANGED")
+            for component in path.parts[:-1]:
+                try:
+                    child = self._directory(component, parent, create=False)
+                except FileNotFoundError:
+                    os.fsync(parent)
+                    return
+                os.close(parent)
+                parent = child
+            try:
+                item = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                if not stat.S_ISREG(item.st_mode) or item.st_nlink != 1:
+                    raise PathDeniedError("PATH_DENIED: UNSAFE_MANAGED_FILE")
+                with suppress(FileNotFoundError):
+                    os.unlink(path.name, dir_fd=parent)
+            os.fsync(parent)
+        finally:
+            os.close(parent)
+
     @contextmanager
     def stage(self) -> Generator[tuple[str, int]]:
         """Create a private staging file and remove it on every exit path."""
