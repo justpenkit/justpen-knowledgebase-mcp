@@ -789,9 +789,10 @@ async def test_accumulated_validation_and_bucket_delay_share_deadline(tmp_path, 
 
 @pytest.mark.parametrize("expired_after_commit", [False, True])
 async def test_post_acceptance_busy_returns_retained_metadata(tmp_path, monkeypatch, expired_after_commit):
-    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=100)) as kb:
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         original_write = kb.workers.write
         original_read = kb.workers.read
+        original_wait = kb.job_runner.wait
         accepted = False
         foreground = asyncio.current_task()
         read_calls = 0
@@ -800,9 +801,13 @@ async def test_post_acceptance_busy_returns_retained_metadata(tmp_path, monkeypa
             nonlocal accepted
             result = await original_write(callback, token)
             accepted = True
-            if expired_after_commit:
-                await asyncio.sleep(0.12)
             return result
+
+        async def wait_after_commit(job_id, _deadline, snapshot=None):
+            assert accepted
+            assert snapshot is not None
+            deadline = time.monotonic() if expired_after_commit else time.monotonic() + 0.1
+            return await original_wait(job_id, deadline, snapshot)
 
         async def contended(callback, token=None):
             nonlocal read_calls
@@ -814,6 +819,7 @@ async def test_post_acceptance_busy_returns_retained_metadata(tmp_path, monkeypa
 
         monkeypatch.setattr(kb.workers, "write", committed)
         monkeypatch.setattr(kb.workers, "read", contended)
+        monkeypatch.setattr(kb.job_runner, "wait", wait_after_commit)
         result = await kb.ingest_evidence({"text": "durable input"})
         assert result["status"] == "accepted"
         assert result["kind"] == "ingest"
@@ -828,16 +834,24 @@ async def test_post_acceptance_busy_returns_retained_metadata(tmp_path, monkeypa
 
 
 async def test_post_acceptance_native_db_timeout_returns_snapshot(tmp_path, monkeypatch):
-    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=100)) as kb:
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         original_write, original_read = kb.workers.write, kb.workers.read
+        original_wait = kb.job_runner.wait
         committed = False
+        committed_event = asyncio.Event()
         entered, release = threading.Event(), threading.Event()
 
         async def write(callback, token=None):
             nonlocal committed
             result = await original_write(callback, token)
             committed = True
+            committed_event.set()
             return result
+
+        async def wait_after_commit(job_id, _deadline, snapshot=None):
+            assert committed
+            assert snapshot is not None
+            return await original_wait(job_id, time.monotonic() + 0.1, snapshot)
 
         async def read(callback, token=None):
             if not committed:
@@ -852,14 +866,18 @@ async def test_post_acceptance_native_db_timeout_returns_snapshot(tmp_path, monk
 
         monkeypatch.setattr(kb.workers, "write", write)
         monkeypatch.setattr(kb.workers, "read", read)
+        monkeypatch.setattr(kb.job_runner, "wait", wait_after_commit)
+        ingestion = asyncio.create_task(kb.ingest_evidence({"text": "durable queued input"}))
         try:
-            result = await asyncio.wait_for(kb.ingest_evidence({"text": "durable queued input"}), 0.5)
+            await asyncio.wait_for(committed_event.wait(), 10)
+            result = await asyncio.wait_for(ingestion, 0.5)
             assert entered.is_set()
             assert not release.is_set()
             assert result["status"] == "accepted"
             assert result["job_id"]
         finally:
             release.set()
+            await asyncio.gather(ingestion, return_exceptions=True)
         assert (
             await original_read(
                 lambda c, t: c.execute("select count(*) from jobs where uuid=?", (result["job_id"],)).get
