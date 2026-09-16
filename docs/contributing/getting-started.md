@@ -29,27 +29,10 @@ make setup
 Use `make install` when you only need to refresh dependencies, as CI does.
 Commit `uv.lock` and `.copier-answers.yml` in generated projects.
 
-## Finish a new project's setup
-
-If you just created an MCP project from this template:
-
-- Replace the example tools with your server's behavior.
-- Customize the README, docs landing page, logo and colors.
-- Add the `mcp` and `python` repository topics and enable **Discussions** under
-    Settings → Features; the issue-template contact link points to Discussions.
-- If you publish the docs, set `site_url` in `mkdocs.yml` to their public URL and
-    expand `nav` as you add pages.
-- Enable regular merge commits and automatic branch deletion. Configure branch
-    protection when your repository visibility and GitHub plan support it; it is
-    not a prerequisite for local development.
-- Keep `main` as the default branch; CI push triggers and the release workflow use it.
-- Keep Actions enabled. GitHub's automated setup commit does not trigger another
-    CI run; the setup workflow validates the project before creating that commit.
-    Normal CI runs on pushes to `main` and on pull requests.
-
-Keep `.copier-answers.yml` committed so you can apply future template updates.
-Activate the agent setup below if you use Claude Code or Codex. The installed
-hooks provide the development gates when you commit and push.
+Keep `.copier-answers.yml` committed for future template updates. The repository
+uses regular merge commits, `main` as its default branch, and Actions for CI and
+documentation publication. Activate the agent setup below if you use Claude Code
+or Codex; installed hooks provide the local development gates.
 
 ## The development gate
 
@@ -94,8 +77,8 @@ Formatting on save remains enabled.
 
 `make docs-serve` starts the local MkDocs preview. `make docs-build` builds the site
 into `site/` in strict mode. All pages use normal Markdown under `docs/`, and
-navigation lives in `mkdocs.yml`. Generated MCP projects also render their
-Python API reference from docstrings through mkdocstrings.
+navigation lives in `mkdocs.yml`. The published reference describes the MCP
+surface rather than a Python import API.
 
 ## Use a coding agent
 
