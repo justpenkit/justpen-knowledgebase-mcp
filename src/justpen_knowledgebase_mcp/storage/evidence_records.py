@@ -79,7 +79,8 @@ class EvidenceRecords:
             "progress": {"bytes": byte_size, "chunks": 0},
         }
         connection.execute(
-            "UPDATE jobs SET progress=json_remove(progress,'$.stage_token') WHERE uuid=?", (claim.job_id,)
+            "UPDATE jobs SET blob_sha256=NULL,progress=json_remove(progress,'$.stage_token','$.verified_sha256') WHERE uuid=?",
+            (claim.job_id,),
         )
         if existing["index_state"] in ("pending", "index_failed") and not active_index:
             connection.execute("UPDATE jobs SET result=? WHERE uuid=?", (json.dumps(result), claim.job_id))
@@ -108,8 +109,14 @@ class EvidenceRecords:
         if existing is None:
             raise ConflictError("evidence disappeared")
         require_ready(connection, "evidence", existing)
+        warnings = [warning for warning in claim.result.get("warnings", []) if warning != "INDEX_REPAIR_QUEUED"]
+        if existing["index_state"] in ("pending", "index_failed") and index_owner_active(
+            connection, existing["index_owner_job_id"]
+        ):
+            warnings.append("INDEX_REPAIR_QUEUED")
         result = {
             **claim.result,
+            "warnings": warnings,
             "effective_media_type": existing["media_type"],
             "index_state": existing["index_state"],
             "incomplete": bool(existing["incomplete"]),

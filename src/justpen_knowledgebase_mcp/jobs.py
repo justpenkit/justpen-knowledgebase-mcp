@@ -128,6 +128,7 @@ class JobRunner:
         self._orphans: deque[str] = deque()
         self._last_cleanup = "orphan"
         self._purge_after = 0
+        self._purge_next_attempt = 0.0
         self._retention_event = asyncio.Event()
         self._retention_cursor = (0.0, 0)
         self._retention_due = 0.0
@@ -448,10 +449,19 @@ class JobRunner:
                     raise
                 return True
         else:
-            item = await self.workers.control(lambda c, _t: JobRetention.next_job(c, self._purge_after))
-            self._purge_after = 0 if item is None else item[0]
-            if item is not None:
-                await self._purge_step(item[1])
+            if time.monotonic() < self._purge_next_attempt:
+                return False
+            try:
+                item = await self.workers.control(lambda c, _t: JobRetention.next_job(c, self._purge_after))
+                self._purge_after = 0 if item is None else item[0]
+                if item is not None:
+                    await self._purge_step(item[1])
+                    return True
+            except (ConflictError, StorageIOError, OSError):
+                self._purge_next_attempt = time.monotonic() + 30
+                self._retention_attention = True
+                self._retention_cache["needs_attention"] = True
+                self._failure_cache("IO_ERROR: job retention purge needs attention")
                 return True
         return False
 
@@ -671,7 +681,7 @@ class JobRunner:
             return
         verified = None
         if "verified_sha256" in claim.progress:
-            # The durable nonpurging locator protects reuse from orphan cleanup;
+            # The durable outstanding locator protects reuse from orphan cleanup;
             # only the final identity recheck and publication hold the bucket.
             verified = await self.io(
                 claim.lane,

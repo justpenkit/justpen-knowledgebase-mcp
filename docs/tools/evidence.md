@@ -17,7 +17,17 @@ preserving the evidence.
 Deduplication can complete with pending/incomplete coverage while another job
 owns the text index. Repairing an unowned failed index emits
 `INDEX_REPAIR_QUEUED`. `attempts` counts durable execution steps and claims,
-including deferrals and takeover.
+including deferrals and takeover. Completed dedup results refresh the repair
+warning from the current index owner; a failed repair no longer reports queued
+work.
+
+A verified ingest retains a separate durable blob locator before publishing
+bytes. Canonical evidence admission clears that locator atomically; failure or
+cancellation retains it for retry or retention cleanup. Retention preserves
+bytes while any canonical record or other job owns them, including another
+job awaiting purge. Corrupt progress flags its own job for attention without
+blocking cleanup of unrelated blobs. Purge faults use a 30-second process-local
+cooldown while other cleanup and ingest work can continue.
 
 **Errors:** `INVALID` for source/base64/encoding/media/target rules;
 `PATH_DENIED` for containment or unsafe files;

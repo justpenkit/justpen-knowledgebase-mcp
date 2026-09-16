@@ -53,7 +53,9 @@ the same compatible release. The startup guard checks schema/catalog/index
 compatibility; it does not migrate an incompatible database automatically.
 
 Unreleased v1 workspaces must also contain the required job scheduling and
-ownership indexes with the expected definitions. A missing or incompatible
+ownership indexes with the expected definitions, plus the checked nullable
+`jobs.blob_sha256` ownership column. The locator is independent of job progress
+JSON and includes jobs awaiting purge. A missing ownership column or incompatible
 supporting index fails startup with `CONFIGURATION`; the service may report the
 bounded message `maintenance unavailable`. Use the creating build to access or
 export its data, preserve a complete offline copy, then recreate the workspace

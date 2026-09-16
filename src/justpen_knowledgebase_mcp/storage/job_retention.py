@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from uuid import UUID
 
 from ..errors import ConflictError, StorageIOError
 from .evidence import stage_name
-from .job_ownership import OTHER_BLOB_OWNER_SQL
+from .job_ownership import OTHER_BLOB_OWNER_SQL, ownership_object, progress_object
 from .jobs import TERMINAL, adjust_terminal_count, job_row, protected
 
 if TYPE_CHECKING:
@@ -57,30 +57,10 @@ def _eligible(connection: apsw.Connection, row: dict[str, Any], now: float) -> b
     )
 
 
-def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate ownership metadata key")
-        result[key] = value
-    return result
-
-
-def _reject_constant(_value: str) -> NoReturn:
-    raise ValueError("nonfinite ownership metadata")
-
-
 def _ownership(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Malformed locators are diagnostic metadata, never deletion authority."""
-    try:
-        _canonical_uuid(row["uuid"])
-        payload = json.loads(row["payload"], object_pairs_hook=_unique_object, parse_constant=_reject_constant)
-        progress = json.loads(row["progress"], object_pairs_hook=_unique_object, parse_constant=_reject_constant)
-    except (TypeError, ValueError) as exc:
-        raise StorageIOError("IO_ERROR: malformed job ownership metadata") from exc
-    if not isinstance(payload, dict) or not isinstance(progress, dict):
-        raise StorageIOError("IO_ERROR: malformed job ownership metadata")
-    return cast("dict[str, Any]", payload), cast("dict[str, Any]", progress)
+    """Malformed metadata is diagnostic state, never deletion authority."""
+    _canonical_uuid(row["uuid"])
+    return ownership_object(row["payload"]), progress_object(row["progress"])
 
 
 def _canonical_uuid(value: object) -> str:
@@ -119,11 +99,11 @@ def _recorded_tokens(row: dict[str, Any]) -> list[str]:
 
 def recorded_blob(row: dict[str, Any]) -> str | None:
     """Validate the recorded digest before it enters any filesystem operation."""
-    _payload, progress = _ownership(row)
-    digest = progress.get("verified_sha256")
-    if "verified_sha256" in progress and (not isinstance(digest, str) or re.fullmatch("[0-9a-f]{64}", digest) is None):
+    _ownership(row)
+    locator = row.get("blob_sha256")
+    if locator is not None and (not isinstance(locator, str) or re.fullmatch("[0-9a-f]{64}", locator) is None):
         raise StorageIOError("IO_ERROR: malformed published blob locator")
-    return digest
+    return locator
 
 
 def _prune(connection: apsw.Connection, row: dict[str, Any]) -> None:
@@ -229,21 +209,22 @@ class JobRetention:
 
     @staticmethod
     def blob_disposable(connection: apsw.Connection, job_id: str, digest: str) -> bool:
-        """Under EX digest bucket, prove absence of canonical and retryable peer ownership."""
+        """Under EX digest bucket, prove absence of canonical and outstanding peer ownership."""
         if JobRetention.next_blob(connection, job_id) != digest:
             raise ConflictError("PURGE_BLOB_CHANGED")
         if connection.execute("SELECT 1 FROM evidence WHERE sha256=?", (digest,)).get is not None:
             return False
-        if connection.execute(OTHER_BLOB_OWNER_SQL, (digest, job_id)).get is not None:
-            raise ConflictError("PUBLISHED_BLOB_OWNERSHIP_UNRESOLVED")
-        return True
+        return connection.execute(OTHER_BLOB_OWNER_SQL, (digest, job_id)).get is None
 
     @staticmethod
     def acknowledge_blob(connection: apsw.Connection, job_id: str, digest: str) -> None:
         """Caller retains the digest bucket through unlink and this durable acknowledgement."""
         if JobRetention.next_blob(connection, job_id) != digest:
             raise ConflictError("PURGE_BLOB_CHANGED")
-        connection.execute("UPDATE jobs SET progress=json_remove(progress,'$.verified_sha256') WHERE uuid=?", (job_id,))
+        connection.execute(
+            "UPDATE jobs SET blob_sha256=NULL,progress=json_remove(progress,'$.verified_sha256') WHERE uuid=?",
+            (job_id,),
+        )
 
     @staticmethod
     def acknowledge(connection: apsw.Connection, job_id: str, token: str) -> None:

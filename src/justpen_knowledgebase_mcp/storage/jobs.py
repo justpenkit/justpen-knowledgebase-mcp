@@ -8,12 +8,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from ..errors import ConflictError, InvalidParamsError, NotFoundError
+from pydantic import ValidationError
+
+from ..errors import ConflictError, InvalidParamsError, NotFoundError, StorageIOError
 from ..evidence import is_text_candidate
 from ..identity import format_timestamp
-from ..models import JobResult
+from ..models import JobProgress, JobResult
 from .deletions import DeleteIntent, GraphDeletion
 from .graph import row_by_id
+from .job_ownership import checkpoint_ownership, progress_object
 
 if TYPE_CHECKING:
     import apsw
@@ -191,8 +194,10 @@ class JobStore:
         row = JobStore.fence(connection, claim)
         if row["cancel_requested"]:
             raise ConflictError("JOB_CANCELLED")
+        progress, digest = checkpoint_ownership(row, progress)
         connection.execute(
-            "UPDATE jobs SET progress=?,updated_at=? WHERE uuid=?", (json.dumps(progress), time.time(), claim.job_id)
+            "UPDATE jobs SET progress=?,blob_sha256=?,updated_at=? WHERE uuid=?",
+            (json.dumps(progress), digest, time.time(), claim.job_id),
         )
 
     @staticmethod
@@ -236,10 +241,11 @@ class JobStore:
     @staticmethod
     def release(connection: apsw.Connection, claim: Claim, progress: dict[str, Any]) -> None:
         """Commit bounded cleanup and checkpoint while yielding the lane/lease."""
-        JobStore.fence(connection, claim)
+        row = JobStore.fence(connection, claim)
+        progress, digest = checkpoint_ownership(row, progress)
         connection.execute(
-            "UPDATE jobs SET state='queued',progress=?,updated_at=?,lease_token=NULL,lease_expires_at=NULL WHERE uuid=?",
-            (json.dumps(progress), time.time(), claim.job_id),
+            "UPDATE jobs SET state='queued',progress=?,blob_sha256=?,updated_at=?,lease_token=NULL,lease_expires_at=NULL WHERE uuid=?",
+            (json.dumps(progress), digest, time.time(), claim.job_id),
         )
 
     @staticmethod
@@ -248,6 +254,15 @@ class JobStore:
         row = job_row(connection, job_id)
         payload = json.loads(row["payload"])
         result = json.loads(row["result"])
+        malformed_progress = False
+        try:
+            decoded = progress_object(row["progress"])
+            progress = JobProgress.model_validate(
+                {key: value for key, value in decoded.items() if key in JobProgress.model_fields}
+            ).model_dump()
+        except (StorageIOError, ValidationError):
+            progress = JobProgress().model_dump()
+            malformed_progress = True
         pending_owner = row["state"] in TERMINAL and protected(connection, job_id)
         retention_protected = (
             row["state"] not in TERMINAL
@@ -267,20 +282,16 @@ class JobStore:
             "state": row["state"],
             "lane": row["lane"],
             "attempts": row["attempts"],
-            "progress": {
-                key: value
-                for key, value in json.loads(row["progress"]).items()
-                if key in {"bytes", "chunks", "rows_deleted"}
-            },
+            "progress": progress,
             "effective_media_type": result.get("effective_media_type", payload.get("media_type")),
             "index_state": result.get(
                 "index_state", "pending" if is_text_candidate(payload.get("media_type", "")) else "not_applicable"
             ),
             "incomplete": result.get("incomplete", is_text_candidate(payload.get("media_type", ""))),
-            "needs_attention": row["state"] == "failed" and pending_owner,
             "purge_pending": bool(row["purge_pending"]),
             "warnings": payload.get("warnings", []),
             **result,
+            "needs_attention": malformed_progress or (row["state"] == "failed" and pending_owner),
         }
 
         return JobResult.model_validate(output).model_dump(mode="json", exclude_none=True)

@@ -4,9 +4,10 @@ import json
 from unittest.mock import Mock
 
 import pytest
+from pydantic import ValidationError
 
-from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, NotFoundError
-from justpen_knowledgebase_mcp.storage import jobs
+from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, NotFoundError, StorageIOError
+from justpen_knowledgebase_mcp.storage import evidence_records, jobs
 from justpen_knowledgebase_mcp.storage.deletions import DeleteStep
 
 from .helpers import EVIDENCE, NODE, OTHER, claim, cursor, database, job, owner
@@ -243,3 +244,79 @@ def test_rotating_claim_stops_after_hundred_live_leases(monkeypatch):
     assert jobs.JobStore.claim_batch(db, "bulk", "reindex", 0, now=10) == (None, 100)
     select.assert_not_called()
     assert db.execute.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("state", "active", "warnings"),
+    [("index_failed", False, []), ("pending", True, ["INDEX_REPAIR_QUEUED"]), ("ready", False, [])],
+)
+def test_finish_dedup_recomputes_repair_warning(monkeypatch, state, active, warnings):
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job()))
+    monkeypatch.setattr(
+        evidence_records,
+        "row_by_id",
+        Mock(
+            return_value=owner(
+                media_type="text/plain", index_state=state, incomplete=state != "ready", index_owner_job_id=2
+            )
+        ),
+    )
+    monkeypatch.setattr(evidence_records, "index_owner_active", Mock(return_value=active))
+    finish = Mock()
+    monkeypatch.setattr(jobs.JobStore, "finish", finish)
+    evidence_records.EvidenceRecords.finish_dedup(
+        database(), claim(result={"warnings": ["TARGET_NOT_FOUND", "INDEX_REPAIR_QUEUED"]}), EVIDENCE
+    )
+    assert finish.call_args.args[3]["warnings"] == ["TARGET_NOT_FOUND", *warnings]
+
+
+@pytest.mark.parametrize("transition", ["checkpoint", "release"])
+def test_verified_progress_omission_cannot_lose_stage_or_size(monkeypatch, transition):
+    previous = {"verified_sha256": "a" * 64, "bytes": 17, "stage_token": OTHER}
+    row = job(blob_sha256="a" * 64, progress=json.dumps(previous))
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=row))
+    db = database()
+    getattr(jobs.JobStore, transition)(db, claim(), {"verified_sha256": "a" * 64, "chunks": 2})
+    assert json.loads(db.execute.call_args.args[1][0]) == {**previous, "chunks": 2}
+
+
+@pytest.mark.parametrize(
+    ("current", "previous", "updated", "error"),
+    [
+        (None, "{}", {"verified_sha256": None}, StorageIOError),
+        (None, "{}", {"verified_sha256": "A" * 64}, StorageIOError),
+        ("a" * 64, '{"verified_sha256":"' + "a" * 64 + '"}', {"verified_sha256": "b" * 64}, ConflictError),
+        ("a" * 64, "invalid", {"chunks": 1}, StorageIOError),
+        ("a" * 64, "{}", {"chunks": 1}, StorageIOError),
+    ],
+)
+def test_checkpoint_rejects_unknown_or_replaced_outstanding_ownership(monkeypatch, current, previous, updated, error):
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job(blob_sha256=current, progress=previous)))
+    db = database()
+    with pytest.raises(error):
+        jobs.JobStore.checkpoint(db, claim(), updated)
+    db.execute.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "progress", [{"bytes": -1}, {"chunks": []}, {"rows_deleted": "private"}, {"bytes": True}, {"chunks": 1.5}]
+)
+def test_invalid_progress_counters_return_attention_without_mutation(monkeypatch, progress):
+    stored = json.dumps(progress)
+    row = job(state="failed", lease_expires_at=None, progress=stored, blob_sha256="a" * 64)
+    monkeypatch.setattr(jobs, "job_row", Mock(return_value=row))
+    monkeypatch.setattr(jobs, "protected", Mock(return_value=False))
+    result = jobs.JobStore.get(database(cursor(value='{"failed_cancelled_retention_seconds":10}')), NODE)
+    assert result["needs_attention"]
+    assert result["progress"] == {"bytes": 0, "chunks": 0, "rows_deleted": 0}
+    assert "private" not in json.dumps(result)
+    assert row["progress"] == stored
+    assert row["blob_sha256"] == "a" * 64
+
+
+@pytest.mark.parametrize("patch", [{"payload": '{"warnings":null}'}, {"result": '{"warnings":null}'}])
+def test_invalid_progress_fallback_does_not_hide_unrelated_result_errors(monkeypatch, patch):
+    row = job(progress='{"bytes":-1}', **patch)
+    monkeypatch.setattr(jobs, "job_row", Mock(return_value=row))
+    with pytest.raises(ValidationError):
+        jobs.JobStore.get(database(cursor(value="{}")), NODE)

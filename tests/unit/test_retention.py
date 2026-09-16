@@ -187,15 +187,11 @@ def test_recorded_blob_rejects_unknown_metadata(progress):
         job_retention.recorded_blob(job(progress=progress))
 
 
-@pytest.mark.parametrize(("canonical", "peer", "expected"), [(1, None, False), (None, None, True), (None, 1, None)])
+@pytest.mark.parametrize(("canonical", "peer", "expected"), [(1, None, False), (None, None, True), (None, 1, False)])
 def test_orphan_proof_preserves_canonical_and_retryable_peer_owners(monkeypatch, canonical, peer, expected):
     monkeypatch.setattr(job_retention.JobRetention, "next_blob", Mock(return_value="a" * 64))
     db = database(cursor(value=canonical), cursor(value=peer))
-    if expected is None:
-        with pytest.raises(ConflictError, match="OWNERSHIP_UNRESOLVED"):
-            job_retention.JobRetention.blob_disposable(db, NODE, "a" * 64)
-    else:
-        assert job_retention.JobRetention.blob_disposable(db, NODE, "a" * 64) is expected
+    assert job_retention.JobRetention.blob_disposable(db, NODE, "a" * 64) is expected
 
 
 def test_orphan_ack_and_finalization_require_unchanged_locator(monkeypatch):
@@ -204,6 +200,7 @@ def test_orphan_ack_and_finalization_require_unchanged_locator(monkeypatch):
         lease_expires_at=None,
         purge_pending=1,
         purge_tokens="[]",
+        blob_sha256="a" * 64,
         progress='{"verified_sha256":"' + "a" * 64 + '"}',
     )
     monkeypatch.setattr(job_retention, "job_row", Mock(return_value=row))

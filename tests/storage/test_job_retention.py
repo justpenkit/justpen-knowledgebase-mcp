@@ -344,3 +344,45 @@ async def test_unobserved_cache_is_explicit_and_status_never_queries_sql(kb, mon
         assert kb.job_runner.retention_status()["available"] is True
     finally:
         await unused.close()
+
+
+@pytest.mark.parametrize("progress", ["invalid", "[]", '{"bytes":NaN}', '{"verified_sha256":null}'])
+async def test_corrupt_trusted_owner_keeps_its_locator_and_reports_attention(kb, progress):
+    await kb.job_runner.close()
+    digest = "a" * 64
+
+    def populate(connection, _token):
+        identifier = terminal(connection, "failed")
+        connection.execute("UPDATE jobs SET blob_sha256=?,progress=? WHERE uuid=?", (digest, progress, identifier))
+        return identifier
+
+    identifier = await kb.workers.control(populate)
+    await kb.job_runner.retention_pass(force=True)
+    assert kb.job_runner.retention_status()["needs_attention"]
+    result = await kb.jobs({"action": "get", "job_id": identifier})
+    assert result["needs_attention"]
+    assert result["progress"] == {"bytes": 0, "chunks": 0, "rows_deleted": 0}
+    assert (
+        await kb.workers.read(lambda c, _t: c.execute("SELECT blob_sha256 FROM jobs WHERE uuid=?", (identifier,)).get)
+        == digest
+    )
+
+
+@pytest.mark.parametrize("progress", [{"bytes": -1}, {"chunks": []}, {"rows_deleted": "private"}])
+async def test_invalid_counters_leave_durable_progress_and_blob_ownership_unchanged(kb, progress):
+    await kb.job_runner.close()
+    stored, digest = json.dumps(progress), "a" * 64
+
+    def populate(connection, _token):
+        identifier = terminal(connection, "failed")
+        connection.execute("UPDATE jobs SET blob_sha256=?,progress=? WHERE uuid=?", (digest, stored, identifier))
+        return identifier
+
+    identifier = await kb.workers.control(populate)
+    result = await kb.jobs({"action": "get", "job_id": identifier})
+    assert result["needs_attention"]
+    assert result["progress"] == {"bytes": 0, "chunks": 0, "rows_deleted": 0}
+    assert "private" not in json.dumps(result)
+    assert await kb.workers.read(
+        lambda c, _t: c.execute("SELECT progress,blob_sha256 FROM jobs WHERE uuid=?", (identifier,)).fetchone()
+    ) == (stored, digest)

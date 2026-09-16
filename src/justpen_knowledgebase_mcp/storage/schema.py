@@ -11,7 +11,6 @@ from pydantic import ValidationError
 from ..catalog import CATALOG_FINGERPRINT, CATALOG_VERSION
 from ..config import WorkspacePolicy
 from ..errors import ConfigurationError
-from .job_ownership import BLOB_LOCATOR_KEY
 
 if TYPE_CHECKING:
     import apsw
@@ -23,7 +22,7 @@ INDEX_FORMAT_VERSION = 1
 
 REQUIRED_INDEXES = {
     "jobs_active_lane": "CREATE INDEX jobs_active_lane ON jobs(lane,kind,id) WHERE purge_pending=0 AND state IN ('queued','running')",
-    "jobs_blob_locator": f"CREATE INDEX jobs_blob_locator ON jobs(({BLOB_LOCATOR_KEY})) WHERE purge_pending=0",
+    "jobs_blob_locator": "CREATE INDEX jobs_blob_locator ON jobs(blob_sha256) WHERE blob_sha256 IS NOT NULL",
     "nodes_property_fallback": "CREATE INDEX nodes_property_fallback ON nodes(id) WHERE lifecycle='ready' AND coalesce(json_extract(metadata,'$.property_index.complete'),0)!=1",
     "relations_property_fallback": "CREATE INDEX relations_property_fallback ON relations(id,source_id,target_id) WHERE lifecycle='ready' AND coalesce(json_extract(metadata,'$.property_index.complete'),0)!=1",
 }
@@ -41,6 +40,8 @@ CREATE TABLE jobs (
  id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
  state TEXT NOT NULL, requested_at REAL NOT NULL, updated_at REAL NOT NULL,
  lease_token TEXT, lease_expires_at REAL, progress TEXT NOT NULL DEFAULT '{}',
+ blob_sha256 TEXT NULL CHECK(blob_sha256 IS NULL OR
+ (length(blob_sha256)=64 AND blob_sha256 NOT GLOB '*[^0-9a-f]*')),
  cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1)),
  error_code TEXT, payload TEXT NOT NULL DEFAULT '{}',
  lane TEXT NOT NULL DEFAULT 'short', finished_at REAL, result TEXT NOT NULL DEFAULT '{}',
@@ -184,6 +185,9 @@ class SchemaGuard:
 
     def check(self, connection: apsw.Connection) -> None:
         """Reject any schema/catalog/index mismatch, including additive changes."""
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
+        if "blob_sha256" not in columns:
+            raise ConfigurationError("unsupported job ownership layout; offline workspace upgrade required")
         expected = (SCHEMA_VERSION, CATALOG_VERSION, CATALOG_FINGERPRINT, INDEX_FORMAT_VERSION, self.paths)
         row = connection.execute(
             "SELECT schema_version,catalog_version,catalog_fingerprint,index_format_version,managed_paths "

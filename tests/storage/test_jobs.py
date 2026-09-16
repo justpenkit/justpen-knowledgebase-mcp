@@ -982,3 +982,53 @@ async def test_facade_raw_text_json_expansion_rejects_exact_range(kb):
     assert read["returned_range"] == {"offset": 0, "length": len(raw)}
     assert base64.b64decode(read["content"]) == raw
     assert len(json.dumps({"status": "ok", "data": read}).encode()) < 262144
+
+
+async def test_completed_binary_and_dedup_transfer_blob_ownership(kb):
+    first = await kb.ingest_evidence({"base64": "AA=="})
+    second = await kb.ingest_evidence({"base64": "AA=="})
+    for result in (first, second):
+        row = await kb.workers.read(lambda c, _t, result=result: jobs.job_row(c, result["job_id"]))
+        assert "verified_sha256" not in json.loads(row["progress"])
+        assert row["blob_sha256"] is None
+
+
+@pytest.mark.parametrize("state", ["failed", "cancelled"])
+@pytest.mark.parametrize("transition", ["checkpoint", "release"])
+async def test_outstanding_locator_survives_progress_overwrite_and_retry(kb, state, transition):
+    await kb.job_runner.close()
+    identifier, digest = str(uuid4()), "a" * 64
+
+    def advance(connection, _token):
+        jobs.JobStore.insert(connection, identifier, "ingest", "short", {})
+        claim = jobs.JobStore.claim(connection, "short", "ingest")
+        assert claim is not None
+        progress = {"verified_sha256": digest, "bytes": 17, "stage_token": claim.token}
+        jobs.JobStore.checkpoint(connection, claim, progress)
+        getattr(jobs.JobStore, transition)(connection, claim, {"chunks": 2})
+        if transition == "release":
+            claim = jobs.JobStore.claim(connection, "short", "ingest")
+            assert claim is not None
+        jobs.JobStore.finish(connection, claim, state, {})
+        failed = jobs.job_row(connection, identifier)
+        jobs.JobStore.retry(connection, identifier)
+        return failed, jobs.job_row(connection, identifier), progress
+
+    failed, retried, progress = await kb.workers.control(advance)
+    for row in (failed, retried):
+        assert json.loads(row["progress"]) == {**progress, "chunks": 2}
+        assert row["blob_sha256"] == digest
+
+
+@pytest.mark.parametrize("digest", ["a" * 63, "A" * 64, "g" * 64, "", "a" * 65])
+async def test_blob_locator_rejects_noncanonical_digests(kb, digest):
+    await kb.job_runner.close()
+    identifier = str(uuid4())
+    await kb.workers.control(lambda c, _t: jobs.JobStore.insert(c, identifier, "ingest", "short", {}))
+
+    def reject(connection, _token):
+        with pytest.raises(apsw.ConstraintError):
+            connection.execute("UPDATE jobs SET blob_sha256=? WHERE uuid=?", (digest, identifier))
+
+    await kb.workers.control(reject)
+    assert await kb.workers.read(lambda c, _t: jobs.job_row(c, identifier)["blob_sha256"]) is None

@@ -760,3 +760,24 @@ async def test_blob_purge_failure_preserves_locator_and_releases_bucket(runner, 
     finalize.assert_not_called()
     close.assert_called_once_with(9)
     assert runner._retention_attention == (failure == "uncertain")
+
+
+@pytest.mark.parametrize("error", [ConflictError("private"), StorageIOError("private"), OSError("private")])
+async def test_purge_fault_cooldown_keeps_other_cleanup_admitted(runner, monkeypatch, error):
+    clock = Mock(return_value=100.0)
+    monkeypatch.setattr(jobs.time, "monotonic", clock)
+    monkeypatch.setattr(jobs.JobRetention, "next_job", Mock(return_value=(1, NODE)))
+    runner._purge_step = AsyncMock(side_effect=error)
+    runner._orphan_step = AsyncMock()
+    assert await runner._cleanup_category("purge")
+    assert not await runner._cleanup_category("purge")
+    assert runner._purge_step.await_count == 1
+    assert runner.last_error == "IO_ERROR: job retention purge needs attention"
+    assert runner.retention_status()["needs_attention"]
+    runner._orphans.append("stage")
+    assert await runner._cleanup_category("orphan")
+    clock.return_value = 129.9
+    assert not await runner._cleanup_category("purge")
+    clock.return_value = 130.0
+    assert await runner._cleanup_category("purge")
+    assert runner._purge_step.await_count == 2

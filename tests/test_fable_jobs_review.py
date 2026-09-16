@@ -25,6 +25,7 @@ from justpen_knowledgebase_mcp.storage.fulltext import claim_item
 from justpen_knowledgebase_mcp.storage.job_ownership import OTHER_BLOB_OWNER_SQL
 from justpen_knowledgebase_mcp.storage.job_retention import PROTECTED_COUNT_SQL, JobRetention, recorded_blob
 from justpen_knowledgebase_mcp.storage.jobs import CLAIM_BATCH_SQL, Claim, JobStore, job_row
+from justpen_knowledgebase_mcp.storage.schema import SchemaGuard
 
 pytestmark = pytest.mark.integration
 
@@ -270,7 +271,8 @@ async def test_malformed_retention_preserves_locators_and_advances(kb, changes):
     assert remaining == 100
 
 
-async def test_post_publish_cancel_does_not_lose_last_orphan_locator(kb, monkeypatch):
+@pytest.mark.parametrize("action", ["purge", "retry"])
+async def test_post_publish_cancel_does_not_lose_last_orphan_locator(kb, monkeypatch, action):
     await kb.job_runner.close()
     runner = JobRunner(kb.workers, kb.workspace, kb.job_runner.store.policy)
     job_id, admission_token = str(uuid4()), str(uuid4())
@@ -312,6 +314,17 @@ async def test_post_publish_cancel_does_not_lose_last_orphan_locator(kb, monkeyp
         assert evidence_count == 0
         blob_path = kb.workspace.evidence / runner.store.blob_name(staged.sha256)
         assert blob_path.exists()
+        assert await kb.workers.read(lambda c, _t: job_row(c, job_id)["blob_sha256"]) == staged.sha256
+        if action == "retry":
+            monkeypatch.setattr(runner.store, "publish", publish)
+            await kb.workers.control(lambda c, _t: JobStore.retry(c, job_id))
+            retry = await kb.workers.control(lambda c, _t: JobStore.claim(c, "short", "ingest"))
+            await runner._run_claim(retry)
+            completed = await kb.workers.read(lambda c, _t: job_row(c, job_id))
+            assert completed["state"] == "completed"
+            assert completed["blob_sha256"] is None
+            assert blob_path.exists()
+            return
         await kb.workers.control(lambda c, _t: c.execute("UPDATE jobs SET finished_at=1 WHERE uuid=?", (job_id,)))
         await kb.workers.control(lambda c, _t: JobRetention.batch(c, runner.store.policy, (0.0, 0)))
         await runner._purge_step(job_id)
@@ -389,10 +402,11 @@ async def test_orphan_cleanup_protects_other_consumers_and_retryable_peers(kb, o
     def peer(connection, _token):
         JobStore.insert(connection, peer_id, "ingest", "bulk", {})
         connection.execute(
-            "UPDATE jobs SET state=?,progress=?,lease_expires_at=?,finished_at=? WHERE uuid=?",
+            "UPDATE jobs SET state=?,progress=?,blob_sha256=?,lease_expires_at=?,finished_at=? WHERE uuid=?",
             (
                 state,
                 json.dumps({"verified_sha256": digest, "bytes": 12}),
+                digest,
                 time.time() + 30 if state == "running" else None,
                 time.time() if state == "failed" else None,
                 peer_id,
@@ -401,14 +415,13 @@ async def test_orphan_cleanup_protects_other_consumers_and_retryable_peers(kb, o
         JobRetention.reconcile(connection)
 
     await kb.workers.control(peer)
-    with pytest.raises(ConflictError, match="OWNERSHIP_UNRESOLVED"):
-        await runner._purge_step(job_id)
+    await runner._purge_step(job_id)
     assert path.exists()
-    assert await kb.workers.read(lambda c, _t: c.execute("SELECT 1 FROM jobs WHERE uuid=?", (job_id,)).get) == 1
+    assert await kb.workers.read(lambda c, _t: c.execute("SELECT 1 FROM jobs WHERE uuid=?", (job_id,)).get) is None
+    assert await kb.workers.read(lambda c, _t: recorded_blob(job_row(c, peer_id))) == digest
     if state == "failed":
         await kb.workers.control(lambda c, _t: JobStore.retry(c, peer_id))
-        with pytest.raises(ConflictError, match="OWNERSHIP_UNRESOLVED"):
-            await runner._purge_step(job_id)
+        await runner._purge_step(job_id)
         assert path.exists()
 
 
@@ -423,8 +436,8 @@ async def test_orphan_cleanup_protects_other_consumers_and_retryable_peers(kb, o
         '{"verified_sha256":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}',
     ],
 )
-async def test_unknown_peer_metadata_blocks_blob_cleanup_without_losing_locator(kb, orphan_case, progress):
-    runner, job_id, digest, path = orphan_case
+async def test_unrelated_corrupt_peer_does_not_block_blob_cleanup(kb, orphan_case, progress):
+    runner, job_id, _digest, path = orphan_case
 
     def peer(connection, _token):
         identifier = str(uuid4())
@@ -432,10 +445,9 @@ async def test_unknown_peer_metadata_blocks_blob_cleanup_without_losing_locator(
         connection.execute("UPDATE jobs SET progress=? WHERE uuid=?", (progress, identifier))
 
     await kb.workers.control(peer)
-    with pytest.raises(ConflictError, match="OWNERSHIP_UNRESOLVED"):
-        await runner._purge_step(job_id)
-    assert path.exists()
-    assert await kb.workers.read(lambda c, _t: JobRetention.next_blob(c, job_id)) == digest
+    await runner._purge_step(job_id)
+    assert not path.exists()
+    assert await kb.workers.read(lambda c, _t: c.execute("SELECT 1 FROM jobs WHERE uuid=?", (job_id,)).get) is None
 
 
 async def test_all_peers_purge_fenced_allow_idempotent_orphan_cleanup(kb, orphan_case):
@@ -445,8 +457,8 @@ async def test_all_peers_purge_fenced_allow_idempotent_orphan_cleanup(kb, orphan
     def peer(connection, _token):
         JobStore.insert(connection, peer_id, "ingest", "bulk", {})
         connection.execute(
-            "UPDATE jobs SET state='failed',finished_at=1,progress=?,purge_pending=1 WHERE uuid=?",
-            (json.dumps({"verified_sha256": digest, "bytes": 12}), peer_id),
+            "UPDATE jobs SET state='failed',finished_at=1,progress=?,blob_sha256=?,purge_pending=1 WHERE uuid=?",
+            (json.dumps({"verified_sha256": digest, "bytes": 12}), digest, peer_id),
         )
         JobRetention.reconcile(connection)
 
@@ -454,6 +466,7 @@ async def test_all_peers_purge_fenced_allow_idempotent_orphan_cleanup(kb, orphan
     with pytest.raises(ConflictError, match="JOB_PURGING"):
         await kb.workers.control(lambda c, _t: JobStore.retry(c, peer_id))
     await runner._purge_step(job_id)
+    assert path.exists()  # Purge-pending peer is now the last durable owner.
     await runner._purge_step(peer_id)
     await runner._purge_step(job_id)
     assert not path.exists()
@@ -510,7 +523,7 @@ async def test_token_free_malformed_locator_is_retained(kb, identifier, progress
 
 
 @pytest.mark.parametrize("variant", ["last", "first", "escaped", "null"])
-async def test_duplicate_digest_keys_are_unknown_to_sql_and_python(kb, orphan_case, variant):
+async def test_duplicate_digest_keys_do_not_own_unrelated_blobs(kb, orphan_case, variant):
 
     runner, job_id, digest, path = orphan_case
     key = "verified\\u005fsha256" if variant == "escaped" else "verified_sha256"
@@ -524,9 +537,8 @@ async def test_duplicate_digest_keys_are_unknown_to_sql_and_python(kb, orphan_ca
         connection.execute("UPDATE jobs SET progress=? WHERE uuid=?", (progress, peer_id))
 
     await kb.workers.control(peer)
-    with pytest.raises(ConflictError, match="OWNERSHIP_UNRESOLVED"):
-        await runner._purge_step(job_id)
-    assert path.exists()
+    await runner._purge_step(job_id)
+    assert not path.exists()
     with pytest.raises(StorageIOError, match="malformed"):
         await kb.workers.read(lambda c, _t: recorded_blob(job_row(c, peer_id)))
 
@@ -570,7 +582,8 @@ async def test_unlocked_verifier_locator_blocks_orphan_cleanup_before_publicatio
             },
         )
         connection.execute(
-            "UPDATE jobs SET progress=? WHERE uuid=?", (json.dumps({"verified_sha256": digest, "bytes": 12}), peer_id)
+            "UPDATE jobs SET progress=?,blob_sha256=? WHERE uuid=?",
+            (json.dumps({"verified_sha256": digest, "bytes": 12}), digest, peer_id),
         )
         return JobStore.claim(connection, "bulk", "ingest")
 
@@ -592,10 +605,9 @@ async def test_unlocked_verifier_locator_blocks_orphan_cleanup_before_publicatio
         assert await asyncio.to_thread(entered.wait, 2)
         with runner.store.bucket(digest, exclusive=True, deadline=time.monotonic()):
             pass
-        with pytest.raises(ConflictError, match="OWNERSHIP_UNRESOLVED"):
-            await runner._purge_step(job_id)
+        await runner._purge_step(job_id)
         assert path.exists()
-        assert await kb.workers.read(lambda c, _t: recorded_blob(job_row(c, job_id))) == digest
+        assert await kb.workers.read(lambda c, _t: recorded_blob(job_row(c, peer_id))) == digest
     finally:
         release.set()
         await task
@@ -708,7 +720,7 @@ async def test_repeated_pressure_deferral_removes_only_settled_attempt_stages(kb
 
 
 @pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
-async def test_nonfinite_peer_is_retained_and_blocks_orphan_disposal(kb, orphan_case, constant):
+async def test_nonfinite_unrelated_peer_is_retained_without_blocking_orphan_disposal(kb, orphan_case, constant):
     runner, job_id, digest, path = orphan_case
     peer_id = str(uuid4())
     progress = '{"verified_sha256":"' + digest + '","bytes":' + constant + "}"
@@ -721,9 +733,8 @@ async def test_nonfinite_peer_is_retained_and_blocks_orphan_disposal(kb, orphan_
 
     batch = await kb.workers.control(corrupt)
     assert batch["invalid"] == 1
-    with pytest.raises(ConflictError, match="OWNERSHIP_UNRESOLVED"):
-        await runner._purge_step(job_id)
-    assert path.exists()
+    await runner._purge_step(job_id)
+    assert not path.exists()
     assert (
         await kb.workers.read(lambda c, _t: c.execute("SELECT purge_pending FROM jobs WHERE uuid=?", (peer_id,)).get)
         == 0
@@ -802,3 +813,54 @@ async def test_orphan_absence_sync_failure_retains_locator_for_retry(kb, orphan_
     assert await kb.workers.read(lambda c, _t: recorded_blob(job_row(c, job_id))) == digest
     await runner._purge_step(job_id)
     assert await kb.workers.read(lambda c, _t: c.execute("SELECT 1 FROM jobs WHERE uuid=?", (job_id,)).get) is None
+
+
+@pytest.mark.parametrize("layout", ["missing_column", "missing_index", "wrong_index"])
+async def test_blob_ownership_layout_requires_offline_upgrade(kb, layout):
+    await kb.job_runner.close()
+
+    def alter(connection, _token):
+        connection.execute("DROP INDEX jobs_blob_locator")
+        if layout == "missing_column":
+            connection.execute("ALTER TABLE jobs DROP COLUMN blob_sha256")
+        elif layout == "wrong_index":
+            connection.execute("CREATE INDEX jobs_blob_locator ON jobs(blob_sha256) WHERE purge_pending=0")
+        check = SchemaGuard(kb.workspace).check if layout == "missing_column" else SchemaGuard.check_indexes
+        with pytest.raises(ConfigurationError, match="offline workspace upgrade required"):
+            check(connection)
+
+    await kb.workers.control(alter)
+    with pytest.raises(ConfigurationError):
+        async with KnowledgeBase.open(kb.config):
+            pass
+
+
+@pytest.mark.parametrize("purge_pending", [0, 1])
+async def test_corrupt_actual_peer_keeps_last_trusted_locator(kb, orphan_case, purge_pending):
+    runner, job_id, digest, path = orphan_case
+    peer_id = str(uuid4())
+
+    def peer(connection, _token):
+        JobStore.insert(connection, peer_id, "ingest", "bulk", {})
+        claim = JobStore.claim(connection, "bulk", "ingest")
+        assert claim is not None
+        JobStore.checkpoint(connection, claim, {"verified_sha256": digest, "bytes": 12})
+        JobStore.finish(connection, claim, "failed", {})
+        connection.execute(
+            "UPDATE jobs SET progress='invalid',finished_at=1,purge_pending=? WHERE uuid=?", (purge_pending, peer_id)
+        )
+
+    await kb.workers.control(peer)
+    await runner._purge_step(job_id)
+    assert path.exists()
+    assert (
+        await kb.workers.read(lambda c, _t: c.execute("SELECT blob_sha256 FROM jobs WHERE uuid=?", (peer_id,)).get)
+        == digest
+    )
+    assert await kb.workers.read(lambda c, _t: c.execute("SELECT 1 FROM jobs WHERE uuid=?", (job_id,)).get) is None
+    result = await kb.jobs({"action": "get", "job_id": peer_id})
+    assert result["needs_attention"]
+    if purge_pending:
+        with pytest.raises(StorageIOError):
+            await runner._purge_step(peer_id)
+        assert path.exists()

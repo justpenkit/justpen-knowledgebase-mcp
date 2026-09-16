@@ -35,11 +35,11 @@ def expected(guard):
 def test_guard_rejects_every_contract_dimension(field):
     value = guard()
     matching = expected(value)
-    value.check(database(cursor(value=matching)))
+    value.check(database(cursor(rows=[(0, "blob_sha256")]), cursor(value=matching)))
     mismatch = list(matching)
     mismatch[field] = "changed"
     with pytest.raises(ConfigurationError):
-        value.check(database(cursor(value=tuple(mismatch))))
+        value.check(database(cursor(rows=[(0, "blob_sha256")]), cursor(value=tuple(mismatch))))
 
 
 @pytest.mark.parametrize("raw", ["{}", "[]", "null", "invalid", '{"wal_low_bytes":true}'])
@@ -55,7 +55,7 @@ def test_initialization_checks_contract_before_commit(exists):
     responses = [cursor(), cursor(value=exists)]
     if not exists:
         responses.extend([cursor(), *[cursor() for _ in schema.REQUIRED_INDEXES], cursor()])
-    responses.append(cursor(value=expected(value)))
+    responses.extend([cursor(rows=[(0, "blob_sha256")]), cursor(value=expected(value))])
     responses.extend(cursor(value=definition) for definition in schema.REQUIRED_INDEXES.values())
     responses.extend([cursor(value=WorkspacePolicy().model_dump_json()), cursor()])
     db = database(*responses)
@@ -92,3 +92,8 @@ def test_property_projection_replaces_derived_rows_and_coverage():
     metadata = row["metadata"]
     assert isinstance(metadata, str)
     assert json.loads(metadata)["property_index"]["omitted_values"] == 1
+
+
+def test_guard_rejects_missing_ownership_column_before_contract_use():
+    with pytest.raises(ConfigurationError, match="offline workspace upgrade required"):
+        guard().check(database(cursor(rows=[(0, "progress")])))
