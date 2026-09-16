@@ -45,7 +45,7 @@ def test_retention_batch_prunes_expires_marks_files_and_skips_protection(monkeyp
     )
     policy = WorkspacePolicy(completed_retention_seconds=10, failed_cancelled_retention_seconds=10)
     result = job_retention.JobRetention.batch(db, policy, (0.0, 0), now=100)
-    assert result == {"cursor": (0.0, 0), "examined": 4, "pruned": 1, "marked": 1}
+    assert result == {"cursor": (0.0, 0), "examined": 4, "pruned": 1, "marked": 1, "invalid": 0}
     assert json.loads(db.execute.call_args.args[1][0]) == [NODE]
     assert row_lookup.call_count == 3
 
@@ -64,7 +64,13 @@ def test_recorded_tokens_validate_owned_names_and_deduplicate():
 
 
 def test_purge_acknowledgment_head_and_protection(monkeypatch):
-    row = job(state="failed", lease_expires_at=None, purge_pending=1, purge_tokens=json.dumps([OTHER]))
+    row = job(
+        state="failed",
+        lease_expires_at=None,
+        purge_pending=1,
+        purge_tokens=json.dumps([OTHER]),
+        progress=json.dumps({"stage_token": OTHER}),
+    )
     monkeypatch.setattr(job_retention, "job_row", Mock(return_value=row))
     protection = Mock(return_value=False)
     monkeypatch.setattr(job_retention, "protected", protection)
@@ -164,3 +170,71 @@ def test_stage_scan_bounded_and_ignores_unknown_names(monkeypatch):
     assert scanner.batch() == []
     assert scanner.iterator is None
     scan.__exit__.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "progress",
+    [
+        "[]",
+        "invalid",
+        '{"verified_sha256":null}',
+        '{"verified_sha256":"bad"}',
+        '{"verified_sha256":"a","verified_sha256":"b"}',
+    ],
+)
+def test_recorded_blob_rejects_unknown_metadata(progress):
+    with pytest.raises(StorageIOError):
+        job_retention.recorded_blob(job(progress=progress))
+
+
+@pytest.mark.parametrize(("canonical", "peer", "expected"), [(1, None, False), (None, None, True), (None, 1, None)])
+def test_orphan_proof_preserves_canonical_and_retryable_peer_owners(monkeypatch, canonical, peer, expected):
+    monkeypatch.setattr(job_retention.JobRetention, "next_blob", Mock(return_value="a" * 64))
+    db = database(cursor(value=canonical), cursor(value=peer))
+    if expected is None:
+        with pytest.raises(ConflictError, match="OWNERSHIP_UNRESOLVED"):
+            job_retention.JobRetention.blob_disposable(db, NODE, "a" * 64)
+    else:
+        assert job_retention.JobRetention.blob_disposable(db, NODE, "a" * 64) is expected
+
+
+def test_orphan_ack_and_finalization_require_unchanged_locator(monkeypatch):
+    row = job(
+        state="failed",
+        lease_expires_at=None,
+        purge_pending=1,
+        purge_tokens="[]",
+        progress='{"verified_sha256":"' + "a" * 64 + '"}',
+    )
+    monkeypatch.setattr(job_retention, "job_row", Mock(return_value=row))
+    monkeypatch.setattr(job_retention, "protected", Mock(return_value=False))
+    db = database()
+    db.execute.return_value.get = 1
+    assert job_retention.JobRetention.next_blob(db, NODE) == "a" * 64
+    assert not job_retention.JobRetention.finalize(db, NODE)
+    with pytest.raises(ConflictError, match="PURGE_BLOB_CHANGED"):
+        job_retention.JobRetention.acknowledge_blob(db, NODE, "b" * 64)
+    job_retention.JobRetention.acknowledge_blob(db, NODE, "a" * 64)
+    assert "json_remove(progress" in db.execute.call_args.args[0]
+    row["purge_pending"] = 0
+    with pytest.raises(ConflictError, match="PROTECTED"):
+        job_retention.JobRetention.next_blob(db, NODE)
+
+
+@pytest.mark.parametrize("tokens", ["invalid", "{}", '["invalid"]'])
+def test_corrupt_purge_tokens_never_become_file_authority(monkeypatch, tokens):
+    monkeypatch.setattr(
+        job_retention,
+        "job_row",
+        Mock(return_value=job(state="failed", lease_expires_at=None, purge_pending=1, purge_tokens=tokens)),
+    )
+    monkeypatch.setattr(job_retention, "protected", Mock(return_value=False))
+    with pytest.raises(StorageIOError, match="purge ownership"):
+        job_retention.JobRetention.next_file(database(), NODE)
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_ownership_rejects_nonfinite_persisted_json(constant):
+    progress = '{"verified_sha256":"' + "a" * 64 + '","bytes":' + constant + "}"
+    with pytest.raises(StorageIOError, match="malformed"):
+        job_retention.recorded_blob(job(progress=progress))

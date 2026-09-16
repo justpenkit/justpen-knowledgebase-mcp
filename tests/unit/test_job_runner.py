@@ -1,6 +1,7 @@
 """Runner orchestration with DB, evidence store and OS ownership isolated."""
 
 import asyncio
+import hashlib
 import threading
 from contextlib import nullcontext
 from pathlib import Path
@@ -83,7 +84,7 @@ async def test_real_io_lane_capacity_and_shutdown(monkeypatch):
 
 
 async def test_ingest_inline_acceptance_and_failure_cleanup(runner, monkeypatch):
-    staged = SimpleNamespace(name=stage_name(NODE, OTHER), byte_size=3)
+    staged = SimpleNamespace(name=stage_name(NODE, OTHER), byte_size=3, sha256=hashlib.sha256(b"abc").hexdigest())
     runner.store.stage_inline.return_value = staged
     monkeypatch.setattr(jobs.JobStore, "insert", Mock())
     monkeypatch.setattr(jobs.JobStore, "get", Mock(return_value={"job_id": NODE, "state": "queued", "lane": "short"}))
@@ -154,6 +155,7 @@ async def test_recovery_and_cleanup_rotation(runner, monkeypatch):
     assert list(runner._orphans) == [stage_name(NODE, OTHER)]
     monkeypatch.setattr(jobs.JobRetention, "next_job", Mock(return_value=None))
     monkeypatch.setattr(jobs.JobStore, "claim", Mock(return_value=None))
+    monkeypatch.setattr(jobs.JobStore, "claim_batch", Mock(return_value=(None, 0)))
     runner._orphan_step = AsyncMock()
     assert await runner._cleanup_step()
     runner._orphan_step.assert_awaited_once_with(stage_name(NODE, OTHER))
@@ -179,7 +181,9 @@ async def test_purge_and_orphan_acknowledge_after_unlink(runner, monkeypatch):
 
 async def test_retention_cache_success_and_failure(runner, monkeypatch):
     monkeypatch.setattr(jobs.JobRetention, "counts", Mock(return_value={"completed": 0, "failed_cancelled": 0}))
-    monkeypatch.setattr(jobs.JobRetention, "batch", Mock(return_value={"cursor": (0.0, 0), "marked": 1}))
+    monkeypatch.setattr(
+        jobs.JobRetention, "batch", Mock(return_value={"cursor": (0.0, 0), "marked": 1, "pruned": 0, "invalid": 0})
+    )
     monkeypatch.setattr(
         jobs.JobRetention,
         "snapshot",
@@ -249,11 +253,24 @@ async def test_copy_source_and_input_ownership(runner, monkeypatch):
     with pytest.raises(StorageIOError, match="ownership"):
         await runner._copy_input(capability)
     capability.payload["input_stage"] = stage_name(NODE, OTHER)
+    capability.payload.update(input_size=3, input_sha256=hashlib.sha256(b"abc").hexdigest())
     runner.store.workspace.open_managed_file.return_value = nullcontext(7)
     monkeypatch.setattr(jobs.os, "read", Mock(return_value=b"abc"))
     runner.store.stage_inline.return_value = "staged"
     assert await runner._copy_input(capability) == "staged"
     runner.store.stage_inline.assert_called_once_with(b"abc", NODE, OTHER)
+
+
+@pytest.mark.parametrize("fingerprint", [None, "a" * 64])
+async def test_copy_rejects_legacy_or_rewritten_inline_before_staging(runner, monkeypatch, fingerprint):
+    payload = {"input_stage": stage_name(NODE, OTHER), "input_token": OTHER, "input_size": 3}
+    if fingerprint is not None:
+        payload["input_sha256"] = fingerprint
+    runner.store.workspace.open_managed_file.return_value = nullcontext(7)
+    monkeypatch.setattr(jobs.os, "read", Mock(return_value=b"abc"))
+    with pytest.raises(StorageIOError, match="fingerprint"):
+        await runner._copy_input(claim(payload=payload))
+    runner.store.stage_inline.assert_not_called()
 
 
 async def test_delete_files_validate_before_unlink_and_finalization(runner, monkeypatch):
@@ -598,6 +615,18 @@ async def test_pressure_deferral_keeps_lease_when_control_unavailable(runner, fa
     assert runner.last_error is None
 
 
+async def test_deferral_discards_settled_attempt_before_releasing_lease(runner, monkeypatch):
+    runner._stop_event.set()
+    capability = claim()
+    capability.stage_created = True
+    calls = []
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job()))
+    runner.store.discard_stage.side_effect = lambda *_args: calls.append("discard")
+    monkeypatch.setattr(jobs.JobStore, "release", lambda *_args: calls.append("release"))
+    await runner._defer_claim(capability, BusyError("pressure"))
+    assert calls == ["discard", "release"]
+
+
 @pytest.mark.parametrize(("stopping", "lost"), [(True, False), (False, True)])
 async def test_pressure_backoff_shutdown_and_lost_claim_do_not_release(runner, stopping, lost):
     runner._stop_event.set()
@@ -613,3 +642,37 @@ async def test_start_does_not_hide_permanent_sampling_failure(runner, monkeypatc
     with pytest.raises(StorageIOError):
         await runner.start()
     assert not runner._tasks
+
+
+@pytest.mark.parametrize("condition", ["expired", "input", "unlink_failed"])
+async def test_deferral_preserves_input_or_stale_stage_and_allows_recovery(runner, monkeypatch, condition):
+    runner._stop_event.set()
+    capability = claim()
+    capability.stage_created = True
+    if condition == "expired":
+        capability.expires_at = 0
+    if condition == "input":
+        capability.payload["input_token"] = capability.token
+    if condition == "unlink_failed":
+        runner.store.discard_stage.side_effect = OSError("disk")
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job()))
+    release = Mock()
+    monkeypatch.setattr(jobs.JobStore, "release", release)
+    await runner._defer_claim(capability, BusyError("pressure"))
+    assert capability.stage_created
+    if condition != "unlink_failed":
+        runner.store.discard_stage.assert_not_called()
+    release.assert_called_once()
+
+
+async def test_completion_counter_refresh_does_not_refresh_old_expensive_sample(runner, monkeypatch):
+    runner._retention_due = runner._retention_sample_due = float("inf")
+    runner._retention_cache.update(available=True, cached_at=1, terminal_counts={"completed": 0, "failed_cancelled": 0})
+    monkeypatch.setattr(jobs.JobRetention, "counts", Mock(return_value={"completed": 2, "failed_cancelled": 0}))
+    snapshot = Mock()
+    monkeypatch.setattr(jobs.JobRetention, "snapshot", snapshot)
+    await runner.retention_pass()
+    assert runner.retention_status()["terminal_counts"]["completed"] == 2
+    assert runner.retention_status()["cached_at"] == 1
+    assert runner.retention_status()["stale"]
+    snapshot.assert_not_called()

@@ -147,12 +147,12 @@ def admit_reindex(
     payload = request.model_dump(exclude_none=True)
     if request.all:
         active = connection.execute(
-            "SELECT uuid,payload FROM jobs WHERE kind='reindex' AND json_extract(payload,'$.all')=1 AND state IN ('queued','running')"
+            "SELECT uuid,payload,cancel_requested FROM jobs WHERE kind='reindex' AND json_extract(payload,'$.all')=1 AND state IN ('queued','running')"
         ).fetchone()
         if active is not None:
             active_payload = json.loads(active[1])
             active_payload.pop("_telemetry", None)
-            if active_payload != payload:
+            if active[2] or active_payload != payload:
                 raise ConflictError("FULL_REINDEX_ACTIVE")
             return {**JobStore.get(connection, active[0]), "reused": True, "status": "accepted"}
     _validate_targets(connection, request)

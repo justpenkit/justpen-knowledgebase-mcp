@@ -39,6 +39,18 @@ def test_newer_schema_is_rejected(tmp_path):
             runtime.connect()
 
 
+@pytest.mark.parametrize("replacement", [None, "CREATE INDEX jobs_active_lane ON jobs(state)"])
+def test_required_supporting_index_layout_is_checked_on_open(tmp_path, replacement):
+    config = ServerConfig(workspace_dir=tmp_path)
+    with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
+        with closing(runtime.connect()) as connection:
+            connection.execute("DROP INDEX jobs_active_lane")
+            if replacement is not None:
+                connection.execute(replacement)
+        with pytest.raises(ConfigurationError, match="supporting index"):
+            runtime.connect()
+
+
 def test_unique_identity_and_foreign_keys(tmp_path):
     config = ServerConfig(workspace_dir=tmp_path)
     with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:

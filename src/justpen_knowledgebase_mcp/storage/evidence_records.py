@@ -10,6 +10,7 @@ from ..errors import ConflictError
 from ..evidence import is_text_candidate
 from ..identity import format_timestamp
 from . import graph_sql
+from .fulltext import index_owner_active
 from .graph import require_ready, row_by_id
 from .jobs import Claim, JobStore
 
@@ -27,6 +28,7 @@ class EvidenceRecords:
         if row["cancel_requested"]:
             raise ConflictError("JOB_CANCELLED")
         existing = EvidenceRecords.check_existing(connection, claim, sha256)
+        deduplicated = existing is not None
         options = claim.payload
         now = time.time_ns() // 1000
         identifier = "e_" + sha256
@@ -58,6 +60,9 @@ class EvidenceRecords:
                 (existing["id"], options["source"], stamp, stamp),
             )
         warnings = list(options["warnings"])
+        active_index = index_owner_active(connection, existing["index_owner_job_id"])
+        if existing["index_state"] == "index_failed" and not active_index:
+            warnings.append("INDEX_REPAIR_QUEUED")
         for target in options["targets"]:
             owner = row_by_id(connection, target["kind"], target["id"])
             if owner is None:
@@ -76,16 +81,40 @@ class EvidenceRecords:
         connection.execute(
             "UPDATE jobs SET progress=json_remove(progress,'$.stage_token') WHERE uuid=?", (claim.job_id,)
         )
-        if existing["index_state"] in ("pending", "index_failed"):
+        if existing["index_state"] in ("pending", "index_failed") and not active_index:
             connection.execute("UPDATE jobs SET result=? WHERE uuid=?", (json.dumps(result), claim.job_id))
             JobStore.release(
                 connection,
                 claim,
-                {"bytes": byte_size, "chunks": 0, "awaiting_text_index": True, "evidence_id": identifier},
+                {
+                    "bytes": byte_size,
+                    "chunks": 0,
+                    "awaiting_text_index": True,
+                    "evidence_id": identifier,
+                    "deduplicated": deduplicated,
+                },
             )
         else:
             JobStore.finish(connection, claim, "completed", result)
         return result
+
+    @staticmethod
+    def finish_dedup(connection: apsw.Connection, claim: Claim, evidence_id: str) -> None:
+        """A concurrent index owner does not undo already committed raw dedup/linkage."""
+        job = JobStore.fence(connection, claim)
+        if job["cancel_requested"]:
+            raise ConflictError("JOB_CANCELLED")
+        existing = row_by_id(connection, "evidence", evidence_id)
+        if existing is None:
+            raise ConflictError("evidence disappeared")
+        require_ready(connection, "evidence", existing)
+        result = {
+            **claim.result,
+            "effective_media_type": existing["media_type"],
+            "index_state": existing["index_state"],
+            "incomplete": bool(existing["incomplete"]),
+        }
+        JobStore.finish(connection, claim, "completed", result)
 
     @staticmethod
     def check_existing(connection: apsw.Connection, claim: Claim, sha256: str) -> dict[str, Any] | None:

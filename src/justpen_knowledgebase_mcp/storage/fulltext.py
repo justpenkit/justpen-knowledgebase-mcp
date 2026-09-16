@@ -209,6 +209,18 @@ class IndexOwner:
     byte_size: int
 
 
+def index_owner_active(connection: apsw.Connection, owner: int | None) -> bool:
+    """Queued reservations and live claims retain item ownership across steps."""
+    return (
+        owner is not None
+        and connection.execute(
+            "SELECT 1 FROM jobs WHERE id=? AND (state='queued' OR (state='running' AND lease_expires_at>?))",
+            (owner, time.time()),
+        ).get
+        is not None
+    )
+
+
 def claim_item(connection: apsw.Connection, uuid: str, job_id: int, claim_token: str) -> IndexOwner:
     """Claim a ready item unless another unexpired job actively owns this generation."""
     row = connection.execute(
@@ -223,15 +235,10 @@ def claim_item(connection: apsw.Connection, uuid: str, job_id: int, claim_token:
         if pending is None:
             raise NotFoundError("evidence not found")
         graph.require_ready(connection, "evidence", pending)
-    if owner is not None and owner != job_id:
+    if owner != job_id and index_owner_active(connection, owner):
         # The job ID reserves the item across queued/reclaimed lease transitions.
         # The item token fences writes only; it may still belong to an older attempt.
-        active = connection.execute(
-            "SELECT 1 FROM jobs WHERE id=? AND (state='queued' OR (state='running' AND lease_expires_at>?))",
-            (owner, time.time()),
-        ).get
-        if active:
-            raise ConflictError("INDEX_BUSY")
+        raise ConflictError("INDEX_BUSY")
     connection.execute(
         "UPDATE evidence SET index_owner_job_id=?,index_owner_token=?,index_state='pending',incomplete=1 WHERE id=?",
         (job_id, claim_token, identifier),

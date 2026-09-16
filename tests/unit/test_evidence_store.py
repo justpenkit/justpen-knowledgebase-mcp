@@ -162,7 +162,12 @@ def test_canonical_publish_records_provenance_targets_and_next_phase(monkeypatch
     )
     monkeypatch.setattr(evidence_records.JobStore, "fence", Mock(return_value=job()))
     record = owner(
-        uuid=EVIDENCE, media_type="text/plain", encoding="utf-8", index_state=state, incomplete=int(state == "pending")
+        uuid=EVIDENCE,
+        media_type="text/plain",
+        encoding="utf-8",
+        index_state=state,
+        incomplete=int(state == "pending"),
+        index_owner_job_id=None,
     )
     monkeypatch.setattr(evidence_records, "row_by_id", Mock(side_effect=[None, record, owner(), None]))
     finish, release = Mock(), Mock()

@@ -54,14 +54,18 @@ def test_initialization_checks_contract_before_commit(exists):
     value = guard()
     responses = [cursor(), cursor(value=exists)]
     if not exists:
-        responses.extend([cursor(), cursor()])
-    responses.extend([cursor(value=expected(value)), cursor(value=WorkspacePolicy().model_dump_json()), cursor()])
+        responses.extend([cursor(), *[cursor() for _ in schema.REQUIRED_INDEXES], cursor()])
+    responses.append(cursor(value=expected(value)))
+    responses.extend(cursor(value=definition) for definition in schema.REQUIRED_INDEXES.values())
+    responses.extend([cursor(value=WorkspacePolicy().model_dump_json()), cursor()])
     db = database(*responses)
     value.initialize(db)
     assert db.execute.call_args_list[0].args == ("BEGIN IMMEDIATE",)
     assert db.execute.call_args.args == ("COMMIT",)
     if not exists:
-        settings = db.execute.call_args_list[3].args[1]
+        settings = next(
+            call.args[1] for call in db.execute.call_args_list if call.args[0].startswith("INSERT INTO settings")
+        )
         assert settings[1:5] == expected(value)[:4]
         assert json.loads(settings[-1]) == {"completed": 0, "failed_cancelled": 0}
 

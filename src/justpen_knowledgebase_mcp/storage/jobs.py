@@ -23,6 +23,9 @@ if TYPE_CHECKING:
 LEASE_SECONDS = 30
 HEARTBEAT_SECONDS = 5
 TERMINAL = frozenset(("completed", "failed", "cancelled"))
+CLAIM_BATCH_SQL = """SELECT id,uuid,state,lease_expires_at FROM jobs
+WHERE lane=? AND kind=? AND purge_pending=0 AND state IN ('queued','running')
+AND id>? AND id<=? ORDER BY id LIMIT ?"""
 PENDING_SQL = {
     "nodes": "SELECT id,uuid,delete_job_id,delete_cascade,delete_requested_at FROM nodes WHERE lifecycle='delete_pending' AND id>? ORDER BY id LIMIT 100",
     "relations": "SELECT id,uuid,delete_job_id,delete_cascade,delete_requested_at FROM relations WHERE lifecycle='delete_pending' AND id>? ORDER BY id LIMIT 100",
@@ -49,6 +52,7 @@ class Claim:
     cancelled: bool = False
     lost: bool = False
     result: dict[str, Any] = field(default_factory=dict[str, Any])
+    stage_created: bool = False
 
     def check(self) -> None:
         """Bound synchronous I/O by the last successfully renewed lease."""
@@ -112,6 +116,31 @@ class JobStore:
         ).get
         if value is None:
             return None
+        return JobStore._claim_selected(connection, value, now)
+
+    @staticmethod
+    def claim_batch(
+        connection: apsw.Connection, lane: str, kind: str, after_id: int, *, now: float | None = None
+    ) -> tuple[Claim | None, int]:
+        """Examine at most 100 active IDs, wrapping once without ordering by heartbeats."""
+        now = time.time() if now is None else now
+        remaining, after = 100, after_id
+        ranges = [(after_id, 2**63 - 1)]
+        if after_id:
+            ranges.append((0, after_id))
+        for lower, upper in ranges:
+            rows = list(connection.execute(CLAIM_BATCH_SQL, (lane, kind, lower, upper, remaining)))
+            for identifier, job_id, state, expires in rows:
+                after = identifier
+                if state == "queued" or (expires is not None and expires <= now):
+                    return JobStore._claim_selected(connection, job_id, now), after
+            remaining -= len(rows)
+            if not remaining:
+                break
+        return None, after
+
+    @staticmethod
+    def _claim_selected(connection: apsw.Connection, value: str, now: float) -> Claim:
         token = str(uuid4())
         expires = now + LEASE_SECONDS
         connection.execute(
@@ -219,9 +248,10 @@ class JobStore:
         row = job_row(connection, job_id)
         payload = json.loads(row["payload"])
         result = json.loads(row["result"])
+        pending_owner = row["state"] in TERMINAL and protected(connection, job_id)
         retention_protected = (
             row["state"] not in TERMINAL
-            or protected(connection, job_id)
+            or pending_owner
             or (row["lease_expires_at"] is not None and row["lease_expires_at"] > time.time())
         )
         policy = json.loads(connection.execute("SELECT policy FROM settings WHERE singleton=1").get)
@@ -247,7 +277,7 @@ class JobStore:
                 "index_state", "pending" if is_text_candidate(payload.get("media_type", "")) else "not_applicable"
             ),
             "incomplete": result.get("incomplete", is_text_candidate(payload.get("media_type", ""))),
-            "needs_attention": row["state"] == "failed" and protected(connection, job_id),
+            "needs_attention": row["state"] == "failed" and pending_owner,
             "purge_pending": bool(row["purge_pending"]),
             "warnings": payload.get("warnings", []),
             **result,

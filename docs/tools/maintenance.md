@@ -49,6 +49,17 @@ fields.
 job record. A retry resumes eligible failed/cancelled work from its supported
 checkpoint; copied evidence restarts at byte 0.
 
+Cancelling an already terminal non-delete job is idempotent and returns its
+unchanged state. Delete intent and purge protection still reject cancellation.
+`attempts` counts durable claims/steps, including normal multi-step work,
+pressure deferrals and lease takeover; it is not a count of user retries.
+
+Retention preserves canonical evidence, sources and links. A published blob
+without a canonical owner is cleaned only under its digest lock after proving
+that no nonpurging job can still use it. Uncertain ownership retains the job's
+locator and reports attention; malformed ownership metadata can delay orphan
+blob cleanup while unrelated metadata and staging cleanup continue.
+
 **Errors:** `INVALID` for action/field combinations; `NOT_FOUND` after normal
 retention pruning; `CONFLICT` for ineligible cancellation/retry, including
 immutable pending delete intent and a row already being purged; `BUSY`, `LIMIT`,

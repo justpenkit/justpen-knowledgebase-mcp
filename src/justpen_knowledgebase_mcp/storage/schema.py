@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from ..catalog import CATALOG_FINGERPRINT, CATALOG_VERSION
 from ..config import WorkspacePolicy
 from ..errors import ConfigurationError
+from .job_ownership import BLOB_LOCATOR_KEY
 
 if TYPE_CHECKING:
     import apsw
@@ -19,6 +20,11 @@ if TYPE_CHECKING:
 
 SCHEMA_VERSION = 1
 INDEX_FORMAT_VERSION = 1
+
+REQUIRED_INDEXES = {
+    "jobs_active_lane": "CREATE INDEX jobs_active_lane ON jobs(lane,kind,id) WHERE purge_pending=0 AND state IN ('queued','running')",
+    "jobs_blob_locator": f"CREATE INDEX jobs_blob_locator ON jobs(({BLOB_LOCATOR_KEY})) WHERE purge_pending=0",
+}
 
 DDL = """
 CREATE TABLE settings (
@@ -204,6 +210,8 @@ class SchemaGuard:
             exists = connection.execute("SELECT 1 FROM sqlite_schema WHERE name='settings'").get
             if not exists:
                 connection.execute(DDL + _property_ddl("node") + _property_ddl("relation") + _intent_ddl())
+                for definition in REQUIRED_INDEXES.values():
+                    connection.execute(definition)
                 connection.execute(
                     "INSERT INTO settings(singleton,workspace_id,schema_version,catalog_version,"
                     "catalog_fingerprint,index_format_version,managed_paths,policy,terminal_job_counts) VALUES(1,?,?,?,?,?,?,?,?)",
@@ -219,9 +227,18 @@ class SchemaGuard:
                     ),
                 )
             self.check(connection)
+            self.check_indexes(connection)
             self.policy(connection)
             connection.execute("COMMIT")
         except BaseException:
             if not connection.get_autocommit():
                 connection.execute("ROLLBACK")
             raise
+
+    @staticmethod
+    def check_indexes(connection: apsw.Connection) -> None:
+        """Unreleased layouts require explicit offline upgrade, never silent DDL repair."""
+        for name, expected in REQUIRED_INDEXES.items():
+            actual = connection.execute("SELECT sql FROM sqlite_schema WHERE type='index' AND name=?", (name,)).get
+            if not isinstance(actual, str) or " ".join(actual.split()) != " ".join(expected.split()):
+                raise ConfigurationError("unsupported supporting index layout; offline workspace upgrade required")

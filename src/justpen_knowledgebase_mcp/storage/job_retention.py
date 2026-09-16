@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 import time
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypedDict, cast
+from uuid import UUID
 
 from ..errors import ConflictError, StorageIOError
 from .evidence import stage_name
+from .job_ownership import OTHER_BLOB_OWNER_SQL
 from .jobs import TERMINAL, adjust_terminal_count, job_row, protected
 
 if TYPE_CHECKING:
@@ -23,6 +26,7 @@ class RetentionBatch(TypedDict):
     examined: int
     pruned: int
     marked: int
+    invalid: int
 
 
 CANDIDATES_SQL = """SELECT id,uuid,state,finished_at FROM (
@@ -37,7 +41,7 @@ PROTECTED_COUNT_SQL = """WITH pending(job_id) AS (
  SELECT delete_job_id FROM nodes WHERE lifecycle='delete_pending'
  UNION SELECT delete_job_id FROM relations WHERE lifecycle='delete_pending'
  UNION SELECT delete_job_id FROM evidence WHERE lifecycle='delete_pending'
-) SELECT count(*) FROM pending JOIN jobs ON jobs.uuid=pending.job_id
+) SELECT count(*) FROM pending CROSS JOIN jobs ON jobs.uuid=pending.job_id
 WHERE jobs.state IN ('completed','failed','cancelled')"""
 
 
@@ -53,20 +57,73 @@ def _eligible(connection: apsw.Connection, row: dict[str, Any], now: float) -> b
     )
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate ownership metadata key")
+        result[key] = value
+    return result
+
+
+def _reject_constant(_value: str) -> NoReturn:
+    raise ValueError("nonfinite ownership metadata")
+
+
+def _ownership(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Malformed locators are diagnostic metadata, never deletion authority."""
+    try:
+        _canonical_uuid(row["uuid"])
+        payload = json.loads(row["payload"], object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+        progress = json.loads(row["progress"], object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+    except (TypeError, ValueError) as exc:
+        raise StorageIOError("IO_ERROR: malformed job ownership metadata") from exc
+    if not isinstance(payload, dict) or not isinstance(progress, dict):
+        raise StorageIOError("IO_ERROR: malformed job ownership metadata")
+    return cast("dict[str, Any]", payload), cast("dict[str, Any]", progress)
+
+
+def _canonical_uuid(value: object) -> str:
+    if not isinstance(value, str):
+        raise StorageIOError("IO_ERROR: malformed job ownership token")
+    try:
+        canonical = str(UUID(value))
+    except ValueError as exc:
+        raise StorageIOError("IO_ERROR: malformed job ownership token") from exc
+    if canonical != value:
+        raise StorageIOError("IO_ERROR: malformed job ownership token")
+    return canonical
+
+
+def _owned_token(job_id: str, token: object) -> str:
+    return stage_name(_canonical_uuid(job_id), _canonical_uuid(token))
+
+
 def _recorded_tokens(row: dict[str, Any]) -> list[str]:
-    payload, progress = json.loads(row["payload"]), json.loads(row["progress"])
+    payload, progress = _ownership(row)
     tokens: list[str] = []
+    if payload.get("input_stage") is not None and payload.get("input_token") is None:
+        raise StorageIOError("IO_ERROR: recorded input ownership mismatch")
     if payload.get("input_token") is not None:
         token = payload["input_token"]
-        if stage_name(row["uuid"], token) != payload.get("input_stage"):
+        if _owned_token(row["uuid"], token) != payload.get("input_stage"):
             raise StorageIOError("IO_ERROR: recorded input ownership mismatch")
         tokens.append(token)
     if progress.get("stage_token") is not None:
         token = progress["stage_token"]
-        stage_name(row["uuid"], token)
+        _owned_token(row["uuid"], token)
         if token not in tokens:
             tokens.append(token)
     return tokens
+
+
+def recorded_blob(row: dict[str, Any]) -> str | None:
+    """Validate the recorded digest before it enters any filesystem operation."""
+    _payload, progress = _ownership(row)
+    digest = progress.get("verified_sha256")
+    if "verified_sha256" in progress and (not isinstance(digest, str) or re.fullmatch("[0-9a-f]{64}", digest) is None):
+        raise StorageIOError("IO_ERROR: malformed published blob locator")
+    return digest
 
 
 def _prune(connection: apsw.Connection, row: dict[str, Any]) -> None:
@@ -104,7 +161,7 @@ class JobRetention:
         for state, count in connection.execute("SELECT state,count(*) FROM jobs WHERE purge_pending=1 GROUP BY state"):
             pending[_group(state)] += count
         rows = list(connection.execute(CANDIDATES_SQL, cursor * 3))
-        pruned = marked = 0
+        pruned = marked = invalid = 0
         for _identifier, job_id, state, finished in rows:
             group = _group(state)
             excess = counts[group] - pending[group] > getattr(policy, group + "_retention_count")
@@ -114,8 +171,13 @@ class JobRetention:
             row = job_row(connection, job_id)
             if row["purge_pending"] or not _eligible(connection, row, now):
                 continue
-            tokens = _recorded_tokens(row)
-            if tokens:
+            try:
+                tokens = _recorded_tokens(row)
+                digest = recorded_blob(row)
+            except StorageIOError:
+                invalid += 1
+                continue
+            if tokens or digest is not None:
                 connection.execute(
                     "UPDATE jobs SET purge_pending=1,purge_tokens=?,updated_at=? WHERE uuid=?",
                     (json.dumps(tokens), now, job_id),
@@ -127,7 +189,7 @@ class JobRetention:
                 counts[group] -= 1
                 pruned += 1
         after = (float(rows[-1][3]), int(rows[-1][0])) if len(rows) == 100 else (0.0, 0)
-        return {"cursor": after, "examined": len(rows), "pruned": pruned, "marked": marked}
+        return {"cursor": after, "examined": len(rows), "pruned": pruned, "marked": marked, "invalid": invalid}
 
     @staticmethod
     def next_job(connection: apsw.Connection, after_id: int = 0) -> tuple[int, str] | None:
@@ -143,8 +205,45 @@ class JobRetention:
         row = job_row(connection, job_id)
         if not row["purge_pending"] or not _eligible(connection, row, time.time()):
             raise ConflictError("JOB_RETENTION_PROTECTED")
-        tokens = json.loads(row["purge_tokens"])
-        return tokens[0] if tokens else None
+        try:
+            tokens = json.loads(row["purge_tokens"])
+        except (TypeError, ValueError) as exc:
+            raise StorageIOError("IO_ERROR: malformed purge ownership metadata") from exc
+        recorded = _recorded_tokens(row)
+        if not isinstance(tokens, list):
+            raise StorageIOError("IO_ERROR: malformed purge ownership metadata")
+        values = cast("list[object]", tokens)
+        validated = [token for token in values if isinstance(token, str) and token in recorded]
+        if len(values) > 2 or len(validated) != len(values):
+            raise StorageIOError("IO_ERROR: malformed purge ownership metadata")
+        return validated[0] if validated else None
+
+    @staticmethod
+    def next_blob(connection: apsw.Connection, job_id: str) -> str | None:
+        """Retain the locator until canonical ownership or orphan disposal is acknowledged."""
+        row = job_row(connection, job_id)
+        if not row["purge_pending"] or not _eligible(connection, row, time.time()):
+            raise ConflictError("JOB_RETENTION_PROTECTED")
+        _recorded_tokens(row)
+        return recorded_blob(row)
+
+    @staticmethod
+    def blob_disposable(connection: apsw.Connection, job_id: str, digest: str) -> bool:
+        """Under EX digest bucket, prove absence of canonical and retryable peer ownership."""
+        if JobRetention.next_blob(connection, job_id) != digest:
+            raise ConflictError("PURGE_BLOB_CHANGED")
+        if connection.execute("SELECT 1 FROM evidence WHERE sha256=?", (digest,)).get is not None:
+            return False
+        if connection.execute(OTHER_BLOB_OWNER_SQL, (digest, job_id)).get is not None:
+            raise ConflictError("PUBLISHED_BLOB_OWNERSHIP_UNRESOLVED")
+        return True
+
+    @staticmethod
+    def acknowledge_blob(connection: apsw.Connection, job_id: str, digest: str) -> None:
+        """Caller retains the digest bucket through unlink and this durable acknowledgement."""
+        if JobRetention.next_blob(connection, job_id) != digest:
+            raise ConflictError("PURGE_BLOB_CHANGED")
+        connection.execute("UPDATE jobs SET progress=json_remove(progress,'$.verified_sha256') WHERE uuid=?", (job_id,))
 
     @staticmethod
     def acknowledge(connection: apsw.Connection, job_id: str, token: str) -> None:
@@ -160,6 +259,8 @@ class JobRetention:
             return False
         if JobRetention.next_file(connection, job_id) is not None:
             return False
+        if recorded_blob(job_row(connection, job_id)) is not None:
+            return False
         _prune(connection, job_row(connection, job_id))
         return True
 
@@ -172,7 +273,7 @@ class JobRetention:
         payload, result = json.loads(row["payload"]), json.loads(row["result"])
         if not row["purge_pending"] and payload.get("input_token") == token and "evidence_id" in result:
             connection.execute(
-                "UPDATE jobs SET payload=json_remove(payload,'$.input_token','$.input_stage','$.input_size') WHERE uuid=?",
+                "UPDATE jobs SET payload=json_remove(payload,'$.input_token','$.input_stage','$.input_size','$.input_sha256') WHERE uuid=?",
                 (job_id,),
             )
 

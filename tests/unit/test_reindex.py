@@ -80,9 +80,9 @@ async def test_index_failure_preserves_generation_fence(monkeypatch, error, stat
 def test_full_admission_reuses_matching_and_rejects_different_selection(monkeypatch):
     request = reindex.ReindexRequest(kind="nodes", all=True)
     monkeypatch.setattr(reindex.JobStore, "get", Mock(return_value={"lane": "bulk"}))
-    db = database(cursor(rows=[(NODE, json.dumps(request.model_dump(exclude_none=True)))]))
+    db = database(cursor(rows=[(NODE, json.dumps(request.model_dump(exclude_none=True)), 0)]))
     assert reindex.admit_reindex(db, request, OTHER)["reused"]
-    db = database(cursor(rows=[(NODE, '{"kind":"evidence","all":true}')]))
+    db = database(cursor(rows=[(NODE, '{"kind":"evidence","all":true}', 0)]))
     with pytest.raises(ConflictError, match="FULL_REINDEX_ACTIVE"):
         reindex.admit_reindex(db, request, OTHER)
     insert = Mock()

@@ -173,6 +173,16 @@ def test_public_get_filters_internal_progress_and_retention(monkeypatch):
     assert "secret" not in json.dumps(result)
 
 
+def test_failed_job_get_reuses_one_pending_owner_observation(monkeypatch):
+    monkeypatch.setattr(jobs, "job_row", Mock(return_value=job(state="failed", lease_expires_at=None)))
+    protection = Mock(return_value=False)
+    monkeypatch.setattr(jobs, "protected", protection)
+    value = jobs.JobStore.get(database(cursor(value='{"failed_cancelled_retention_seconds":10}')), NODE)
+    assert not value["retention_protected"]
+    assert not value["needs_attention"]
+    protection.assert_called_once_with(protection.call_args.args[0], NODE)
+
+
 @pytest.mark.parametrize(
     ("rows", "step", "expected"),
     [
@@ -213,3 +223,23 @@ def test_finalize_evidence_after_unlink(monkeypatch, remaining):
     assert finish.call_count == int(not remaining)
     assert release.call_count == int(remaining)
     assert db.execute.call_args_list[0].args[1] == (1,)
+
+
+def test_rotating_claim_wraps_once_and_skips_unexpired_lease(monkeypatch):
+    chosen = claim()
+    select = Mock(return_value=chosen)
+    monkeypatch.setattr(jobs.JobStore, "_claim_selected", select)
+    db = database(cursor(rows=[]), cursor(rows=[(1, NODE, "running", 99), (2, OTHER, "queued", None)]))
+    assert jobs.JobStore.claim_batch(db, "bulk", "reindex", 50, now=10) == (chosen, 2)
+    select.assert_called_once_with(db, OTHER, 10)
+    assert db.execute.call_count == 2
+    assert db.execute.call_args.args[1] == ("bulk", "reindex", 0, 50, 100)
+
+
+def test_rotating_claim_stops_after_hundred_live_leases(monkeypatch):
+    select = Mock()
+    monkeypatch.setattr(jobs.JobStore, "_claim_selected", select)
+    db = database(cursor(rows=[(index, NODE, "running", 99) for index in range(1, 101)]))
+    assert jobs.JobStore.claim_batch(db, "bulk", "reindex", 0, now=10) == (None, 100)
+    select.assert_not_called()
+    assert db.execute.call_count == 1

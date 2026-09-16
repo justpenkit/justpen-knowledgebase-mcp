@@ -14,6 +14,11 @@ warnings, attempts, and retention state. SHA-256 identity is calculated from the
 exact stored bytes. Missing targets produce `TARGET_NOT_FOUND` warnings while
 preserving the evidence.
 
+Deduplication can complete with pending/incomplete coverage while another job
+owns the text index. Repairing an unowned failed index emits
+`INDEX_REPAIR_QUEUED`. `attempts` counts durable execution steps and claims,
+including deferrals and takeover.
+
 **Errors:** `INVALID` for source/base64/encoding/media/target rules;
 `PATH_DENIED` for containment or unsafe files;
 `CONFLICT` for incompatible metadata on existing bytes or `RECORD_DELETING`;
@@ -24,6 +29,12 @@ defaults to `application/octet-stream`, emits
 `MEDIA_TYPE_DEFAULTED_TEXT_INDEX_SKIPPED`, and stores raw-only evidence. A path
 or inline body no larger than 256 KiB uses the short lane; a larger path uses the
 bulk lane. Accepted work survives request disconnect.
+
+Inline admission records size and SHA-256 before acceptance and checks both
+before copying the staged input. Missing or mismatched fingerprints fail with
+`IO_ERROR` and retain the input for diagnosis. Inline jobs accepted by earlier
+unreleased prototypes without fingerprints must be submitted again; their
+original bytes cannot be inferred safely.
 
 ## `kb_read_evidence`
 

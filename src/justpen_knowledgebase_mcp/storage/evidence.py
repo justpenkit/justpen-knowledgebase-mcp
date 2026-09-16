@@ -247,6 +247,10 @@ class EvidenceStore:
         """Caller holds exclusive bucket and revalidated pending intent authority."""
         self.workspace.unlink_managed_file(self.workspace.evidence / self.blob_name(sha256))
 
+    def unlink_orphan_blob(self, sha256: str) -> None:
+        """Caller holds EX bucket plus a purge-fenced proof of no canonical/peer owner."""
+        self.workspace.unlink_managed_file(self.workspace.evidence / self.blob_name(sha256))
+
     def read_slice(self, sha256: str, size: int, encoding: str, request: ReadEvidenceRequest) -> dict[str, Any]:
         """Read an exact source-byte range after caller's shared-lock ready check."""
         if request.offset > size:
