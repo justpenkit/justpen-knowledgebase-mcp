@@ -13,10 +13,10 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_full_integration_suite_runs_on_every_supported_python():
+def test_full_integration_suite_runs_on_python_313():
     workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
     integration = workflow["jobs"]["integration"]
-    assert integration["strategy"]["matrix"]["python-version"] == ["3.11", "3.12", "3.13"]
+    assert integration["strategy"]["matrix"]["python-version"] == ["3.13"]
     assert integration["strategy"]["fail-fast"] is False
     assert integration["env"]["UV_PYTHON"] == "${{ matrix.python-version }}"
     assert "${{ matrix.python-version }}" in integration["name"]

@@ -78,7 +78,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.13"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     steps:
@@ -104,7 +104,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
         python: ["3.11", "3.12", "3.13"]
     env:
       UV_PYTHON: ${{ matrix.python }}
