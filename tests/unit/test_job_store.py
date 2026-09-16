@@ -4,7 +4,6 @@ import json
 from unittest.mock import Mock
 
 import pytest
-from pydantic import ValidationError
 
 from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, NotFoundError, StorageIOError
 from justpen_knowledgebase_mcp.storage import evidence_records, jobs
@@ -18,7 +17,7 @@ def test_claim_empty_and_reclaim_fresh_capability(monkeypatch):
     row = job(
         payload='{"source":"secret"}', progress='{"bytes":8}', result='{"evidence_id":"existing"}', cancel_requested=1
     )
-    db = database(cursor(value=NODE), cursor(), cursor(record=row))
+    db = database(cursor(rows=[(NODE,)]), cursor(record=row), cursor())
     selected = jobs.JobStore.claim(db, "short", "ingest", now=10)
     assert selected is not None
     assert selected.job_id == NODE
@@ -27,7 +26,7 @@ def test_claim_empty_and_reclaim_fresh_capability(monkeypatch):
     assert selected.cancelled
     assert selected.progress == {"bytes": 8}
     assert selected.result == {"evidence_id": "existing"}
-    assert db.execute.call_args_list[1].args[1][0] == selected.token
+    assert db.execute.call_args_list[2].args[1][0] == selected.token
     with pytest.raises(NotFoundError):
         jobs.job_row(database(cursor()), NODE)
 
@@ -315,8 +314,33 @@ def test_invalid_progress_counters_return_attention_without_mutation(monkeypatch
 
 
 @pytest.mark.parametrize("patch", [{"payload": '{"warnings":null}'}, {"result": '{"warnings":null}'}])
-def test_invalid_progress_fallback_does_not_hide_unrelated_result_errors(monkeypatch, patch):
+def test_invalid_progress_fallback_excludes_all_untrusted_result_fields(monkeypatch, patch):
     row = job(progress='{"bytes":-1}', **patch)
     monkeypatch.setattr(jobs, "job_row", Mock(return_value=row))
-    with pytest.raises(ValidationError):
-        jobs.JobStore.get(database(cursor(value="{}")), NODE)
+    result = jobs.JobStore.get(database(cursor(value="{}")), NODE)
+    assert result["reason"] == "JOB_METADATA_INVALID"
+    assert result["warnings"] == []
+    assert result["retention_protected"]
+
+
+@pytest.mark.parametrize("patch", [{"payload": "nope"}, {"result": "[]"}, {"progress": "null"}])
+def test_retry_validation_precedes_all_full_reindex_writes(monkeypatch, patch):
+    monkeypatch.setattr(jobs, "job_row", Mock(return_value=job(state="failed", kind="reindex", **patch)))
+    db = database()
+    with pytest.raises(ConflictError, match="JOB_METADATA_INVALID"):
+        jobs.JobStore.retry(db, NODE)
+    db.execute.assert_not_called()
+
+
+def test_quarantine_adjusts_count_only_when_a_candidate_transitioned():
+    db = database()
+    db.changes.return_value = 0
+    jobs.isolate_failed_metadata(db, job(), 10)
+    assert db.execute.call_count == 1
+
+
+def test_rotating_claim_continues_past_isolated_row(monkeypatch):
+    chosen = claim()
+    monkeypatch.setattr(jobs.JobStore, "_claim_selected", Mock(side_effect=[None, chosen]))
+    db = database(cursor(rows=[(1, NODE, "queued", None), (2, OTHER, "queued", None)]))
+    assert jobs.JobStore.claim_batch(db, "short", "ingest", 0, now=10) == (chosen, 2)

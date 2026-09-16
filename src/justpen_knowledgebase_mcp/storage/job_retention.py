@@ -9,7 +9,7 @@ from uuid import UUID
 
 from ..errors import ConflictError, StorageIOError
 from .evidence import stage_name
-from .job_ownership import OTHER_BLOB_OWNER_SQL, ownership_object, row_progress
+from .job_ownership import OTHER_BLOB_OWNER_SQL, row_metadata
 from .jobs import TERMINAL, adjust_terminal_count, job_row, protected
 
 if TYPE_CHECKING:
@@ -28,12 +28,12 @@ class RetentionBatch(TypedDict):
     invalid: int
 
 
-CANDIDATES_SQL = """SELECT id,uuid,state,finished_at FROM (
- SELECT * FROM (SELECT id,uuid,state,finished_at FROM jobs WHERE state='completed' AND (finished_at,id)>(?,?) ORDER BY finished_at,id LIMIT 100)
+CANDIDATES_SQL = """SELECT id,uuid,state,finished_at,error_code FROM (
+ SELECT * FROM (SELECT id,uuid,state,finished_at,error_code FROM jobs WHERE state='completed' AND (finished_at,id)>(?,?) ORDER BY finished_at,id LIMIT 100)
  UNION ALL
- SELECT * FROM (SELECT id,uuid,state,finished_at FROM jobs WHERE state='failed' AND (finished_at,id)>(?,?) ORDER BY finished_at,id LIMIT 100)
+ SELECT * FROM (SELECT id,uuid,state,finished_at,error_code FROM jobs WHERE state='failed' AND (finished_at,id)>(?,?) ORDER BY finished_at,id LIMIT 100)
  UNION ALL
- SELECT * FROM (SELECT id,uuid,state,finished_at FROM jobs WHERE state='cancelled' AND (finished_at,id)>(?,?) ORDER BY finished_at,id LIMIT 100)
+ SELECT * FROM (SELECT id,uuid,state,finished_at,error_code FROM jobs WHERE state='cancelled' AND (finished_at,id)>(?,?) ORDER BY finished_at,id LIMIT 100)
 ) ORDER BY finished_at,id LIMIT 100"""
 
 PROTECTED_COUNT_SQL = """WITH pending(job_id) AS (
@@ -59,7 +59,10 @@ def _eligible(connection: apsw.Connection, row: dict[str, Any], now: float) -> b
 def _ownership(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Malformed metadata is diagnostic state, never deletion authority."""
     _canonical_uuid(row["uuid"])
-    return ownership_object(row["payload"]), row_progress(row)
+    if row.get("error_code") == "JOB_METADATA_INVALID":
+        raise StorageIOError("IO_ERROR: JOB_METADATA_INVALID")
+    payload, progress, _result = row_metadata(row)
+    return payload, progress
 
 
 def _canonical_uuid(value: object) -> str:
@@ -138,7 +141,10 @@ class JobRetention:
             pending[_group(state)] += count
         rows = list(connection.execute(CANDIDATES_SQL, cursor * 3))
         pruned = marked = invalid = 0
-        for _identifier, job_id, state, finished in rows:
+        for _identifier, job_id, state, finished, error_code in rows:
+            if error_code == "JOB_METADATA_INVALID":
+                invalid += 1
+                continue
             group = _group(state)
             excess = counts[group] - pending[group] > getattr(policy, group + "_retention_count")
             expired = finished + getattr(policy, group + "_retention_seconds") <= now
@@ -247,7 +253,8 @@ class JobRetention:
         if connection.execute("SELECT 1 FROM jobs WHERE uuid=?", (job_id,)).get is None:
             return
         row = job_row(connection, job_id)
-        payload, result = json.loads(row["payload"]), json.loads(row["result"])
+        payload, _progress = _ownership(row)
+        _payload, _decoded, result = row_metadata(row)
         if not row["purge_pending"] and payload.get("input_token") == token and "evidence_id" in result:
             connection.execute(
                 "UPDATE jobs SET payload=json_remove(payload,'$.input_token','$.input_stage','$.input_size','$.input_sha256') WHERE uuid=?",

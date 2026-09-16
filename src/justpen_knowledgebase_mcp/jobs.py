@@ -37,11 +37,11 @@ from .reindex import index_evidence, reindex_step
 from .storage.evidence import EvidenceStore, StagedEvidence, job_bucket, stage_name
 from .storage.evidence_records import EvidenceRecords
 from .storage.graph import require_ready, row_by_id
-from .storage.job_ownership import row_progress
+from .storage.job_ownership import failure_object, row_progress
 from .storage.job_recovery import StageScan, recover_intents, staging_disposable
 from .storage.job_retention import JobRetention
 from .storage.jobs import HEARTBEAT_SECONDS, TERMINAL, Claim, JobStore
-from .storage.worker import OperationToken
+from .storage.worker import OperationToken, OwnerOutcome
 from .telemetry.context import capture_job_context
 from .telemetry.events import TelemetryEvents
 
@@ -397,16 +397,18 @@ class JobRunner:
                 else (["ingest", "cleanup"] if previous == "cleanup" else ["cleanup", "ingest"])
             )
             handled = False
-            try:
+            outcome = OwnerOutcome()
+            with outcome:
                 for category in classes:
                     if await self._category_step(lane, category):
                         handled = True
                         previous = category
                         break
-            except (BusyError, LimitError):
+            if outcome.error is not None:
+                if not isinstance(outcome.error, Exception):
+                    raise outcome.error
                 handled = False
-            except (McpError, OSError):
-                if not self._stopping:
+                if not isinstance(outcome.error, (BusyError, LimitError)) and not self._stopping:
                     self._failure_cache("IO_ERROR: background job admission failed")
             if not handled:
                 with contextlib.suppress(TimeoutError):
@@ -600,27 +602,39 @@ class JobRunner:
         self._claims[claim.token] = claim
         heart = asyncio.create_task(self._heartbeat(claim))
         try:
-            with self.events.job_step(claim.kind, claim.payload.get("_telemetry")) as observation:
-                try:
-                    claim.check()
-                    if claim.kind == "ingest":
-                        await self._ingest_step(claim)
-                    elif claim.kind == "reindex":
-                        await reindex_step(self, claim)
-                    else:
-                        await self._delete_step(claim)
-                except (BusyError, LimitError) as exc:
-                    observation.outcome = "error"
-                    await self._defer_claim(claim, exc)
-                except (McpError, OSError) as exc:
-                    observation.outcome = "cancelled" if claim.cancelled else "error"
-                    await self._fail_claim(claim, exc)
+            boundary = OwnerOutcome()
+            with boundary:
+                carrier = failure_object(claim.payload).get("_telemetry")
+                with self.events.job_step(claim.kind, carrier) as observation:
+                    outcome = OwnerOutcome()
+                    with outcome:
+                        claim.check()
+                        if claim.kind == "ingest":
+                            await self._ingest_step(claim)
+                        elif claim.kind == "reindex":
+                            await reindex_step(self, claim)
+                        else:
+                            await self._delete_step(claim)
+                    if outcome.error is not None:
+                        observation.outcome = "cancelled" if claim.cancelled else "error"
+                        if not isinstance(outcome.error, Exception):
+                            raise outcome.error
+                        if isinstance(outcome.error, (BusyError, LimitError)):
+                            await self._defer_claim(claim, outcome.error)
+                        else:
+                            await self._fail_claim(claim, outcome.error)
+            if boundary.error is not None:
+                if not isinstance(boundary.error, Exception):
+                    raise boundary.error
+                await self._fail_claim(claim, boundary.error)
         finally:
             heart.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await heart
-            self._claims.pop(claim.token, None)
-            self._retention_event.set()
+            try:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heart
+            finally:
+                self._claims.pop(claim.token, None)
+                self._retention_event.set()
 
     async def _defer_claim(self, claim: Claim, error: BusyError | LimitError) -> None:
         # Keep the heartbeat and input ownership during backoff. Wake notifications
@@ -782,16 +796,19 @@ class JobRunner:
     async def _fail_claim(self, claim: Claim, error: BaseException) -> None:
         if claim.lost or self._stopping:
             return
-        try:
+        if not isinstance(error, (McpError, OSError)):
+            self._failure_cache("IO_ERROR: unexpected job failure")
+        outcome = OwnerOutcome()
+        with outcome:
             # Only this token's partial copy is disposable. Immutable admission input survives.
             await self.workers.control(lambda c, _t: JobStore.fence(c, claim))
             await self.io(claim.lane, lambda: self.store.discard_stage(claim.job_id, claim.token))
             state = "cancelled" if claim.cancelled or str(error) == "JOB_CANCELLED" else "failed"
             result: dict[str, Any] = {
-                **claim.result,
+                **failure_object(claim.result),
                 **(
                     {"index_state": "index_failed", "incomplete": True}
-                    if claim.progress.get("awaiting_text_index")
+                    if failure_object(claim.progress).get("awaiting_text_index")
                     else {}
                 ),
                 "error": error.error_type if isinstance(error, McpError) else "IO_ERROR",
@@ -800,7 +817,9 @@ class JobRunner:
             if isinstance(error, RecordConflictError):
                 result["details"] = error.details.model_dump(mode="json")
             await self.workers.control(lambda c, _t: JobStore.finish_failure(c, claim, state, result))
-        except (McpError, OSError):
+        if outcome.error is not None:
+            if not isinstance(outcome.error, Exception):
+                raise outcome.error
             self._failure_cache("IO_ERROR: job failure could not be committed")
 
     def _failure_cache(self, message: str) -> None:
@@ -856,5 +875,6 @@ def safe_background_error(message: str | None) -> str | None:
         "IO_ERROR: retention ownership metadata needs attention",
         "IO_ERROR: job retention failed",
         "IO_ERROR: job failure could not be committed",
+        "IO_ERROR: unexpected job failure",
     )
     return message if message in allowed else "IO_ERROR: background job failure"

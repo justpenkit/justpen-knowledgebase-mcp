@@ -65,6 +65,11 @@ def row_progress(row: dict[str, Any]) -> dict[str, Any]:
     return progress
 
 
+def row_metadata(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Validate all object cells before admission, without changing their raw data."""
+    return ownership_object(row["payload"]), row_progress(row), ownership_object(row["result"])
+
+
 def checkpoint_ownership(row: dict[str, Any], progress: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     """Generic progress cannot discard an outstanding publication/retry locator."""
     previous = row_progress(row)
@@ -83,3 +88,8 @@ def checkpoint_ownership(row: dict[str, Any], progress: dict[str, Any]) -> tuple
             if key in previous and ("verified_sha256" not in progress or key not in updated):
                 updated[key] = previous[key]
     return _validate_progress(updated), digest
+
+
+def failure_object(value: object) -> dict[str, Any]:
+    """Bound failure diagnostics even if an execution callback damaged a cached claim."""
+    return cast("dict[str, Any]", value) if isinstance(value, dict) else {}

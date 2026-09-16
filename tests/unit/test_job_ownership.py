@@ -5,7 +5,7 @@ import json
 import pytest
 
 from justpen_knowledgebase_mcp.errors import StorageIOError
-from justpen_knowledgebase_mcp.storage.job_ownership import checkpoint_ownership
+from justpen_knowledgebase_mcp.storage.job_ownership import checkpoint_ownership, row_metadata
 from justpen_knowledgebase_mcp.storage.job_retention import recorded_blob
 
 from .helpers import job
@@ -33,3 +33,13 @@ def test_retention_rejects_row_local_disagreement(trusted, progress):
 def test_checkpoint_cannot_introduce_corrupt_counters(counter):
     with pytest.raises(StorageIOError):
         checkpoint_ownership(job(), {"verified_sha256": "a" * 64, **counter})
+
+
+@pytest.mark.parametrize("cell", ["payload", "progress", "result"])
+@pytest.mark.parametrize("raw", ["[]", "null", "42", "nope", '{"x":1,"x":2}', '{"x":Infinity}'])
+def test_all_admission_cells_reject_invalid_objects(cell, raw):
+    row = job(**{cell: raw})
+    before = dict(row)
+    with pytest.raises(StorageIOError):
+        row_metadata(row)
+    assert row == before

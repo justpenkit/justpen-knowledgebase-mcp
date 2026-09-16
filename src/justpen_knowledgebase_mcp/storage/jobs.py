@@ -14,7 +14,7 @@ from ..identity import format_timestamp
 from ..models import JobProgress, JobResult
 from .deletions import DeleteIntent, GraphDeletion
 from .graph import row_by_id
-from .job_ownership import checkpoint_ownership, row_progress
+from .job_ownership import checkpoint_ownership, failure_object, row_metadata
 
 if TYPE_CHECKING:
     import apsw
@@ -84,6 +84,16 @@ def adjust_terminal_count(connection: apsw.Connection, state: str, delta: int) -
         )
 
 
+def isolate_failed_metadata(connection: apsw.Connection, row: dict[str, Any], now: float) -> None:
+    """Commit row-local isolation; raw metadata and trusted ownership remain intact."""
+    connection.execute(
+        "UPDATE jobs SET state='failed',error_code='JOB_METADATA_INVALID',finished_at=?,updated_at=?,lease_token=NULL,lease_expires_at=NULL WHERE uuid=? AND (state='queued' OR (state='running' AND lease_expires_at<=?))",
+        (now, now, row["uuid"], now),
+    )
+    if connection.changes():
+        adjust_terminal_count(connection, "failed", 1)
+
+
 def _intent(kind: str, row: tuple[Any, ...]) -> DeleteIntent:
     return DeleteIntent(kind, row[0], row[1], row[2], bool(row[3]), row[4])
 
@@ -91,6 +101,23 @@ def _intent(kind: str, row: tuple[Any, ...]) -> DeleteIntent:
 def protected(connection: apsw.Connection, job_id: str) -> bool:
     """Use sparse equality predicates, independent of ready graph cardinality."""
     return any(connection.execute(INTENT_SQL[kind], (job_id,)).fetchone() is not None for kind in INTENT_SQL)
+
+
+def _invalid_metadata_result(row: dict[str, Any]) -> dict[str, Any]:
+    """Expose no corrupted cells, including otherwise valid fields beside corruption."""
+    return JobResult(
+        job_id=row["uuid"],
+        kind=row["kind"],
+        state=row["state"],
+        lane=row["lane"],
+        attempts=row["attempts"],
+        index_state="not_applicable",
+        needs_attention=True,
+        retention_protected=True,
+        purge_pending=bool(row["purge_pending"]),
+        error="IO_ERROR",
+        reason="JOB_METADATA_INVALID",
+    ).model_dump(mode="json", exclude_none=True)
 
 
 class JobStore:
@@ -111,13 +138,17 @@ class JobStore:
     def claim(connection: apsw.Connection, lane: str, kind: str, *, now: float | None = None) -> Claim | None:
         """Atomically claim queued/expired work using a fresh fencing capability."""
         now = time.time() if now is None else now
-        value = connection.execute(
-            "SELECT uuid FROM jobs WHERE lane=? AND kind=? AND purge_pending=0 AND (state='queued' OR (state='running' AND lease_expires_at<=?)) ORDER BY id LIMIT 1",
-            (lane, kind, now),
-        ).get
-        if value is None:
-            return None
-        return JobStore._claim_selected(connection, value, now)
+        rows = list(
+            connection.execute(
+                "SELECT uuid FROM jobs WHERE lane=? AND kind=? AND purge_pending=0 AND (state='queued' OR (state='running' AND lease_expires_at<=?)) ORDER BY id LIMIT 100",
+                (lane, kind, now),
+            )
+        )
+        for (value,) in rows:
+            claim = JobStore._claim_selected(connection, value, now)
+            if claim is not None:
+                return claim
+        return None
 
     @staticmethod
     def claim_batch(
@@ -134,31 +165,38 @@ class JobStore:
             for identifier, job_id, state, expires in rows:
                 after = identifier
                 if state == "queued" or (expires is not None and expires <= now):
-                    return JobStore._claim_selected(connection, job_id, now), after
+                    claim = JobStore._claim_selected(connection, job_id, now)
+                    if claim is not None:
+                        return claim, after
             remaining -= len(rows)
             if not remaining:
                 break
         return None, after
 
     @staticmethod
-    def _claim_selected(connection: apsw.Connection, value: str, now: float) -> Claim:
+    def _claim_selected(connection: apsw.Connection, value: str, now: float) -> Claim | None:
+        row = job_row(connection, value)
+        try:
+            payload, progress, result = row_metadata(row)
+        except StorageIOError:
+            isolate_failed_metadata(connection, row, now)
+            return None
         token = str(uuid4())
         expires = now + LEASE_SECONDS
         connection.execute(
             "UPDATE jobs SET state='running',lease_token=?,lease_expires_at=?,updated_at=?,attempts=attempts+1 WHERE uuid=?",
             (token, expires, now, value),
         )
-        row = job_row(connection, value)
         return Claim(
             value,
             token,
             row["kind"],
             row["lane"],
-            json.loads(row["payload"]),
-            json.loads(row["progress"]),
+            payload,
+            progress,
             expires,
             bool(row["cancel_requested"]),
-            result=json.loads(row["result"]),
+            result=result,
         )
 
     @staticmethod
@@ -217,14 +255,17 @@ class JobStore:
     def finish_failure(connection: apsw.Connection, claim: Claim, state: str, result: dict[str, Any]) -> None:
         """Retain the raw evidence identity and current coverage after an indexing failure."""
         JobStore.fence(connection, claim)
-        merged = {**claim.result, **result}
-        evidence_id = claim.progress.get("evidence_id")
+        merged = {**failure_object(claim.result), **result}
+        progress = failure_object(claim.progress)
+        payload = failure_object(claim.payload)
+        evidence_id = progress.get("evidence_id")
         if (
             claim.kind == "reindex"
-            and claim.payload.get("kind") == "evidence"
-            and len(claim.payload.get("ids", [])) == 1
+            and payload.get("kind") == "evidence"
+            and isinstance(payload.get("ids"), list)
+            and len(payload["ids"]) == 1
         ):
-            evidence_id = claim.payload["ids"][0]
+            evidence_id = payload["ids"][0]
         if evidence_id is not None:
             merged["evidence_id"] = evidence_id
             row = row_by_id(connection, "evidence", evidence_id)
@@ -250,17 +291,15 @@ class JobStore:
     def get(connection: apsw.Connection, job_id: str) -> dict[str, Any]:
         """Materialize bounded public metadata, excluding source/staging locators."""
         row = job_row(connection, job_id)
-        payload = json.loads(row["payload"])
-        result = json.loads(row["result"])
-        malformed_progress = False
         try:
-            decoded = row_progress(row)
-            progress = JobProgress.model_validate(
-                {key: value for key, value in decoded.items() if key in JobProgress.model_fields}
-            ).model_dump()
+            payload, decoded, result = row_metadata(row)
         except StorageIOError:
-            progress = JobProgress().model_dump()
-            malformed_progress = True
+            return _invalid_metadata_result(row)
+        if row.get("error_code") == "JOB_METADATA_INVALID":
+            return _invalid_metadata_result(row)
+        progress = JobProgress.model_validate(
+            {key: value for key, value in decoded.items() if key in JobProgress.model_fields}
+        ).model_dump()
         pending_owner = row["state"] in TERMINAL and protected(connection, job_id)
         retention_protected = (
             row["state"] not in TERMINAL
@@ -289,7 +328,7 @@ class JobStore:
             "purge_pending": bool(row["purge_pending"]),
             "warnings": payload.get("warnings", []),
             **result,
-            "needs_attention": malformed_progress or (row["state"] == "failed" and pending_owner),
+            "needs_attention": row["state"] == "failed" and pending_owner,
         }
 
         return JobResult.model_validate(output).model_dump(mode="json", exclude_none=True)
@@ -322,7 +361,11 @@ class JobStore:
             raise ConflictError("JOB_PURGING")
         if row["state"] not in ("failed", "cancelled"):
             raise InvalidParamsError("only failed or cancelled jobs can retry")
-        if row["kind"] == "reindex" and json.loads(row["payload"]).get("all"):
+        try:
+            payload, _progress, _result = row_metadata(row)
+        except StorageIOError as exc:
+            raise ConflictError("JOB_METADATA_INVALID") from exc
+        if row["kind"] == "reindex" and payload.get("all"):
             if connection.execute(
                 "SELECT 1 FROM jobs WHERE kind='reindex' AND json_extract(payload,'$.all')=1 AND state IN ('queued','running')"
             ).get:

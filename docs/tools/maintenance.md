@@ -86,6 +86,12 @@ that no nonpurging job can still use it. Uncertain ownership retains the job's
 locator and reports attention; malformed ownership metadata can delay orphan
 blob cleanup while unrelated metadata and staging cleanup continue.
 
+Malformed job metadata is isolated as a failed job with `JOB_METADATA_INVALID`
+before workers acquire a new lease. Its raw metadata and trusted blob locator
+remain protected, and get/list report `needs_attention` and `retention_protected`.
+Retry rejects corrupt metadata without changing it; an operator must explicitly
+repair the metadata before retrying. Other jobs continue processing.
+
 **Errors:** `INVALID` for action/field combinations; `NOT_FOUND` after normal
 retention pruning; `CONFLICT` for ineligible cancellation/retry, including
 immutable pending delete intent and a row already being purged; `BUSY`, `LIMIT`,

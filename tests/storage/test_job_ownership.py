@@ -92,9 +92,12 @@ async def test_existing_verified_blob_cannot_release_different_or_missing_locato
                 },
             )
             connection.execute(
-                "UPDATE jobs SET progress=?,blob_sha256=? WHERE uuid=?", (json.dumps(progress), trusted, identifier)
+                "UPDATE jobs SET progress=?,blob_sha256=? WHERE uuid=?",
+                (json.dumps(progress), staged.sha256, identifier),
             )
-            return JobStore.claim(connection, "short", "ingest")
+            claim = JobStore.claim(connection, "short", "ingest")
+            connection.execute("UPDATE jobs SET blob_sha256=? WHERE uuid=?", (trusted, identifier))
+            return claim
 
         claim = await kb.workers.control(populate)
         assert claim is not None

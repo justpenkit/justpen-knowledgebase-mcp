@@ -788,3 +788,86 @@ async def test_purge_fault_cooldown_keeps_other_cleanup_admitted(runner, monkeyp
     clock.return_value = 130.0
     assert await runner._cleanup_category("purge")
     assert runner._purge_step.await_count == 2
+
+
+@pytest.mark.parametrize("lane", ["short", "bulk"])
+async def test_unexpected_lane_error_recovers_with_fixed_diagnostic(runner, lane, capsys):
+    calls = 0
+
+    async def step(_lane, _category):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise AttributeError("private-secret")
+        runner._stopping = True
+        return True
+
+    runner._category_step = AsyncMock(side_effect=step)
+    await runner._lane(lane)
+    assert calls == 2
+    assert runner.last_error == "IO_ERROR: background job admission failed"
+    assert "private-secret" not in capsys.readouterr().err
+
+
+async def test_unexpected_owned_failure_is_fenced_and_releases_owner(runner, monkeypatch):
+    capability = claim()
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job()))
+    finish = Mock()
+    monkeypatch.setattr(jobs.JobStore, "finish_failure", finish)
+    runner._ingest_step = AsyncMock(side_effect=AttributeError("private-secret"))
+    await runner._run_claim(capability)
+    assert finish.call_args.args[2] == "failed"
+    assert finish.call_args.args[3]["reason"] == "managed I/O failed"
+    assert runner.last_error == "IO_ERROR: unexpected job failure"
+    assert jobs.safe_background_error(runner.last_error) == runner.last_error
+    assert not runner._claims
+
+
+async def test_owned_cancellation_propagates_without_failure(runner):
+    runner._ingest_step = AsyncMock(side_effect=asyncio.CancelledError)
+    runner._fail_claim = AsyncMock()
+    with pytest.raises(asyncio.CancelledError):
+        await runner._run_claim(claim())
+    runner._fail_claim.assert_not_awaited()
+    assert not runner._claims
+
+
+@pytest.mark.parametrize("cell", ["payload", "progress", "result"])
+async def test_failure_handler_handles_nonobject_claim_cells(runner, monkeypatch, cell):
+    capability = claim(**{cell: []})
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job()))
+    finish = Mock()
+    monkeypatch.setattr(jobs.JobStore, "finish", finish)
+    await runner._fail_claim(capability, AttributeError("private-secret"))
+    assert finish.call_args.args[2] == "failed"
+    assert finish.call_args.args[3]["reason"] == "managed I/O failed"
+
+
+async def test_failure_commit_unexpected_error_retains_lease_and_reports_safe_error(runner, monkeypatch, capsys):
+    capability = claim()
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job()))
+    monkeypatch.setattr(jobs.JobStore, "finish_failure", Mock(side_effect=AttributeError("private-secret")))
+    await runner._fail_claim(capability, AttributeError("private-secret"))
+    assert not capability.lost
+    assert runner.last_error == "IO_ERROR: job failure could not be committed"
+    assert "private-secret" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("lane", ["short", "bulk"])
+async def test_lane_cancellation_propagates(runner, lane):
+    runner._category_step = AsyncMock(side_effect=asyncio.CancelledError)
+    with pytest.raises(asyncio.CancelledError):
+        await runner._lane(lane)
+    assert runner.last_error is None
+
+
+async def test_heartbeat_exception_still_releases_claim_owner(runner):
+    runner._heartbeat = AsyncMock(side_effect=AttributeError("private-secret"))
+
+    async def step(_claim):
+        await asyncio.sleep(0)
+
+    runner._ingest_step = AsyncMock(side_effect=step)
+    with pytest.raises(AttributeError):
+        await runner._run_claim(claim())
+    assert not runner._claims

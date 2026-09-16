@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from contextlib import ExitStack
 from typing import TYPE_CHECKING
 
+from ..errors import StorageIOError
 from .evidence import stage_name
-from .jobs import INTENT_SQL, PENDING_SQL, JobStore, protected
+from .job_ownership import row_metadata
+from .jobs import INTENT_SQL, PENDING_SQL, JobStore, job_row, protected
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -40,15 +41,23 @@ def recover_intents(connection: apsw.Connection, kind: str, after_id: int) -> di
 
 def staging_disposable(connection: apsw.Connection, job_id: str, token: str) -> bool:
     """Caller holds admission job bucket; missing metadata is checked after that lock."""
-    row = connection.execute(
-        "SELECT payload,result,state,lease_token,lease_expires_at FROM jobs WHERE uuid=?", (job_id,)
-    ).fetchone()
-    if row is None:
+    if connection.execute("SELECT 1 FROM jobs WHERE uuid=?", (job_id,)).get is None:
         return not protected(connection, job_id)
-    payload, result = json.loads(row[0]), json.loads(row[1])
+    row = job_row(connection, job_id)
+    if row.get("error_code") == "JOB_METADATA_INVALID":
+        return False
+    try:
+        payload, _progress, result = row_metadata(row)
+    except StorageIOError:
+        return False
     if token == payload.get("input_token"):
         return "evidence_id" in result
-    return not (row[2] == "running" and row[3] == token and row[4] is not None and float(row[4]) > time.time())
+    return not (
+        row["state"] == "running"
+        and row["lease_token"] == token
+        and row["lease_expires_at"] is not None
+        and float(row["lease_expires_at"]) > time.time()
+    )
 
 
 class StageScan:

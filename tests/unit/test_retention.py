@@ -15,10 +15,10 @@ from .helpers import NODE, OTHER, cursor, database, job
 
 def test_retention_batch_prunes_expires_marks_files_and_skips_protection(monkeypatch):
     rows = [
-        (1, NODE, "completed", 0),
-        (2, OTHER, "failed", 0),
-        (3, "protected", "failed", 0),
-        (4, "fresh", "completed", 100),
+        (1, NODE, "completed", 0, None),
+        (2, OTHER, "failed", 0, None),
+        (3, "protected", "failed", 0, None),
+        (4, "fresh", "completed", 100, None),
     ]
     row_lookup = Mock(
         side_effect=[
@@ -118,7 +118,10 @@ def test_retention_snapshot_reconciles_state_groups():
     job_retention.JobRetention.reconcile(db)
     assert json.loads(db.execute.call_args.args[1][0]) == {"completed": 2, "failed_cancelled": 4}
     db = database(
-        cursor(value=1), cursor(value='{"completed":3,"failed_cancelled":2}'), cursor(value=2), cursor(value=9)
+        cursor(value=1),
+        cursor(value='{"completed":3,"failed_cancelled":2}'),
+        cursor(value=2),
+        cursor(value=9),
     )
     assert job_retention.JobRetention.snapshot(db) == {
         "terminal_counts": {"completed": 3, "failed_cancelled": 2},
@@ -150,7 +153,18 @@ def test_recovery_reuses_immutable_job_id_and_cascade(monkeypatch):
     ],
 )
 def test_staging_disposal_retains_live_or_unpublished_input(payload, result, state, token, expiry, disposable):
-    db = database(cursor(rows=[(json.dumps(payload), json.dumps(result), state, token, expiry)]))
+    db = database(
+        cursor(value=1),
+        cursor(
+            record=job(
+                payload=json.dumps(payload),
+                result=json.dumps(result),
+                state=state,
+                lease_token=token,
+                lease_expires_at=expiry,
+            )
+        ),
+    )
     assert job_recovery.staging_disposable(db, NODE, OTHER) is disposable
 
 
@@ -235,3 +249,17 @@ def test_ownership_rejects_nonfinite_persisted_json(constant):
     progress = '{"verified_sha256":"' + "a" * 64 + '","bytes":' + constant + "}"
     with pytest.raises(StorageIOError, match="malformed"):
         job_retention.recorded_blob(job(progress=progress))
+
+
+def test_recent_quarantine_is_attention_before_retention_eligibility(monkeypatch):
+    row_lookup = Mock()
+    monkeypatch.setattr(job_retention, "job_row", row_lookup)
+    db = database(
+        cursor(value='{"completed":0,"failed_cancelled":1}'),
+        cursor(rows=[]),
+        cursor(rows=[(1, NODE, "failed", 100, "JOB_METADATA_INVALID")]),
+    )
+    batch = job_retention.JobRetention.batch(db, WorkspacePolicy(), (0.0, 0), now=100)
+    assert batch == {"cursor": (0.0, 0), "examined": 1, "pruned": 0, "marked": 0, "invalid": 1}
+    row_lookup.assert_not_called()
+    assert db.execute.call_count == 3

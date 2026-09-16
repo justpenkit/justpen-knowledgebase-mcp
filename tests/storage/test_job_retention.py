@@ -386,3 +386,39 @@ async def test_invalid_counters_leave_durable_progress_and_blob_ownership_unchan
     assert await kb.workers.read(
         lambda c, _t: c.execute("SELECT progress,blob_sha256 FROM jobs WHERE uuid=?", (identifier,)).fetchone()
     ) == (stored, digest)
+
+
+async def test_healthy_history_does_not_scale_retention_snapshot_vm_work(kb):
+    await kb.job_runner.close()
+    measurements = []
+    for size in (64, 4096):
+
+        def populate(connection, _token, size=size):
+            previous = connection.execute("SELECT count(*) FROM jobs").get
+            for _ in range(previous, size):
+                JobStore.insert(connection, str(uuid4()), "ingest", "short", {})
+            connection.execute("UPDATE jobs SET state='completed',finished_at=100 WHERE state='queued'")
+            JobRetention.reconcile(connection)
+
+        await kb.workers.control(populate)
+
+        def measure(connection, _token):
+            instructions = 0
+
+            def progress():
+                nonlocal instructions
+                instructions += 1
+                return False
+
+            connection.set_progress_handler(progress, 1, id="retention-snapshot-test")
+            try:
+                snapshot = JobRetention.snapshot(connection)
+            finally:
+                connection.set_progress_handler(None, id="retention-snapshot-test")
+            return instructions, snapshot
+
+        instructions, snapshot = await kb.workers.read(measure)
+        assert not snapshot["needs_attention"]
+        assert snapshot["terminal_counts"]["completed"] == size
+        measurements.append(instructions)
+    assert measurements[1] <= measurements[0] + 100, measurements
