@@ -111,13 +111,16 @@ def test_native_close_error_is_surfaced_after_gated_force_cleanup(tmp_path, monk
 
 
 async def test_worker_shutdown_retries_gate_busy_before_releasing_resources(kb):
-
+    # Match service shutdown order: no background owner should race the test's lock.
+    await kb.status_sampler.close()
+    await kb.job_runner.close()
+    await kb.maintenance.close()
     lock = os.open(kb.workspace.locks / "reset-intent.lock", os.O_RDWR)
-    for owner in kb.workers._owners:
-        owner.connection.close_timeout_ms = 10
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    shutdown = asyncio.create_task(kb.workers.close())
     try:
+        for owner in kb.workers._owners:
+            owner.connection.close_timeout_ms = 10
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        shutdown = asyncio.create_task(kb.workers.close())
         await asyncio.sleep(0.05)
         assert not shutdown.done(), "gate contention must not abandon owner resources"
         assert kb.workspace.root_fd >= 0
@@ -228,6 +231,9 @@ def test_factory_configure_query_only_and_failed_init_remain_gated(tmp_path, mon
 
 
 async def test_reset_rejection_captures_cached_shared_retry_delay(kb):
+    await kb.status_sampler.close()
+    await kb.job_runner.close()
+    await kb.maintenance.close()
     cache = kb.workers.factory.status_cache
     previous_seq = cache.snapshot()["sample_seq"]
     assert isinstance(previous_seq, int)
@@ -248,8 +254,8 @@ async def test_reset_rejection_captures_cached_shared_retry_delay(kb):
     assert cache.snapshot()["sample_seq"] == sample.sample_seq
     token = OperationToken(time.monotonic() + 0.03)
     lock = os.open(kb.workspace.locks / "reset-intent.lock", os.O_RDWR)
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with pytest.raises((BusyError, LimitError)):
             await kb.workers.read(lambda c, t: pytest.fail("reset admission failed"), token)
     finally:

@@ -363,6 +363,8 @@ def test_finish_publication_failure_never_reports_success(small_wal):
 
 
 async def test_stale_startup_accepts_shared_normal_without_leader_or_new_sequence(kb):
+    # The fixture's own checkpoint owner must not race the peer-leader probe.
+    await kb.maintenance.close()
 
     def age(c, t):
         state = json.loads(c.execute("select maintenance from settings").get)
@@ -372,8 +374,8 @@ async def test_stale_startup_accepts_shared_normal_without_leader_or_new_sequenc
 
     sequence = await kb.workers.control(age)
     leader = os.open(kb.workspace.locks / "checkpoint.lock", os.O_RDWR)
-    fcntl.flock(leader, fcntl.LOCK_EX | fcntl.LOCK_NB)
     try:
+        fcntl.flock(leader, fcntl.LOCK_EX | fcntl.LOCK_NB)
         async with KnowledgeBase.open(kb.config) as peer:
             assert await peer.workers.read(lambda c, t: c.execute("select 1").get) == 1
             assert peer.maintenance.status()["sample_seq"] == sequence
