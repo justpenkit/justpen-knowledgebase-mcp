@@ -2,6 +2,7 @@
 
 import time
 
+import apsw
 import pytest
 
 from justpen_knowledgebase_mcp.config import ServerConfig
@@ -134,26 +135,43 @@ async def test_high_degree_reads_bounded_adjacency_and_deadlines(tmp_path):
         )
 
         def run(connection, token):
-            queries = []
+            adjacency = []
+            rows = []
 
             def trace(cursor, sql, bindings):
-                queries.append(sql)
+                if "from relations" in sql.lower():
+                    adjacency.append(cursor)
                 return True
 
+            def trace_row(cursor, row):
+                if any(cursor is stream for stream in adjacency):
+                    rows.append(row)
+                return row
+
             connection.set_exec_trace(trace)
+            connection.set_row_trace(trace_row)
             try:
                 result = neighbors(
                     connection, token, NeighborsRequest(seed_ids=ids[:1], max_nodes=2, relation_types=["aliases"])
                 )
             finally:
+                connection.set_row_trace(None)
                 connection.set_exec_trace(None)
-            return result, queries
+            # Budget termination must close both live and exhausted streams.
+            for cursor in adjacency:
+                with pytest.raises(apsw.CursorClosedError):
+                    cursor.get_description()
+            return result, len(adjacency), rows
 
-        bounded, queries = await kb.workers.read(run)
-        adjacency = [query for query in queries if "FROM relations o WHERE" in query]
-        assert len(adjacency) == 4
-        assert all("LIMIT 1" in query for query in adjacency)
+        bounded, query_count, rows = await kb.workers.read(run)
+        assert query_count == 2  # One selective stream per direction, no per-edge restarts.
+        assert len(rows) == 2  # One accepted edge and one proving the node budget is exhausted.
+        assert all(row[2] == "aliases" for row in rows)
+        assert [node["id"] for node in bounded["nodes"]] == ids[:2]
+        assert len(bounded["edges"]) == 1
+        assert bounded["truncated"]
         assert bounded["reason"] == "max_nodes"
+        assert bounded["frontier"] == ids[:1]
 
         def near_deadline(connection, token):
             token.deadline = time.monotonic() + 0.008

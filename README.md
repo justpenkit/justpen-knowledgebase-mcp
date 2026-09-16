@@ -1,3 +1,5 @@
+<img src="docs/assets/logo.svg" alt="justpen-knowledgebase-mcp logo" width="144" height="144">
+
 # justpen-knowledgebase-mcp
 
 A workspace-local MCP server for durable recon evidence, a typed mutable graph,

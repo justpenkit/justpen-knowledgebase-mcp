@@ -54,9 +54,10 @@ async def test_stdio_normal_shutdown_with_open_or_partial_stdin(tmp_path, ending
         else:
             child.send_signal(signal.SIGTERM)
         await asyncio.wait_for(child.wait(), 3)
-        assert child.returncode == 0
         assert child.stderr is not None
-        assert b"shutdown_timeout" not in await child.stderr.read()
+        stderr = await child.stderr.read()
+        assert child.returncode == 0, stderr.decode(errors="replace")
+        assert b"shutdown_timeout" not in stderr
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])

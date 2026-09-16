@@ -41,7 +41,17 @@ async def test_actual_partial_path_copy_takeover_restarts_byte_zero(tmp_path, mo
         writes.append(bytes(content))
         original(fd, content)
 
+    cleaned = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    original_unlink = WorkspacePaths.unlink_managed_file
+
+    def observe_unlink(workspace, path):
+        original_unlink(workspace, path)
+        if path == stale:
+            loop.call_soon_threadsafe(cleaned.set)
+
     monkeypatch.setattr(evidence_module, "_write_all", observe)
+    monkeypatch.setattr(WorkspacePaths, "unlink_managed_file", observe_unlink)
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         job_id, old_token = await kb.workers.control(lambda c, t: c.execute("select uuid,lease_token from jobs").get)
         await kb.workers.control(lambda c, t: c.execute("update jobs set lease_expires_at=0").fetchall())
@@ -54,7 +64,14 @@ async def test_actual_partial_path_copy_takeover_restarts_byte_zero(tmp_path, mo
         new_token = await kb.workers.read(lambda c, t: c.execute("select lease_token from jobs").get)
         assert new_token != old_token
         assert source.read_bytes() == raw
+        # Startup can inspect this token before its lease expires. A protected
+        # candidate is reconsidered by the 30-second scanner, independently of
+        # the bulk lane publishing the replacement job's completed result.
+        async with asyncio.timeout(35):
+            await cleaned.wait()
         assert not stale.exists()
+        blob = kb.workspace.evidence / kb.job_runner.store.blob_name(hashlib.sha256(raw).hexdigest())
+        assert blob.read_bytes() == raw
         assert await kb.workers.read(lambda c, t: c.execute("pragma foreign_key_check").fetchall()) == []
 
 

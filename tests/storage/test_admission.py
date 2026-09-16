@@ -228,8 +228,24 @@ def test_factory_configure_query_only_and_failed_init_remain_gated(tmp_path, mon
 
 
 async def test_reset_rejection_captures_cached_shared_retry_delay(kb):
-
-    kb.workers.factory.status_cache.update(WalState(next_attempt_not_before=time.time() + 3))
+    cache = kb.workers.factory.status_cache
+    previous_seq = cache.snapshot()["sample_seq"]
+    assert isinstance(previous_seq, int)
+    now = time.time()
+    sample = WalState(
+        phase="normal",
+        sample_seq=previous_seq + 1,
+        sample_at=now,
+        allocated_bytes=0,
+        log_frames=0,
+        checkpointed_frames=0,
+        page_size=4096,
+        unbackfilled_bytes=0,
+        next_attempt_not_before=now + 3,
+    )
+    assert sample.valid_sample(now)
+    cache.update(sample)
+    assert cache.snapshot()["sample_seq"] == sample.sample_seq
     token = OperationToken(time.monotonic() + 0.03)
     lock = os.open(kb.workspace.locks / "reset-intent.lock", os.O_RDWR)
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

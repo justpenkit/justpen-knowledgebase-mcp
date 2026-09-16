@@ -70,13 +70,17 @@ jobs:
         run: make check-python
 
   integration:
-    name: integration
+    name: integration (py${{ matrix.python-version }})
     needs: quality
     if: needs.quality.outputs.generated == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     env:
-      UV_PYTHON: "3.13"
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.0.1
