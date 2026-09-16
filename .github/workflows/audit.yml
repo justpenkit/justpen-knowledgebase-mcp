@@ -20,6 +20,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
       - name: Install Python
         run: uv python install 3.13
       - name: Require the committed lockfile

@@ -26,6 +26,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
       - name: Install Python
         run: uv python install "$UV_PYTHON"
       - name: Select integration owner
@@ -60,6 +61,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
       - name: Install Python
         run: uv python install "$UV_PYTHON"
       - name: Require the committed lockfile
@@ -86,6 +88,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
       - name: Install Python
         run: uv python install "$UV_PYTHON"
       - name: Require the committed lockfile
@@ -113,6 +116,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
       - name: Install active Python
         run: uv python install "$UV_PYTHON"
       - name: Install native Linux audit prerequisite
@@ -159,6 +163,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
+          cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
       - name: Install Python
         run: uv python install "$UV_PYTHON"
       - name: Install locked dependencies
