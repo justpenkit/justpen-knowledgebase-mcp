@@ -1,9 +1,8 @@
 """Cancellable stream adapter with SDK and descriptor operations isolated."""
 
-import os
 import socket
 import stat
-from contextlib import ExitStack, asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -65,6 +64,9 @@ def socket_endpoint(monkeypatch):
         "os",
         SimpleNamespace(
             fstat=Mock(return_value=SimpleNamespace(st_mode=stat.S_IFSOCK)),
+            fpathconf=Mock(return_value=512),
+            read=Mock(return_value=b"line\n"),
+            devnull="/dev/null",
             write=lambda _fd, view: send(view),
             set_blocking=lambda _fd, value: change_flags(value),
             get_blocking=lambda _fd: endpoint.blocking,
@@ -200,67 +202,77 @@ async def test_pipe_buffer_eof_partial_writes_and_readiness(monkeypatch, regular
         await stream.flush()
 
 
-async def test_null_character_device_returns_eof_without_readiness_and_checkpoints(monkeypatch):
-    async def no_readiness(_descriptor: int) -> None:
-        pytest.fail("null device must not enter descriptor readiness")
-
-    monkeypatch.setattr(stdio.anyio, "wait_readable", no_readiness)
-    descriptor = os.open(os.devnull, os.O_RDONLY)
-    try:
-        stream = stdio._PipeFile(descriptor)
-        with anyio.CancelScope() as scope:
-            scope.cancel()
-            await stream.readline()
-            pytest.fail("null-device read skipped its cancellation checkpoint")
-        assert scope.cancelled_caught
-        assert await stream.readline() == ""
-    finally:
-        os.close(descriptor)
-
-
-async def test_other_character_device_still_waits_for_readiness(monkeypatch):
-    async def readiness(_descriptor: int) -> None:
-        raise LookupError("readiness path")
-
-    monkeypatch.setattr(stdio.anyio, "wait_readable", readiness)
-    descriptor = os.open("/dev/zero", os.O_RDONLY)
-    try:
-        with pytest.raises(LookupError, match="readiness path"):
-            await stdio._PipeFile(descriptor).readline()
-    finally:
-        os.close(descriptor)
-
-
-@pytest.mark.parametrize(("kind", "readiness_count"), [("regular", 0), ("fifo", 1), ("socket", 1)])
-async def test_non_null_descriptors_keep_readiness_behavior(monkeypatch, tmp_path, kind, readiness_count):
-    original_wait_readable = stdio.anyio.wait_readable
+@pytest.mark.parametrize(
+    ("mode", "rdev", "null_mode", "readiness_count"),
+    [
+        (stat.S_IFCHR, 31, stat.S_IFCHR, 0),
+        (stat.S_IFCHR, 32, stat.S_IFCHR, 1),
+        (stat.S_IFCHR, 31, stat.S_IFREG, 1),
+        (stat.S_IFREG, 0, stat.S_IFCHR, 0),
+        (stat.S_IFIFO, 0, stat.S_IFCHR, 1),
+        (stat.S_IFSOCK, 0, stat.S_IFCHR, 1),
+    ],
+)
+async def test_descriptor_identity_routes_checkpoint_or_readiness(
+    socket_endpoint, monkeypatch, mode, rdev, null_mode, readiness_count
+):
+    del socket_endpoint
+    descriptor_stat = Mock(return_value=SimpleNamespace(st_mode=mode, st_rdev=rdev))
+    read = Mock(return_value=b"line\n")
+    monkeypatch.setattr(stdio.os, "fstat", descriptor_stat)
+    monkeypatch.setattr(stdio.os, "read", read)
+    null_path = Mock(
+        return_value=SimpleNamespace(stat=Mock(return_value=SimpleNamespace(st_mode=null_mode, st_rdev=31)))
+    )
+    monkeypatch.setattr(stdio, "Path", null_path)
+    original_checkpoint = anyio.lowlevel.checkpoint
+    checkpoints: list[None] = []
     waited: list[int] = []
 
-    async def record_readiness(descriptor: int) -> None:
+    async def checkpoint() -> None:
+        checkpoints.append(None)
+        await original_checkpoint()
+
+    async def readiness(descriptor: int) -> None:
         waited.append(descriptor)
-        await original_wait_readable(descriptor)
+        await original_checkpoint()
 
-    monkeypatch.setattr(stdio.anyio, "wait_readable", record_readiness)
-    with ExitStack() as stack:
-        if kind == "regular":
-            path = tmp_path / "input.txt"
-            path.write_bytes(b"line\n")
-            descriptor = os.open(path, os.O_RDONLY)
-            stack.callback(os.close, descriptor)
-        elif kind == "fifo":
-            descriptor, writer = os.pipe()
-            stack.callback(os.close, descriptor)
-            os.write(writer, b"line\n")
-            os.close(writer)
-        else:
-            reader, writer = socket.socketpair()
-            stack.callback(reader.close)
-            stack.callback(writer.close)
-            writer.sendall(b"line\n")
-            descriptor = reader.fileno()
+    monkeypatch.setattr(stdio.anyio.lowlevel, "checkpoint", checkpoint)
+    monkeypatch.setattr(stdio.anyio, "wait_readable", readiness)
+    assert await stdio._PipeFile(9).readline() == "line\n"
+    assert waited == [9] * readiness_count
+    assert len(checkpoints) == 1 - readiness_count
+    if stat.S_ISCHR(mode):
+        null_path.assert_called_once_with(stdio.os.devnull)
+    else:
+        null_path.assert_not_called()
+    read.assert_called_once_with(9, 65536)
 
-        assert await stdio._PipeFile(descriptor).readline() == "line\n"
-        assert waited == [descriptor] * readiness_count
+
+async def test_null_device_read_cancellation_precedes_mocked_read(socket_endpoint, monkeypatch):
+    del socket_endpoint
+    descriptor_stat = Mock(return_value=SimpleNamespace(st_mode=stat.S_IFCHR, st_rdev=31))
+    read = Mock(return_value=b"")
+    monkeypatch.setattr(stdio.os, "fstat", descriptor_stat)
+    monkeypatch.setattr(stdio.os, "read", read)
+    monkeypatch.setattr(
+        stdio,
+        "Path",
+        Mock(return_value=SimpleNamespace(stat=Mock(return_value=SimpleNamespace(st_mode=stat.S_IFCHR, st_rdev=31)))),
+    )
+    readiness = AsyncMock(side_effect=AssertionError("null device entered readiness"))
+    monkeypatch.setattr(stdio.anyio, "wait_readable", readiness)
+    stream = stdio._PipeFile(9)
+    with anyio.CancelScope() as scope:
+        scope.cancel()
+        await stream.readline()
+        pytest.fail("null-device read skipped its cancellation checkpoint")
+    assert scope.cancelled_caught
+    read.assert_not_called()
+    readiness.assert_not_called()
+    assert await stream.readline() == ""
+    read.assert_called_once_with(9, 65536)
+    readiness.assert_not_called()
 
 
 def test_restore_closes_duplicate_even_when_duplication_fails(monkeypatch):
