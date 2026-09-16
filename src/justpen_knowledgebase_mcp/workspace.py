@@ -262,8 +262,8 @@ class WorkspacePaths:
             with suppress(FileNotFoundError):
                 os.unlink(name, dir_fd=self._fds[self.tmp])
 
-    def publish(self, staged_name: str, relative_name: str) -> None:
-        """Atomically publish staged bytes; callers coordinate DB recovery separately."""
+    def publish(self, staged_name: str, relative_name: str, *, durable_stage: bool = False) -> None:
+        """Rename owned bytes; durable_stage requires prior file flush and no subsequent writes."""
         if (
             Path(staged_name).name != staged_name
             or Path(relative_name).is_absolute()
@@ -276,7 +276,8 @@ class WorkspacePaths:
             self.validate_native(path)
             fd = os.open(staged_name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=self._fds[self.tmp])
             try:
-                os.fsync(fd)
+                if not durable_stage:
+                    os.fsync(fd)
             finally:
                 os.close(fd)
             os.rename(staged_name, path.name, src_dir_fd=self._fds[self.tmp], dst_dir_fd=parent)

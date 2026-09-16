@@ -55,6 +55,19 @@ def test_inline_staging_hash_and_sync_before_close(store, monkeypatch):
         store.stage_inline(b"x" * (evidence.INLINE_LIMIT + 1), NODE, OTHER)
 
 
+def test_publication_uses_already_durable_stage_without_reflushing_data(store):
+    staged = store.stage_inline(b"abc", NODE, OTHER)
+    store.publish(staged)
+    assert isinstance(evidence.sync_evidence, Mock)
+    evidence.sync_evidence.assert_called_once_with(10)
+    store.workspace.publish.assert_called_once_with(staged.name, store.blob_name(staged.sha256), durable_stage=True)
+    assert [call.args[0] for call in store.workspace.open_directory.call_args_list] == [
+        store.workspace.evidence / staged.sha256[:2],
+        store.workspace.evidence,
+        store.workspace.tmp,
+    ]
+
+
 @pytest.mark.parametrize(
     ("pieces", "expected", "fails"),
     [
@@ -85,7 +98,9 @@ def test_blob_verification_recheck_and_publication(store, monkeypatch):
     assert verified.identity == [1, 2, 3, 4, 5]
     store.recheck_blob(verified)
     store.publish(evidence.StagedEvidence("owned.stage", digest, 3))
-    store.workspace.publish.assert_called_once_with("owned.stage", f"{digest[:2]}/{digest[2:4]}/{digest}")
+    store.workspace.publish.assert_called_once_with(
+        "owned.stage", f"{digest[:2]}/{digest[2:4]}/{digest}", durable_stage=True
+    )
     assert store.workspace.open_directory.call_count == 3
     store.discard_stage(NODE, OTHER)
     store.unlink_blob(digest)

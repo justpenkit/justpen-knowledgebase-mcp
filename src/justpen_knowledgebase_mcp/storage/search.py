@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 from typing import TYPE_CHECKING, Any
 
 from ..cursors import CursorBinding
@@ -16,7 +17,7 @@ from .fulltext import coverage, owner_match
 from .graph_sql import PROPERTY_BODY, READY, SEARCH_CANDIDATE
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
     import apsw
 
@@ -52,7 +53,7 @@ def search(connection: apsw.Connection, token: OperationToken, request: SearchRe
             filters.append(text_query.expressions[0])
         clauses.append(f"o.id IN ({candidate_sql})")
     sql = (
-        "SELECT o.id,o.uuid,NULL,NULL,json_object('media_type',o.media_type,'index_state',o.index_state,'byte_size',o.byte_size),1 FROM evidence o WHERE {conditions} ORDER BY o.id LIMIT 1"
+        "SELECT o.id,o.uuid,NULL,NULL,json_object('media_type',o.media_type,'index_state',o.index_state,'byte_size',o.byte_size),1 FROM evidence o WHERE {conditions} ORDER BY o.id"
         if request.kind == "evidence"
         else SEARCH_CANDIDATE[request.kind]
     ).format(expression=expression, conditions=" AND ".join(clauses))
@@ -69,26 +70,27 @@ def search(connection: apsw.Connection, token: OperationToken, request: SearchRe
     last_returned = after
     ranked: list[tuple[float, int, dict[str, Any]]] = []
     ranked_count = 0
-    for identifier, item in _matched_candidates(
-        connection, token, request, text_query, sql, values, filters, after, output
-    ):
-        if request.sort == "relevance":
-            ranked_count += 1
-            ranked.append((item["score"], identifier, item))
-            ranked.sort(key=lambda entry: (entry[0], entry[1]))
-            del ranked[request.limit :]
-            continue
-        if (
-            len(output["items"]) == request.limit
-            or len(canonical_json({**output, "items": [*output["items"], item]}).encode("utf-8")) > 245000
-        ):
-            if not output["items"]:
-                raise LimitError("search item exceeds response budget")
-            output["has_more"] = True
-            output["cursor"] = binding.encode(last_returned)
-            break
-        output["items"].append(item)
-        last_returned = identifier
+    with closing(
+        _matched_candidates(connection, token, request, text_query, sql, values, filters, after, output)
+    ) as candidates:
+        for identifier, item in candidates:
+            if request.sort == "relevance":
+                ranked_count += 1
+                ranked.append((item["score"], identifier, item))
+                ranked.sort(key=lambda entry: (entry[0], entry[1]))
+                del ranked[request.limit :]
+                continue
+            if (
+                len(output["items"]) == request.limit
+                or len(canonical_json({**output, "items": [*output["items"], item]}).encode("utf-8")) > 245000
+            ):
+                if not output["items"]:
+                    raise LimitError("search item exceeds response budget")
+                output["has_more"] = True
+                output["cursor"] = binding.encode(last_returned)
+                break
+            output["items"].append(item)
+            last_returned = identifier
     token.check()
     if request.sort == "relevance":
         _ranked_output(output, ranked, ranked_count)
@@ -152,35 +154,38 @@ def _matched_candidates(
     filters: list[Any],
     after: int,
     output: dict[str, Any],
-) -> Iterator[tuple[int, dict[str, Any]]]:
-    while True:
-        token.check()
-        candidate = connection.execute(sql, [*values, after, *filters]).fetchone()
-        if candidate is None:
-            break
-        identifier, uuid, type_name, key, metadata, answer = candidate
-        after = identifier
-        if answer is None:
-            body = connection.execute(PROPERTY_BODY[request.kind], (identifier,)).get
-            output["canonical_scan_count"] += 1
-            output["property_filter_mode"] = "canonical_fallback"
-            answer = evaluate(json.loads(body), request.properties or {})
+) -> Generator[tuple[int, dict[str, Any]], None, None]:
+    with closing(connection.execute(sql, [*values, after, *filters])) as candidates:
+        for candidate in candidates:
             token.check()
-        if not answer:
-            continue
-        match = (
-            owner_match(
-                connection, token, request.kind, identifier, uuid, text_query, include_evidence=request.include_evidence
+            identifier, uuid, type_name, key, metadata, answer = candidate
+            if answer is None:
+                body = connection.execute(PROPERTY_BODY[request.kind], (identifier,)).get
+                output["canonical_scan_count"] += 1
+                output["property_filter_mode"] = "canonical_fallback"
+                answer = evaluate(json.loads(body), request.properties or {})
+                token.check()
+            if not answer:
+                continue
+            match = (
+                owner_match(
+                    connection,
+                    token,
+                    request.kind,
+                    identifier,
+                    uuid,
+                    text_query,
+                    include_evidence=request.include_evidence,
+                )
+                if text_query is not None
+                else {}
             )
-            if text_query is not None
-            else {}
-        )
-        if match is None:
-            continue
-        item = {"id": uuid, **json.loads(metadata), **match}
-        if request.kind != "evidence":
-            item.update(type=type_name, key=key)
-        yield identifier, item
+            if match is None:
+                continue
+            item = {"id": uuid, **json.loads(metadata), **match}
+            if request.kind != "evidence":
+                item.update(type=type_name, key=key)
+            yield identifier, item
 
 
 def _ranked_output(output: dict[str, Any], ranked: list[tuple[float, int, dict[str, Any]]], ranked_count: int) -> None:

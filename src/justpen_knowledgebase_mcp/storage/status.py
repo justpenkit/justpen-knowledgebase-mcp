@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 from typing import TYPE_CHECKING, Any
+
+import apsw
 
 from .fulltext import coverage
 
 if TYPE_CHECKING:
-    import apsw
-
     from .worker import OperationToken
 
 
@@ -27,8 +28,8 @@ def sample_status(connection: apsw.Connection, token: OperationToken) -> dict[st
         counts[state] = count
     fallback: dict[str, int] = {}
     queries = {
-        "nodes": "SELECT count(*) FROM nodes WHERE lifecycle='ready' AND coalesce(json_extract(metadata,'$.property_index.complete'),0)!=1",
-        "relations": "SELECT count(*) FROM relations r JOIN nodes s ON s.id=r.source_id JOIN nodes t ON t.id=r.target_id WHERE r.lifecycle='ready' AND s.lifecycle='ready' AND t.lifecycle='ready' AND coalesce(json_extract(r.metadata,'$.property_index.complete'),0)!=1",
+        "nodes": "SELECT count(*) FROM nodes INDEXED BY nodes_property_fallback WHERE lifecycle='ready' AND coalesce(json_extract(metadata,'$.property_index.complete'),0)!=1",
+        "relations": "SELECT count(*) FROM relations r INDEXED BY relations_property_fallback CROSS JOIN nodes s ON s.id=r.source_id CROSS JOIN nodes t ON t.id=r.target_id WHERE r.lifecycle='ready' AND s.lifecycle='ready' AND t.lifecycle='ready' AND coalesce(json_extract(r.metadata,'$.property_index.complete'),0)!=1",
     }
     for kind, query in queries.items():
         token.check()
@@ -42,4 +43,41 @@ def sample_status(connection: apsw.Connection, token: OperationToken) -> dict[st
         "jobs": counts,
         "index_coverage": coverage(connection),
         "property_index_fallback": fallback,
+        "derived_storage": sample_derived_storage(connection, token),
     }
+
+
+DERIVED_OBJECTS = {
+    "text_projection_bytes": ("search_documents",),
+    "fts_index_bytes": ("search_fts_data", "search_fts_idx", "search_fts_docsize", "search_fts_config"),
+    "property_index_bytes": (
+        "node_property_index",
+        "relation_property_index",
+        "nodes_property_fallback",
+        "relations_property_fallback",
+    ),
+}
+
+
+def sample_derived_storage(connection: apsw.Connection, token: OperationToken) -> dict[str, Any]:
+    """Sum selected B-tree pages with cancellation between pages and no text materialization."""
+    sizes = dict.fromkeys(DERIVED_OBJECTS, 0)
+    try:
+        for category, names in DERIVED_OBJECTS.items():
+            for object_name in names:
+                token.check()
+                with closing(
+                    connection.execute(
+                        "SELECT name FROM sqlite_schema WHERE (tbl_name=? OR name=?) AND type IN ('table','index')",
+                        (object_name, object_name),
+                    )
+                ) as objects:
+                    for (name,) in objects:
+                        with closing(connection.execute("SELECT pgsize FROM dbstat WHERE name=?", (name,))) as pages:
+                            for (page_size,) in pages:
+                                token.check()
+                                sizes[category] += page_size
+    except apsw.SQLError:
+        return {"available": False, "reason": "DBSTAT_UNAVAILABLE"}
+    token.check()
+    return {"available": True, "reason": None, **sizes}

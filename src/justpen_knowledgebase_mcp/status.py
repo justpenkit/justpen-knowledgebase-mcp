@@ -35,6 +35,17 @@ class PropertyFallback(ClosedModel):
     relations: Count
 
 
+class DerivedStorage(ClosedModel):
+    """Selected SQLite B-tree page allocation; excludes canonical records, raw blobs and WAL."""
+
+    available: bool = False
+    reason: Literal["DBSTAT_UNAVAILABLE"] | None = "DBSTAT_UNAVAILABLE"
+    measurement: Literal["sqlite_page_allocation"] = "sqlite_page_allocation"
+    text_projection_bytes: Count | None = None
+    fts_index_bytes: Count | None = None
+    property_index_bytes: Count | None = None
+
+
 class DatabaseSample(ClosedModel):
     """Measured schema, shared policy and bounded aggregate counts."""
 
@@ -45,6 +56,7 @@ class DatabaseSample(ClosedModel):
     jobs: JobCounts
     index_coverage: IndexCoverage
     property_index_fallback: PropertyFallback
+    derived_storage: DerivedStorage = Field(default_factory=DerivedStorage)
 
 
 class DatabaseStatus(ClosedModel):

@@ -39,14 +39,20 @@ def test_newer_schema_is_rejected(tmp_path):
             runtime.connect()
 
 
-@pytest.mark.parametrize("replacement", [None, "CREATE INDEX jobs_active_lane ON jobs(state)"])
-def test_required_supporting_index_layout_is_checked_on_open(tmp_path, replacement):
+@pytest.mark.parametrize("name", ["jobs_active_lane", "nodes_property_fallback", "relations_property_fallback"])
+@pytest.mark.parametrize("replace", [False, True])
+def test_required_supporting_index_layout_is_checked_on_open(tmp_path, name, replace):
     config = ServerConfig(workspace_dir=tmp_path)
     with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
         with closing(runtime.connect()) as connection:
-            connection.execute("DROP INDEX jobs_active_lane")
-            if replacement is not None:
-                connection.execute(replacement)
+            connection.execute(f"DROP INDEX {name}")
+            if replace:
+                table = {
+                    "jobs_active_lane": "jobs",
+                    "nodes_property_fallback": "nodes",
+                    "relations_property_fallback": "relations",
+                }[name]
+                connection.execute(f"CREATE INDEX {name} ON {table}(id)")
         with pytest.raises(ConfigurationError, match="supporting index"):
             runtime.connect()
 

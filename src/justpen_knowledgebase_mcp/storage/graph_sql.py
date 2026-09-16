@@ -131,14 +131,14 @@ PROPERTY_BODY = {
     "relations": "SELECT properties FROM relations WHERE id=?",
 }
 SEARCH_CANDIDATE = {
-    "nodes": "SELECT o.id,o.uuid,o.type,o.key,o.metadata,({expression}) FROM nodes o WHERE {conditions} ORDER BY o.id LIMIT 1",
-    "relations": "SELECT o.id,o.uuid,o.type,o.key,o.metadata,({expression}) FROM relations o WHERE {conditions} ORDER BY o.id LIMIT 1",
+    "nodes": "SELECT o.id,o.uuid,o.type,o.key,o.metadata,({expression}) FROM nodes o WHERE {conditions} ORDER BY o.id",
+    "relations": "SELECT o.id,o.uuid,o.type,o.key,o.metadata,({expression}) FROM relations o WHERE {conditions} ORDER BY o.id",
 }
 READY = {
     "nodes": "o.lifecycle='ready'",
     "relations": "o.lifecycle='ready' AND EXISTS(SELECT 1 FROM nodes s WHERE s.id=o.source_id AND s.lifecycle='ready') AND EXISTS(SELECT 1 FROM nodes t WHERE t.id=o.target_id AND t.lifecycle='ready')",
 }
 ADJACENCY = {
-    "source_id": "SELECT o.id,o.uuid,o.type,o.source_id,o.target_id FROM relations o WHERE o.source_id=? AND o.id>? {type_clause} AND {ready} ORDER BY o.id LIMIT 1",
-    "target_id": "SELECT o.id,o.uuid,o.type,o.source_id,o.target_id FROM relations o WHERE o.target_id=? AND o.id>? {type_clause} AND {ready} ORDER BY o.id LIMIT 1",
+    "source_id": "SELECT o.id,o.uuid,o.type,o.source_id,o.target_id FROM relations o WHERE o.source_id=? AND o.id>? {type_clause} AND {ready} ORDER BY o.id",
+    "target_id": "SELECT o.id,o.uuid,o.type,o.source_id,o.target_id FROM relations o WHERE o.target_id=? AND o.id>? {type_clause} AND {ready} ORDER BY o.id",
 }

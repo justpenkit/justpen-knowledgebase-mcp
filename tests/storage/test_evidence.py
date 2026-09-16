@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from justpen_knowledgebase_mcp.config import ServerConfig, WorkspacePolicy
-from justpen_knowledgebase_mcp.errors import BusyError, InvalidParamsError, LimitError, StorageIOError
+from justpen_knowledgebase_mcp.errors import BusyError, InvalidParamsError, LimitError, PathDeniedError, StorageIOError
 from justpen_knowledgebase_mcp.evidence import ReadEvidenceRequest
 from justpen_knowledgebase_mcp.storage import evidence
 from justpen_knowledgebase_mcp.storage.job_recovery import StageScan
@@ -39,6 +39,14 @@ def test_copy_hash_publish_and_source_stat(store, tmp_path):
     assert source.stat().st_size == 400000
     assert not (store.workspace.tmp / copied.name).exists()
     assert (store.workspace.evidence / digest[:2] / digest[2:4] / digest).stat().st_mode & 0o777 == 0o600
+
+
+def test_durable_stage_publication_still_rejects_hardlink_alias(store):
+    staged = store.stage_inline(b"owned", str(uuid4()), str(uuid4()))
+    os.link(store.workspace.tmp / staged.name, store.workspace.tmp / "alias")
+    with pytest.raises(PathDeniedError, match="UNSAFE_MANAGED_FILE"):
+        store.publish(staged)
+    assert not (store.workspace.evidence / store.blob_name(staged.sha256)).exists()
 
 
 def test_changed_small_source_is_rejected_before_copy(store, tmp_path):

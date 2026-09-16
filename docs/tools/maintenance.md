@@ -10,6 +10,19 @@ samples, process-local queues, and fixed capabilities. Samples explicitly report
 availability, cache age, and staleness. Status is SQL-free at call time and
 cannot measure external reader age.
 
+`database.sample.derived_storage` reports SQLite page-allocation bytes separately
+for decoded text projections and their lookup indexes, FTS shadow tables/indexes,
+and property projections/indexes. These include page slack; they exclude canonical
+graph records, raw evidence files, free pages and WAL. They are not filesystem
+allocated-block counts or a raw-to-index expansion ratio.
+
+The initial/30-second sampler streams selected B-tree pages under ordinary reader
+admission and its existing deadline, checking cancellation between pages. Missing
+`dbstat` support reports `available: false`, `DBSTAT_UNAVAILABLE`, and null bytes.
+A deadline or storage failure preserves the prior database sample as stale (or
+unavailable before the first successful sample); no partial byte total is published.
+Sample age applies to the byte totals too. Native page I/O has no hard latency bound.
+
 WAL diagnostics include `maintenance_alive`, `maintenance_error`, and
 `maintenance_failed_permanently`. A permanent local maintenance fault rejects
 product operations with its nonretryable error category; status, control, and

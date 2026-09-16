@@ -97,6 +97,19 @@ async def test_invalid_tool_model_never_dispatches(monkeypatch):
 async def test_status_sampler_retains_prior_sample_and_sanitizes_failure(monkeypatch):
     coverage = {"ready": 1, "pending": 0, "failed": 0, "incomplete": 0, "not_applicable": 0}
     monkeypatch.setattr(storage_status, "coverage", Mock(return_value=coverage))
+    monkeypatch.setattr(
+        storage_status,
+        "sample_derived_storage",
+        Mock(
+            return_value={
+                "available": True,
+                "reason": None,
+                "text_projection_bytes": 4096,
+                "fts_index_bytes": 8192,
+                "property_index_bytes": 4096,
+            }
+        ),
+    )
     db = database(
         cursor(rows=[(1, 1, 1, WorkspacePolicy().model_dump_json())]),
         cursor(rows=[("running", 2)]),

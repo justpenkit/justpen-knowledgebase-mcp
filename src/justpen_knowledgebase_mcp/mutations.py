@@ -73,7 +73,7 @@ def _write_paths(old: dict[str, Any], new: dict[str, Any], prefix: tuple[str, ..
         path = (*prefix, key)
         if type(old.get(key)) is dict and type(value) is dict:
             writes.extend(_write_paths(old[key], cast("dict[str, Any]", value), path))
-        elif key not in old and type(value) is dict and value:
+        elif key not in old and type(value) is dict:
             writes.extend(_write_paths({}, cast("dict[str, Any]", value), path))
         else:
             writes.append(path)
@@ -84,6 +84,17 @@ def _object_mapping(value: object) -> dict[str, Any] | None:
     if isinstance(value, dict):
         return cast("dict[str, Any]", value)
     return None
+
+
+def _object_paths(value: dict[str, Any], prefix: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
+    """Containers are merge points, but removing them would recreate them on merge."""
+    paths: list[tuple[str, ...]] = []
+    for key, child in value.items():
+        if type(child) is dict:
+            path = (*prefix, key)
+            paths.append(path)
+            paths.extend(_object_paths(cast("dict[str, Any]", child), path))
+    return paths
 
 
 def _remove(result: dict[str, Any], remove: tuple[str, ...]) -> None:
@@ -117,7 +128,10 @@ def merge_properties(current: dict[str, Any], patch: dict[str, Any], remove_prop
     validate_properties(patch)
     removals = [pointer_tokens(pointer) for pointer in remove_properties]
     writes = _write_paths(current, patch)
+    objects = _object_paths(patch)
     for remove in removals:
+        if any(path[: len(remove)] == remove for path in objects):
+            raise ValueError("remove and set paths conflict")
         for write in writes:
             common = min(len(remove), len(write))
             if remove[:common] == write[:common]:

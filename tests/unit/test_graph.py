@@ -88,11 +88,19 @@ def test_upsert_merge_identity_and_duplicate_boundaries(monkeypatch):
         graph._upsert(db, "nodes", NodeWrite(id=NODE, properties={"name": "other.com"}), [], set())
     with pytest.raises(ConflictError, match="type"):
         graph._upsert(db, "nodes", NodeWrite(id=NODE, type="hostname", properties={}), [], set())
+    persisted.reset_mock()
     with pytest.raises(InvalidParamsError, match="duplicate"):
         graph._upsert(db, "nodes", NodeWrite(id=NODE, properties={}), [], {("nodes", 1)})
+    persisted.assert_not_called()
     monkeypatch.setattr(graph, "row_by_id", Mock(return_value=None))
     with pytest.raises(NotFoundError):
         graph._upsert(db, "nodes", NodeWrite(id=NODE, properties={}), [], set())
+
+
+def test_write_value_error_does_not_expose_validation_payload(monkeypatch):
+    monkeypatch.setattr(graph, "_upsert", Mock(side_effect=ValueError("secret payload " * 1000)))
+    with pytest.raises(InvalidParamsError, match=r"^invalid graph mutation$"):
+        graph.Graph.write(database(), Mock(), WriteRequest(nodes=[NodeWrite(id=NODE)]))
 
 
 @pytest.mark.parametrize("existing", [False, True])

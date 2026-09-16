@@ -269,10 +269,10 @@ def _upsert(
     validate_record(kind, type_name, properties)
     if row and identity_json(kind, type_name, current) != identity_json(kind, type_name, properties):
         raise ConflictError("identity properties are immutable")
+    if row is not None and (kind, row["id"]) in seen:
+        raise InvalidParamsError("duplicate batch identity")
     row, created = _persist(connection, kind, mutation, row, properties, (source, target))
     identity = (kind, row["id"])
-    if identity in seen:
-        raise InvalidParamsError("duplicate batch identity")
     seen.add(identity)
     return row, created
 
@@ -322,7 +322,7 @@ class Graph:
                     if kind == "nodes":
                         nodes.append(row)
         except ValueError as exc:
-            raise InvalidParamsError(str(exc)) from exc
+            raise InvalidParamsError("invalid graph mutation") from exc
         return WriteResult.model_validate(output).model_dump()
 
     @staticmethod

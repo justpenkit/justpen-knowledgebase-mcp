@@ -302,7 +302,7 @@ DOCUMENT_INSERT = {
     kind: f"INSERT INTO search_documents({owner},pointer,text,byte_start,line_start,encoding,overlap_owner) VALUES(?,?,?,0,1,'utf-8',0)"
     for kind, owner in OWNER_COLUMN.items()
 }
-_MATCH_TEMPLATE = "SELECT d.id,d.pointer,d.text,d.byte_start,d.line_start,d.overlap_owner,d.encoding,d.previous_cr,bm25(search_fts) FROM search_fts JOIN search_documents d ON d.id=search_fts.rowid WHERE search_fts MATCH ? AND d.{owner}=?"
+_MATCH_TEMPLATE = "SELECT d.id,d.pointer,d.text,d.byte_start,d.line_start,d.overlap_owner,d.encoding,d.previous_cr,bm25(search_fts) FROM search_documents d CROSS JOIN search_fts ON d.id=search_fts.rowid WHERE search_fts MATCH ? AND d.{owner}=?"
 _EVIDENCE_GENERATION = " AND EXISTS(SELECT 1 FROM evidence e WHERE e.id=d.evidence_id AND e.lifecycle='ready' AND e.index_state!='not_applicable' AND e.index_generation=d.index_generation)"
 DOCUMENT_MATCH = {
     kind: "".join((_MATCH_TEMPLATE.format(owner=owner), _EVIDENCE_GENERATION if kind == "evidence" else ""))

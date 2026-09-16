@@ -1,5 +1,7 @@
 """Pure property mutation contract regressions."""
 
+import copy
+
 import pytest
 
 from justpen_knowledgebase_mcp.mutations import merge_properties
@@ -62,3 +64,21 @@ def test_missing_and_existing_object_sibling_write_have_same_remove_behavior(cur
 def test_scalar_to_object_is_a_real_ancestor_replacement(current):
     with pytest.raises(ValueError):
         merge_properties(current, {"a": {"y": 2}}, ["/a/x"])
+
+
+@pytest.mark.parametrize("current", [{}, {"a": {}}])
+def test_empty_object_merge_can_remove_absent_child(current):
+    patch = {"a": {}}
+    before = copy.deepcopy(current)
+    assert merge_properties(current, patch, ["/a/x"]) == {"a": {}}
+    assert patch == {"a": {}}
+    assert current == before
+
+
+@pytest.mark.parametrize("current", [{}, {"a": {"x": 1}}])
+@pytest.mark.parametrize("patch", [{"a": {}}, {"a": {"b": {}}}])
+def test_removal_cannot_recreate_explicit_object_container(current, patch):
+    before = copy.deepcopy(current)
+    with pytest.raises(ValueError, match="remove and set paths conflict"):
+        merge_properties(current, patch, ["/a"])
+    assert current == before

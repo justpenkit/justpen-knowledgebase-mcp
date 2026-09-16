@@ -101,6 +101,9 @@ def test_managed_publication_syncs_before_rename_and_closes_owners(paths, monkey
     monkeypatch.setattr(workspace.os, "rename", Mock(side_effect=lambda *_args, **_kwargs: calls.append(("rename",))))
     paths.publish("owned", "aa/bb/hash")
     assert calls == [("sync", 7), ("rename",), ("sync", 6)]
+    calls.clear()
+    paths.publish("owned", "aa/bb/hash", durable_stage=True)
+    assert calls == [("rename",), ("sync", 6)]
     for source, destination in [("../bad", "hash"), ("owned", "/absolute"), ("owned", "../hash")]:
         with pytest.raises(PathDeniedError):
             paths.publish(source, destination)

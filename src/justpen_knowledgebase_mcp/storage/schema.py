@@ -24,6 +24,8 @@ INDEX_FORMAT_VERSION = 1
 REQUIRED_INDEXES = {
     "jobs_active_lane": "CREATE INDEX jobs_active_lane ON jobs(lane,kind,id) WHERE purge_pending=0 AND state IN ('queued','running')",
     "jobs_blob_locator": f"CREATE INDEX jobs_blob_locator ON jobs(({BLOB_LOCATOR_KEY})) WHERE purge_pending=0",
+    "nodes_property_fallback": "CREATE INDEX nodes_property_fallback ON nodes(id) WHERE lifecycle='ready' AND coalesce(json_extract(metadata,'$.property_index.complete'),0)!=1",
+    "relations_property_fallback": "CREATE INDEX relations_property_fallback ON relations(id,source_id,target_id) WHERE lifecycle='ready' AND coalesce(json_extract(metadata,'$.property_index.complete'),0)!=1",
 }
 
 DDL = """

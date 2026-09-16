@@ -224,12 +224,13 @@ class EvidenceStore:
                 raise StorageIOError("IO_ERROR: EVIDENCE_CHANGED")
 
     def publish(self, staged: StagedEvidence) -> None:
-        """Sync regular data then rename and sync every newly created hash directory."""
+        """Publish an immutable stage already flushed by _stage, then sync its directory chain."""
         try:
-            with self.workspace.open_managed_file(self.workspace.tmp / staged.name) as fd:
-                sync_evidence(fd)
             relative = self.blob_name(staged.sha256)
-            self.workspace.publish(staged.name, relative)
+            # Keep the regular-file/single-link validation even though these
+            # exclusively owned bytes already completed their durability flush.
+            with self.workspace.open_managed_file(self.workspace.tmp / staged.name):
+                self.workspace.publish(staged.name, relative, durable_stage=True)
             for path in (self.workspace.evidence / staged.sha256[:2], self.workspace.evidence, self.workspace.tmp):
                 fd = self.workspace.open_directory(path)
                 try:

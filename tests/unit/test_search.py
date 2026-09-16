@@ -20,9 +20,8 @@ def test_search_canonical_fallback_resolves_before_advancing(monkeypatch):
     monkeypatch.setattr(search, "coverage", Mock(return_value=COVERAGE))
     db = database(
         cursor(value=(NODE, 1)),
-        cursor(rows=[(1, NODE, "domain", "key", "{}", None)]),
+        cursor(rows=[(1, NODE, "domain", "key", "{}", None), (2, OTHER, "domain", "key", "{}", None)]),
         cursor(value='{"name":"miss"}'),
-        cursor(rows=[(2, OTHER, "domain", "key", "{}", None)]),
         cursor(value='{"name":"hit"}'),
         cursor(),
     )
@@ -39,8 +38,7 @@ def test_search_pages_only_after_returned_match(monkeypatch):
     monkeypatch.setattr(search, "coverage", Mock(return_value=COVERAGE))
     db = database(
         cursor(value=(NODE, 1)),
-        cursor(rows=[(1, NODE, "domain", "key", "{}", True)]),
-        cursor(rows=[(2, OTHER, "domain", "key", "{}", True)]),
+        cursor(rows=[(1, NODE, "domain", "key", "{}", True), (2, OTHER, "domain", "key", "{}", True)]),
     )
     first = search.search(db, Mock(), SearchRequest(kind="nodes", limit=1))
     assert first["has_more"]
@@ -60,9 +58,13 @@ def test_relevance_best_bounded_results_and_unverified_candidate(monkeypatch):
     monkeypatch.setattr(search, "owner_match", Mock(side_effect=[None, {"score": -1.0}, {"score": -2.0}]))
     db = database(
         cursor(value=(NODE, 1)),
-        cursor(rows=[(1, NODE, "domain", "key", "{}", 1)]),
-        cursor(rows=[(2, OTHER, "domain", "key", "{}", 1)]),
-        cursor(rows=[(3, NODE, "domain", "key", "{}", 1)]),
+        cursor(
+            rows=[
+                (1, NODE, "domain", "key", "{}", 1),
+                (2, OTHER, "domain", "key", "{}", 1),
+                (3, NODE, "domain", "key", "{}", 1),
+            ]
+        ),
         cursor(),
     )
     result = search.search(
@@ -124,7 +126,7 @@ def test_adjacency_returns_lowest_id_across_direction_and_types(direction, outgo
     values = [outgoing, incoming] if direction == "both" else [outgoing if direction == "out" else incoming]
     db = database(*(cursor(rows=[] if identifier is None else [row(identifier)]) for identifier in values))
     request = NeighborsRequest(seed_ids=[NODE], relation_types=["subdomain_of"], direction=direction)
-    edge = traversal._next_edge(db, 1, 0, request)
+    edge = next(traversal._edges(db, 1, request), None)
     assert (edge[0] if edge else None) == expected
     assert db.execute.call_count == len(values)
     assert db.execute.call_args.args[1] == (1, 0, "subdomain_of")
@@ -136,14 +138,11 @@ def test_traversal_cycles_limits_and_frontier(monkeypatch, max_nodes, max_edges,
     monkeypatch.setattr(traversal, "require_ready", Mock())
     monkeypatch.setattr(
         traversal,
-        "_next_edge",
+        "_edges",
         Mock(
             side_effect=[
-                (1, NODE, "subdomain_of", 1, 2),
-                (2, OTHER, "subdomain_of", 2, 1),
-                None,
-                (1, NODE, "subdomain_of", 1, 2),
-                None,
+                (edge for edge in [(1, NODE, "subdomain_of", 1, 2), (2, OTHER, "subdomain_of", 2, 1)]),
+                (edge for edge in [(1, NODE, "subdomain_of", 1, 2)]),
             ]
         ),
     )

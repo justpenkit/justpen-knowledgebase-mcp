@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import heapq
 import time
 from collections import deque
+from contextlib import ExitStack, closing
 from typing import TYPE_CHECKING, Any
 
 from ..errors import NotFoundError
@@ -13,16 +15,18 @@ from .graph import require_ready, row_by_id
 from .graph_sql import ADJACENCY, READY
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     import apsw
 
     from ..models import NeighborsRequest
     from .worker import OperationToken
 
 
-def _next_edge(
-    connection: apsw.Connection, owner: int, after: int, request: NeighborsRequest
-) -> tuple[Any, ...] | None:
-    candidates: list[tuple[Any, ...]] = []
+def _edges(
+    connection: apsw.Connection, owner: int, request: NeighborsRequest
+) -> Generator[tuple[Any, ...], None, None]:
+    """Merge at most 200 selective index streams, retaining one row per stream."""
     directions = (
         ("source_id", "target_id")
         if request.direction == "both"
@@ -30,16 +34,22 @@ def _next_edge(
         if request.direction == "out"
         else ("target_id",)
     )
-    for column in directions:
-        for type_name in request.relation_types if request.relation_types is not None else [None]:
-            clause = " AND o.type=?" if type_name is not None else ""
-            parameters = (owner, after, type_name) if type_name is not None else (owner, after)
-            result = connection.execute(
-                ADJACENCY[column].format(type_clause=clause, ready=READY["relations"]), parameters
-            ).fetchone()
-            if result is not None:
-                candidates.append(result)
-    return min(candidates, key=lambda item: item[0]) if candidates else None
+    with ExitStack() as stack:
+        streams: list[apsw.Cursor] = []
+        for column in directions:
+            for type_name in dict.fromkeys(request.relation_types) if request.relation_types is not None else [None]:
+                clause = " AND o.type=?" if type_name is not None else ""
+                parameters = (owner, 0, type_name) if type_name is not None else (owner, 0)
+                streams.append(
+                    stack.enter_context(
+                        closing(
+                            connection.execute(
+                                ADJACENCY[column].format(type_clause=clause, ready=READY["relations"]), parameters
+                            )
+                        )
+                    )
+                )
+        yield from heapq.merge(*streams, key=lambda item: item[0])
 
 
 class _Traversal:
@@ -95,21 +105,20 @@ class _Traversal:
         return None
 
     def expand(self, owner: int, depth: int) -> str | None:
-        after = 0
-        while True:
-            self.token.check()
-            # Best-effort completion room, never an extension of the worker deadline.
-            if time.monotonic() >= self.token.deadline - 0.01:
-                return "deadline"
-            edge = _next_edge(self.connection, owner, after, self.request)
-            if edge is None:
-                return None
-            after = edge[0]
-            if after in self.edges:
-                continue
-            reason = self.append_edge(owner, depth, edge)
-            if reason is not None:
-                return reason
+        if time.monotonic() >= self.token.deadline - 0.01:
+            return "deadline"
+        with closing(_edges(self.connection, owner, self.request)) as edges:
+            for edge in edges:
+                self.token.check()
+                # Best-effort completion room, never an extension of the worker deadline.
+                if time.monotonic() >= self.token.deadline - 0.01:
+                    return "deadline"
+                if edge[0] in self.edges:
+                    continue
+                reason = self.append_edge(owner, depth, edge)
+                if reason is not None:
+                    return reason
+        return None
 
     def run(self) -> dict[str, Any]:
         self.seeds()
