@@ -11,7 +11,15 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import apsw
 
-from ..errors import BusyError, CancelledOperationError, InternalError, LimitError, McpError, StorageIOError
+from ..errors import (
+    BusyError,
+    CancelledOperationError,
+    ConfigurationError,
+    InternalError,
+    LimitError,
+    McpError,
+    StorageIOError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,6 +68,7 @@ class _Owner:
     current: OperationToken | None = None
     generation: int = 0
     thread: threading.Thread | None = None
+    available: bool = True
 
 
 class DatabaseWorkers:
@@ -78,6 +87,8 @@ class DatabaseWorkers:
         self._owners: list[_Owner] = []
         self._stopping = False
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._failure: McpError | None = None
+        self._read_failure: McpError | None = None
 
     def queue_status(self) -> dict[str, Any]:
         """Snapshot process-local queues under their ordinary short mutex."""
@@ -127,6 +138,9 @@ class DatabaseWorkers:
         token = token or OperationToken(time.monotonic() + self.factory.config.query_timeout_ms / 1000)
         token.check()
         with self._condition:
+            failure = self._failure or (self._read_failure if lane == "read" else None)
+            if failure is not None:
+                raise type(failure)(str(failure))
             if self._stopping or len(self._queues[lane]) >= (16 if lane == "control" else 128):
                 raise BusyError("database queue unavailable")
             if token.submitted:
@@ -225,7 +239,7 @@ class DatabaseWorkers:
                 with self._condition:
                     work.token.state = "done"
                 self._notify(work.future, error=error)
-            self._fail_queued()
+            self._owner_failed(owner, outcome.error)
         # Mark unavailable under the same lock used by interrupt, before native close.
         with self._condition:
             owner.connection = None
@@ -236,14 +250,34 @@ class DatabaseWorkers:
                 self.factory.close_connection(connection)
         self._notify(owner.closed, error=closed.error)
 
+    def _owner_failed(self, owner: _Owner, error: BaseException) -> None:
+        with self._condition:
+            owner.available = False
+            failure = (
+                ConfigurationError("database owner unavailable")
+                if isinstance(error, ConfigurationError)
+                else StorageIOError("database owner unavailable")
+            )
+            if not owner.reader or isinstance(error, (apsw.CorruptError, apsw.NotADBError)):
+                self._failure = failure
+                self._fail_queued()
+            elif not any(other.reader and other.available for other in self._owners):
+                self._read_failure = failure
+                self._drain_failed("read", failure)
+
+    def _drain_failed(self, lane: Lane, error: McpError) -> None:
+        queue = self._queues[lane]
+        while queue:
+            work = queue.popleft()
+            work.token.state = "done"
+            failure = CancelledOperationError("operation cancelled before commit") if work.token.cancelled else error
+            self._notify(work.future, error=failure)
+
     def _fail_queued(self) -> None:
         with self._condition:
             self._stopping = True
-            for queue in self._queues.values():
-                while queue:
-                    work = queue.popleft()
-                    work.token.state = "done"
-                    self._notify(work.future, error=StorageIOError("database owner unavailable"))
+            for lane in self._queues:
+                self._drain_failed(lane, self._failure or StorageIOError("database owner unavailable"))
             self._condition.notify_all()
 
     def _execute(self, owner: _Owner, connection: ManagedConnection, work: _Work) -> None:
@@ -258,7 +292,7 @@ class DatabaseWorkers:
                 owner.current = None
                 work.token.state = "done"
             self._notify(work.future, error=_public_error(outcome.error, work.token))
-            if isinstance(outcome.error, StorageIOError):
+            if connection.retired or isinstance(outcome.error, (apsw.CorruptError, apsw.NotADBError)):
                 raise outcome.error
 
     def _execute_scoped(self, owner: _Owner, connection: ManagedConnection, work: _Work) -> None:
@@ -311,6 +345,8 @@ class DatabaseWorkers:
             owner.current = None
             owner.connection = None if connection.retired else connection
         self._notify(work.future, result, error)
+        if isinstance(outcome.error, (apsw.CorruptError, apsw.NotADBError)):
+            raise outcome.error
         if cleanup_error is not None:
             # A connection whose rollback failed must not accept another operation.
             raise StorageIOError("database cleanup failed") from None
@@ -345,7 +381,7 @@ def _public_error(error: BaseException, token: OperationToken) -> BaseException:
             return LimitError("operation deadline exceeded")
     if isinstance(error, apsw.BusyError):
         return BusyError("database lock unavailable")
-    if isinstance(error, (apsw.IOError, apsw.FullError, OSError)):
+    if isinstance(error, (apsw.IOError, apsw.FullError, apsw.CorruptError, apsw.NotADBError, OSError)):
         return StorageIOError("managed storage operation failed")
     return InternalError("database operation failed")
 

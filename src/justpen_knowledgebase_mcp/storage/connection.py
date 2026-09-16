@@ -212,6 +212,7 @@ class SQLiteRuntime:
 
     def check_product(self, connection: apsw.Connection) -> None:
         """Enforce the latest shared sample in the product's transaction snapshot."""
+        self.status_cache.check_health()
         policy = self.guard.policy(connection)
         state = WalState.read(connection)
         self.status_cache.update(state)
@@ -219,7 +220,7 @@ class SQLiteRuntime:
         allocated = allocation(self.workspace)
         physical_high = allocated is None or allocated >= policy.wal_high_bytes
         if physical_high:
-            self.status_cache.update(state.model_copy(update={"phase": "assessment_pending"}))
+            self.status_cache.assessment()
         valid_normal = state.phase == "normal" and state.valid_sample(now)
         stale = valid_normal and state.sample_at is not None and now - state.sample_at > 35
         if (physical_high or not valid_normal or stale) and self.wake_maintenance is not None:

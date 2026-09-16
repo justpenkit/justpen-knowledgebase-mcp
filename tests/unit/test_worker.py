@@ -1,6 +1,7 @@
 """Owner worker coordination with isolated managed connections and deterministic events."""
 
 import asyncio
+import threading
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -165,9 +166,96 @@ async def test_failed_cleanup_stops_owner_before_any_connection_reuse():
     assert workers.queue_status()["stopping"]
     assert [call.args[0] for call in db.execute.call_args_list] == ["BEGIN IMMEDIATE", "COMMIT"]
     callback = Mock()
-    with pytest.raises(BusyError):
+    with pytest.raises(StorageIOError):
         await workers.write(callback)
     callback.assert_not_called()
+
+
+async def test_storage_error_without_retirement_preserves_owner():
+    workers = worker.DatabaseWorkers(factory())
+    await workers.start()
+
+    def fail(_connection, _token):
+        raise StorageIOError("bounded storage failure")
+
+    try:
+        with pytest.raises(StorageIOError):
+            await workers.read(fail)
+        assert await workers.read(lambda _connection, _token: 9) == 9
+        assert await workers.write(lambda _connection, _token: 7) == 7
+    finally:
+        await workers.close()
+
+
+async def test_last_reader_retirement_fails_reads_but_preserves_writer():
+    runtime = factory()
+    workers = worker.DatabaseWorkers(runtime)
+    await workers.start()
+    reader = workers._owners[1]
+
+    def retire(connection, _token):
+        connection.retired = True
+        connection.rollback_or_retire.return_value = OSError("rollback failure")
+        return 3
+
+    try:
+        assert await workers.read(retire) == 3
+        await asyncio.wait_for(asyncio.shield(reader.closed), 2)
+        with pytest.raises(StorageIOError):
+            await workers.read(lambda _connection, _token: None)
+        assert await workers.write(lambda _connection, _token: 7) == 7
+        assert await workers.control(lambda _connection, _token: 8) == 8
+    finally:
+        await workers.close()
+
+
+async def test_last_reader_failure_drains_waiting_and_cancelled_reads():
+    workers = worker.DatabaseWorkers(factory())
+    await workers.start()
+    entered, release = threading.Event(), threading.Event()
+
+    def retire(connection, _token):
+        entered.set()
+        assert release.wait(3)
+        connection.retired = True
+        connection.rollback_or_retire.return_value = OSError("rollback failure")
+
+    running = asyncio.create_task(workers.read(retire))
+    assert await asyncio.to_thread(entered.wait, 2)
+    waiting = asyncio.create_task(workers.read(lambda _c, _t: pytest.fail("failed lane dequeued work")))
+    token = worker.OperationToken(float("inf"))
+    cancelled = asyncio.create_task(workers.read(lambda _c, _t: pytest.fail("cancelled callback ran"), token))
+    await asyncio.sleep(0)
+    assert workers.interrupt_if_current(token)
+    release.set()
+    try:
+        await running
+        with pytest.raises(StorageIOError):
+            await waiting
+        with pytest.raises(CancelledOperationError):
+            await cancelled
+        assert workers.queue_status()["read_queued"] == 0
+        assert await workers.write(lambda _c, _t: 7) == 7
+    finally:
+        release.set()
+        await workers.close()
+
+
+async def test_native_corruption_in_reader_stops_pool_with_stable_io_error():
+    workers = worker.DatabaseWorkers(factory())
+    await workers.start()
+
+    def corrupt(_connection, _token):
+        raise apsw.CorruptError("private corrupt bytes")
+
+    try:
+        with pytest.raises(StorageIOError):
+            await workers.read(corrupt)
+        await asyncio.wait_for(asyncio.shield(workers._owners[1].closed), 2)
+        with pytest.raises(StorageIOError, match="database owner unavailable"):
+            await workers.write(lambda _c, _t: pytest.fail("corrupt pool accepted work"))
+    finally:
+        await workers.close()
 
 
 def test_operation_token_prioritizes_cancellation_and_expires():

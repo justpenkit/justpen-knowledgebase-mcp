@@ -6,7 +6,7 @@ import asyncio
 import time
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import uuid4
 
 from .errors import InvalidParamsError, LimitError
@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
     from .config import ServerConfig
     from .telemetry.events import TelemetryEvents
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -149,11 +151,14 @@ class KnowledgeBase:
 
     async def neighbors(self, request: NeighborsRequest | dict[str, Any]) -> dict[str, Any]:
         """Traverse ready adjacency within explicit output budgets."""
+        deadline = time.monotonic() + self.config.query_timeout_ms / 1000
         try:
             validated = NeighborsRequest.model_validate(request)
         except ValueError as exc:
             raise InvalidParamsError("invalid traversal request") from exc
-        return await self.workers.read(lambda connection, token: neighbors(connection, token, validated))
+        return await self.workers.read(
+            lambda connection, token: neighbors(connection, token, validated), OperationToken(deadline)
+        )
 
     async def search(self, request: SearchRequest | dict[str, Any]) -> dict[str, Any]:
         """Select records with exact filters and verified text in one bounded snapshot."""
@@ -192,33 +197,57 @@ class KnowledgeBase:
     ) -> AsyncGenerator[KnowledgeBase]:
         """Open resources at application lifespan entry and close in owner order."""
         observer = _shutdown_observer or ShutdownObserver()
-        workspace = WorkspacePaths(config)
         try:
-            with runtime_context(workspace) if runtime_context is not None else nullcontext():
-                factory = SQLiteRuntime(workspace, config)
-                workers = DatabaseWorkers(factory)
-                maintenance = CheckpointMaintenance(factory)
-                job_runner = None
-                status_sampler = StatusSampler(workers)
-                try:
-                    await maintenance.start()
-                    await workers.start()
-                    policy = await workers.control(lambda connection, _token: factory.guard.policy(connection))
-                    job_runner = JobRunner(workers, workspace, policy)
-                    if _telemetry_events is not None:
-                        job_runner.events = _telemetry_events
-                    await job_runner.start()
-                    await status_sampler.start()
-                    yield cls(config, workspace, workers, maintenance, job_runner, status_sampler)
-                finally:
-                    try:
-                        await _close_workers(workers, observer, maintenance, job_runner, status_sampler)
-                    finally:
-                        factory.close()
+            async with _off_loop_resource(
+                lambda: WorkspacePaths(config), lambda workspace: workspace.close()
+            ) as workspace:
+                with runtime_context(workspace) if runtime_context is not None else nullcontext():
+                    async with _off_loop_resource(
+                        lambda: SQLiteRuntime(workspace, config), lambda factory: factory.close()
+                    ) as factory:
+                        workers = DatabaseWorkers(factory)
+                        maintenance = CheckpointMaintenance(factory)
+                        job_runner = None
+                        status_sampler = StatusSampler(workers)
+                        try:
+                            await maintenance.start()
+                            await workers.start()
+                            policy = await workers.control(lambda connection, _token: factory.guard.policy(connection))
+                            job_runner = JobRunner(workers, workspace, policy)
+                            if _telemetry_events is not None:
+                                job_runner.events = _telemetry_events
+                            await job_runner.start()
+                            await status_sampler.start()
+                            yield cls(config, workspace, workers, maintenance, job_runner, status_sampler)
+                        finally:
+                            await _close_workers(workers, observer, maintenance, job_runner, status_sampler)
         finally:
-            workspace.close()
             if _shutdown_observer is None:
                 await observer.close()
+
+
+@asynccontextmanager
+async def _off_loop_resource(create: Callable[[], T], dispose: Callable[[T], None]) -> AsyncGenerator[T]:
+    # Cancellation cannot abandon native initialization or its resulting resource.
+    resource, cancelled = await _drain_owned(asyncio.create_task(asyncio.to_thread(create)))
+    try:
+        if cancelled:
+            raise asyncio.CancelledError
+        yield resource
+    finally:
+        _, cancelled = await _drain_owned(asyncio.create_task(asyncio.to_thread(dispose, resource)))
+        if cancelled:
+            raise asyncio.CancelledError
+
+
+async def _drain_owned(task: asyncio.Task[T]) -> tuple[T, bool]:
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    return task.result(), cancelled
 
 
 async def _close_workers(

@@ -10,6 +10,19 @@ samples, process-local queues, and fixed capabilities. Samples explicitly report
 availability, cache age, and staleness. Status is SQL-free at call time and
 cannot measure external reader age.
 
+WAL diagnostics include `maintenance_alive`, `maintenance_error`, and
+`maintenance_failed_permanently`. A permanent local maintenance fault rejects
+product operations with its nonretryable error category; status, control, and
+coordinated shutdown remain available. Transient failures retry at a bounded
+cadence and clear after a newer successful measurement. Physical-high assessment
+is a process-local cached observation, so peers can briefly display different
+phases; shared measurements and each process's admission checks still protect
+the workspace independently.
+
+A retired reader reduces local capacity while healthy owners continue. An
+exhausted read lane or failed writer reports a stable storage error; ordinary
+queue saturation remains retryable `BUSY`.
+
 **Errors:** only bounded internal/configuration failure at the wrapper; stale or
 unavailable sampled state normally remains successful structured data.
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import logging
 import math
 import os
 import threading
@@ -15,7 +16,7 @@ from uuid import uuid4
 import apsw
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..errors import BusyError, LimitError, PathDeniedError, StorageIOError
+from ..errors import BusyError, ConfigurationError, InternalError, LimitError, McpError, PathDeniedError, StorageIOError
 from .admission import open_lock
 from .worker import OperationToken, OwnerOutcome
 
@@ -97,14 +98,44 @@ class StatusCache:
         self._cached_at: float | None = None
         self._reset = False
         self._evaluation_requested = False
+        self._assessment_seq: int | None = None
+        self._failure: tuple[McpError, bool, int, float] | None = None
 
     def update(self, state: WalState) -> None:
         """Copy the immutable snapshot after shared reads or committed publication."""
         with self._lock:
+            if (state.sample_seq, state.attempt_started_at or 0, state.attempt_finished_at or 0) < (
+                self._state.sample_seq,
+                self._state.attempt_started_at or 0,
+                self._state.attempt_finished_at or 0,
+            ):
+                return
             self._state = state
             self._cached_at = time.time()
             if state.phase == "normal" and state.valid_sample(self._cached_at):
                 self._evaluation_requested = False
+                if self._assessment_seq is not None and state.sample_seq > self._assessment_seq:
+                    self._assessment_seq = None
+                if self._failure is not None and not self._failure[1] and state.sample_seq > self._failure[2]:
+                    self._failure = None
+
+    def assessment(self) -> None:
+        """Keep a local high-allocation observation until a newer normal sample."""
+        with self._lock:
+            self._assessment_seq = self._state.sample_seq
+
+    def failed(self, error: McpError, *, permanent: bool) -> None:
+        """Record owner health independently of the last committed measurement."""
+        with self._lock:
+            if self._failure is None or not self._failure[1]:
+                self._failure = (error, permanent, self._state.sample_seq, time.time())
+
+    def check_health(self) -> None:
+        """Reject product work after a permanent local maintenance fault."""
+        with self._lock:
+            error = self._failure[0] if self._failure is not None and self._failure[1] else None
+        if error is not None:
+            raise type(error)(str(error))
 
     def request(self) -> None:
         """Report pending evaluation without inventing a shared measurement."""
@@ -121,13 +152,20 @@ class StatusCache:
         now = time.time()
         with self._lock:
             state, cached, reset, requested = self._state, self._cached_at, self._reset, self._evaluation_requested
+            assessment, failure = self._assessment_seq, self._failure
         valid = state.valid_sample(now)
         age = now - state.sample_at if valid and state.sample_at is not None else None
         stale = state.phase == "normal" and age is not None and age > 35
         phase = state.phase if valid or state.phase != "normal" else "unknown"
         result: dict[str, object] = state.model_dump()
         result.update(
-            phase="reset" if reset else phase,
+            phase="reset"
+            if reset
+            else "unknown"
+            if failure
+            else "assessment_pending"
+            if assessment is not None
+            else phase,
             sample_age=age,
             cache_age=None if cached is None else max(0, now - cached),
             stale_normal=stale,
@@ -136,7 +174,11 @@ class StatusCache:
             pressure_elapsed=None if state.pressure_started_at is None else max(0, now - state.pressure_started_at),
             retry_after_ms=state.retry_after_ms(now),
             estimated_completion_ms=None,
+            maintenance_error=None if failure is None else failure[0].error_type,
+            maintenance_failed_permanently=failure is not None and failure[1],
         )
+        if failure is not None:
+            result.update(last_attempt="failed", attempt_finished_at=failure[3], evaluation_requested=True)
         return result
 
 
@@ -154,6 +196,8 @@ class CheckpointMaintenance:
         self._trigger: Trigger = "startup"
         self._trigger_lock = threading.Lock()
         self._closed_error: BaseException | None = None
+        self._retry_not_before = 0.0
+        self._initialized = False
         self.factory.wake_maintenance = self.request
 
     def request(self, trigger: Trigger) -> None:
@@ -166,7 +210,9 @@ class CheckpointMaintenance:
 
     def status(self) -> dict[str, object]:
         """Serve status without database work during pressure, unknown or reset."""
-        return self.factory.status_cache.snapshot()
+        result = self.factory.status_cache.snapshot()
+        result["maintenance_alive"] = self._thread is not None and self._thread.is_alive()
+        return result
 
     async def start(self) -> None:
         """Initialize on the maintenance thread and perform an immediate attempt."""
@@ -190,7 +236,13 @@ class CheckpointMaintenance:
                     else:
                         trigger = "pressure" if retry else "timer"
                     if not self._stop.is_set():
-                        self.run_once(trigger)
+                        if self._stop.wait(max(0, self._retry_not_before - time.monotonic())):
+                            break
+                        try:
+                            self.run_once(trigger)
+                        except McpError:
+                            # run_once already recorded a permanent, sanitized fault.
+                            break
             if outcome.error is not None:
                 self._closed_error = outcome.error
                 loop.call_soon_threadsafe(_startup_failed, ready, outcome.error)
@@ -284,13 +336,35 @@ class CheckpointMaintenance:
 
     def run_once(self, trigger: Trigger) -> dict[str, object]:
         """Attempt shared PASSIVE and eligible RESTART with shared start/finish cooldown."""
+        outcome = OwnerOutcome()
+        result: dict[str, object] = {}
+        with outcome:
+            result = self._run_once(trigger)
+        if outcome.error is None:
+            return result
+        if not isinstance(outcome.error, Exception):
+            raise outcome.error
+        public, permanent = _maintenance_failure(outcome.error)
+        self._record_failure(public, permanent=permanent)
+        if permanent or not self._initialized:
+            raise public from None
+        return self.status()
+
+    def _record_failure(self, error: McpError, *, permanent: bool) -> None:
+        self.factory.status_cache.failed(error, permanent=permanent)
+        self._retry_not_before = time.monotonic() + 1
+        logging.getLogger(__name__).error("maintenance_failed: %s", error.error_type)
+
+    def _run_once(self, trigger: Trigger) -> dict[str, object]:
         connection = self._open()
         if self._leader_fd is None:
             raise RuntimeError("maintenance owner not initialized")
         try:
             fcntl.flock(self._leader_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
+            self._initialized = True
             return self.status()
+        self._initialized = True
         state: WalState | None = None
         try:
             state = self._start_attempt(connection)
@@ -298,11 +372,12 @@ class CheckpointMaintenance:
                 return self.status()
             self._attempt(connection, state, trigger)
         except (apsw.Error, BusyError, LimitError, OSError) as error:
+            if isinstance(error, (apsw.CorruptError, apsw.NotADBError)):
+                raise
             if state is not None:
                 self._failed_attempt(connection, state)
-            elif not isinstance(error, (BusyError, LimitError)):
-                # No successful start publication: do not run expensive work.
-                self.factory.status_cache.update(WalState(last_attempt="failed"))
+            if not isinstance(error, (BusyError, LimitError)):
+                self._record_failure(StorageIOError("maintenance unavailable"), permanent=False)
         finally:
             if connection.retired:
                 connection.close()
@@ -328,7 +403,9 @@ class CheckpointMaintenance:
         try:
             with connection.gate.transaction(self._token()):
                 self._publish(connection, failed)
-        except (apsw.Error, BusyError, LimitError, OSError):
+        except (apsw.Error, BusyError, LimitError, OSError) as error:
+            if isinstance(error, (apsw.CorruptError, apsw.NotADBError)):
+                raise
             # Keep the failure snapshot; a lost publication is never success.
             self.factory.status_cache.update(failed)
 
@@ -452,3 +529,17 @@ class CheckpointMaintenance:
 def _startup_failed(ready: asyncio.Future[None], error: BaseException) -> None:
     if not ready.done():
         ready.set_exception(error)
+
+
+def _maintenance_failure(error: Exception) -> tuple[McpError, bool]:
+    if isinstance(error, ConfigurationError):
+        return ConfigurationError("maintenance unavailable"), True
+    if isinstance(error, PathDeniedError):
+        return PathDeniedError("maintenance unavailable"), True
+    if isinstance(error, (apsw.CorruptError, apsw.NotADBError)) or (
+        isinstance(error, StorageIOError) and str(error) == "IO_ERROR: MANAGED_DIRECTORY_CHANGED"
+    ):
+        return StorageIOError("maintenance unavailable"), True
+    if isinstance(error, (apsw.Error, BusyError, LimitError, StorageIOError, OSError)):
+        return StorageIOError("maintenance unavailable"), False
+    return InternalError("maintenance unavailable"), True

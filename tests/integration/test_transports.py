@@ -554,7 +554,7 @@ import os,fcntl,json,asyncio,sys
 from contextlib import asynccontextmanager
 import anyio
 from justpen_knowledgebase_mcp.stdio import _wire_streams, KnowledgeBaseMCP
-original=os.set_blocking
+original=os.fstat
 flags=[fcntl.fcntl(fd,fcntl.F_GETFL) for fd in (0,1)]
 identities=[os.fstat(fd).st_ino for fd in (0,1)]
 def descriptors():
@@ -565,15 +565,15 @@ def descriptors():
     return found
 before=descriptors()
 calls=0
-def failure(fd, value):
+def failure(fd):
     global calls
     calls+=1
     if calls==2:
         print("accidental startup output")
         raise OSError("injected partial setup")
-    original(fd,value)
+    return original(fd)
 mode=os.environ["TEST_MODE"]
-if mode=="partial-setup": os.set_blocking=failure
+if mode=="partial-setup": os.fstat=failure
 @asynccontextmanager
 async def broken_lifespan(server):
     print("accidental startup output")

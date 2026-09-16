@@ -18,6 +18,7 @@ async def test_pipe_buffer_eof_partial_writes_and_readiness(monkeypatch, regular
             stdio.os, "fstat", Mock(return_value=SimpleNamespace(st_mode=stat.S_IFREG if regular else stat.S_IFIFO))
         )
         readable, writable = AsyncMock(), AsyncMock()
+        monkeypatch.setattr(stdio.os, "fpathconf", Mock(return_value=512))
         monkeypatch.setattr(stdio.anyio, "wait_readable", readable)
         monkeypatch.setattr(stdio.anyio, "wait_writable", writable)
         monkeypatch.setattr(stdio.os, "read", Mock(side_effect=[BlockingIOError(), b"one\ntw", b"o\xff", b""]))
@@ -33,21 +34,20 @@ async def test_pipe_buffer_eof_partial_writes_and_readiness(monkeypatch, regular
         await stream.flush()
 
 
-def test_restore_closes_duplicate_even_when_flags_fail(monkeypatch):
+def test_restore_closes_duplicate_even_when_duplication_fails(monkeypatch):
     with monkeypatch.context() as monkeypatch:
-        monkeypatch.setattr(stdio.fcntl, "fcntl", Mock(side_effect=OSError("flags")))
-        duplicate, close = Mock(), Mock()
+        duplicate, close = Mock(side_effect=OSError("duplication")), Mock()
         monkeypatch.setattr(stdio.os, "dup2", duplicate)
         monkeypatch.setattr(stdio.os, "close", close)
         with pytest.raises(OSError):
-            stdio._restore(0, 7, 5)
+            stdio._restore(0, 7)
         duplicate.assert_called_once_with(7, 0)
         close.assert_called_once_with(7)
 
 
 def test_wire_streams_restores_stdio_after_body_exception(monkeypatch):
     with monkeypatch.context() as monkeypatch:
-        control = Mock(side_effect=[7, 100, 8, 200])
+        control = Mock(side_effect=[7, 8])
         monkeypatch.setattr(stdio.fcntl, "fcntl", control)
         duplicate, blocking, restore = Mock(), Mock(), Mock()
         monkeypatch.setattr(stdio.os, "dup2", duplicate)
@@ -64,9 +64,9 @@ def test_wire_streams_restores_stdio_after_body_exception(monkeypatch):
 
         with pytest.raises(ValueError, match="body"):
             body()
-        assert [call.args for call in restore.call_args_list] == [(1, 8, 200), (0, 7, 100)]
+        assert [call.args for call in restore.call_args_list] == [(1, 8), (0, 7)]
         assert [call.args for call in duplicate.call_args_list] == [(9, 0), (2, 1)]
-        assert [call.args for call in blocking.call_args_list] == [(7, False), (8, False)]
+        blocking.assert_not_called()
 
 
 async def test_stdio_sdk_adapter_resets_transport_on_failure(monkeypatch):

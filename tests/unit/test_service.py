@@ -64,8 +64,7 @@ async def test_facade_maps_valid_request_and_one_deadline(monkeypatch, method, p
     monkeypatch.setattr(service.Graph if operation in ("write", "get") else service, operation, callback)
     assert await getattr(kb, method)(payload) == {"lane": "bulk"}
     assert len(seen) == 1
-    if method != "neighbors":
-        assert seen[0].deadline > service.time.monotonic()
+    assert seen[0].deadline > service.time.monotonic()
     if method == "reindex":
         runner.wake.assert_called_once_with("bulk")
 

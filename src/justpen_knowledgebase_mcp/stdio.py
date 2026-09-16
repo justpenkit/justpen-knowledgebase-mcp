@@ -2,8 +2,8 @@
 
 FastMCP does not expose SDK stream injection. Only run_stdio_async is adapted;
 SDK stdio_server remains responsible for every JSON-RPC parse and write. No
-worker-thread readline survives transport shutdown. Duplicates share file flags,
-so flags and standard descriptors are restored before owned descriptors close.
+worker-thread readline survives transport shutdown. Inherited file flags are never
+changed. The protocol owns exclusive consumption of its inherited stream endpoints.
 """
 
 from __future__ import annotations
@@ -35,7 +35,11 @@ class _PipeFile(anyio.AsyncFile[str]):
     def __init__(self, descriptor: int) -> None:
         super().__init__(io.StringIO())
         self._descriptor = descriptor
-        self._regular = stat.S_ISREG(os.fstat(descriptor).st_mode)
+        mode = os.fstat(descriptor).st_mode
+        self._regular = stat.S_ISREG(mode)
+        self._write_size = (
+            os.fpathconf(descriptor, "PC_PIPE_BUF") if stat.S_ISFIFO(mode) else 65536 if self._regular else 1
+        )
         self._buffer = bytearray()
 
     @override
@@ -43,6 +47,8 @@ class _PipeFile(anyio.AsyncFile[str]):
         while b"\n" not in self._buffer:
             if not self._regular:
                 await anyio.wait_readable(self._descriptor)
+            else:
+                await anyio.lowlevel.checkpoint()
             try:
                 chunk = os.read(self._descriptor, 65536)
             except BlockingIOError:
@@ -63,8 +69,10 @@ class _PipeFile(anyio.AsyncFile[str]):
         while remaining:
             if not self._regular:
                 await anyio.wait_writable(self._descriptor)
+            else:
+                await anyio.lowlevel.checkpoint()
             try:
-                written = os.write(self._descriptor, remaining)
+                written = os.write(self._descriptor, remaining[: self._write_size])
             except BlockingIOError:
                 continue
             remaining = remaining[written:]
@@ -75,12 +83,9 @@ class _PipeFile(anyio.AsyncFile[str]):
         await anyio.lowlevel.checkpoint()
 
 
-def _restore(descriptor: int, owned: int, flags: int) -> None:
+def _restore(descriptor: int, owned: int) -> None:
     try:
-        try:
-            fcntl.fcntl(owned, fcntl.F_SETFL, flags)
-        finally:
-            os.dup2(owned, descriptor)
+        os.dup2(owned, descriptor)
     finally:
         os.close(owned)
 
@@ -92,21 +97,14 @@ def _wire_streams() -> Generator[tuple[_PipeFile, _PipeFile]]:
         descriptors: list[int] = []
         for descriptor in (0, 1):
             owned = fcntl.fcntl(descriptor, fcntl.F_DUPFD_CLOEXEC, 3)
-            try:
-                flags = fcntl.fcntl(owned, fcntl.F_GETFL)
-            except BaseException:
-                os.close(owned)
-                raise
-            stack.callback(_restore, descriptor, owned, flags)
+            stack.callback(_restore, descriptor, owned)
             descriptors.append(owned)
         with Path(os.devnull).open("rb") as empty:
             os.dup2(empty.fileno(), 0)
         os.dup2(2, 1)
         # Drain Python text buffering while fd 1 still targets stderr. ExitStack
-        # restores flags/descriptors even if this flush raises during unwind.
+        # restores descriptors even if this flush raises during unwind.
         stack.callback(sys.stdout.flush)
-        for owned in descriptors:
-            os.set_blocking(owned, False)
         yield _PipeFile(descriptors[0]), _PipeFile(descriptors[1])
 
 

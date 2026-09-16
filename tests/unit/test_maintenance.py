@@ -8,6 +8,7 @@ import apsw
 import pytest
 
 from justpen_knowledgebase_mcp.config import WorkspacePolicy
+from justpen_knowledgebase_mcp.errors import ConfigurationError, StorageIOError
 from justpen_knowledgebase_mcp.storage import maintenance
 from justpen_knowledgebase_mcp.storage.maintenance import StatusCache, WalState
 
@@ -107,3 +108,101 @@ def test_allocation_and_invalid_persisted_state():
         workspace.validate_native.side_effect = error
         assert maintenance.allocation(workspace) is expected
     assert WalState.read(database(cursor(value='{"extra":"invalid"}'))).phase == "unknown"
+
+
+def test_runtime_failure_is_visible_and_permanent_fault_rejects_admission(monkeypatch, caplog):
+    task, _db = component(monkeypatch)
+    monkeypatch.setattr(task, "_open", Mock(side_effect=ConfigurationError("private path")))
+    with pytest.raises(ConfigurationError):
+        task.run_once("pressure")
+    assert task.status()["maintenance_error"] == "CONFIGURATION"
+    assert task.status()["last_attempt"] == "failed"
+    with pytest.raises(ConfigurationError, match="maintenance unavailable"):
+        task.factory.status_cache.check_health()
+    assert "maintenance_failed" in caplog.text
+    assert "private path" not in caplog.text
+
+
+def test_transient_open_failure_is_visible_and_retried(monkeypatch, caplog):
+    task, db = component(monkeypatch)
+    monkeypatch.setattr(task, "_start_attempt", Mock(return_value=None))
+    task.run_once("startup")
+    monkeypatch.setattr(task, "_open", Mock(side_effect=StorageIOError("private path")))
+    assert task.run_once("pressure")["maintenance_error"] == "IO_ERROR"
+    task.factory.status_cache.check_health()
+    assert "private path" not in caplog.text
+    monkeypatch.setattr(task, "_open", Mock(return_value=db))
+    task.close_owner()
+
+
+@pytest.mark.parametrize("boundary", ["open", "lock"])
+async def test_initial_owner_open_failure_is_fail_fast(monkeypatch, boundary):
+    task, _db = component(monkeypatch)
+    if boundary == "open":
+        monkeypatch.setattr(task.factory, "open_maintenance", Mock(side_effect=OSError("private startup path")))
+    else:
+        monkeypatch.setattr(maintenance, "open_lock", Mock(side_effect=OSError("private startup lock")))
+    try:
+        with pytest.raises(StorageIOError, match="maintenance unavailable"):
+            await task.start()
+    finally:
+        with pytest.raises(StorageIOError, match="maintenance unavailable"):
+            await task.close()
+
+
+def test_local_assessment_and_failure_survive_same_sequence_reads(monkeypatch):
+    monkeypatch.setattr(maintenance.time, "time", lambda: 100.0)
+    cache = StatusCache()
+    state = WalState(
+        phase="normal",
+        sample_seq=5,
+        sample_at=100.0,
+        allocated_bytes=0,
+        log_frames=0,
+        checkpointed_frames=0,
+        page_size=4096,
+        unbackfilled_bytes=0,
+    )
+    cache.update(state)
+    cache.assessment()
+    cache.update(state)
+    assert cache.snapshot()["phase"] == "assessment_pending"
+    cache.failed(StorageIOError("bounded"), permanent=False)
+    cache.update(state)
+    assert cache.snapshot()["last_attempt"] == "failed"
+    cache.update(state.model_copy(update={"sample_seq": 6}))
+    assert cache.snapshot()["phase"] == "normal"
+    assert cache.snapshot()["maintenance_error"] is None
+
+
+def test_cache_keeps_newer_attempt_metadata_and_lower_sequence_age(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(maintenance.time, "time", lambda: now[0])
+    cache = StatusCache()
+    state = WalState(sample_seq=5, attempt_started_at=80.0, attempt_finished_at=90.0)
+    cache.update(state)
+    now[0] = 101.0
+    cache.update(state.model_copy(update={"sample_seq": 4, "attempt_started_at": 99.0}))
+    assert cache.snapshot()["cache_age"] == 1
+    newer = state.model_copy(update={"attempt_started_at": 101.0, "attempt_id": "newer"})
+    cache.update(newer)
+    cache.update(state)
+    assert cache.snapshot()["attempt_id"] == "newer"
+
+
+@pytest.mark.parametrize("error", [RuntimeError("private"), apsw.CorruptError("private"), apsw.NotADBError("private")])
+def test_permanent_iteration_failure_stays_failed_after_newer_samples(monkeypatch, error):
+    task, _db = component(monkeypatch)
+    monkeypatch.setattr(task, "_open", Mock(side_effect=error))
+    with pytest.raises(Exception, match="maintenance unavailable"):
+        task.run_once("pressure")
+    task.factory.status_cache.update(WalState(sample_seq=7))
+    assert task.status()["maintenance_failed_permanently"]
+
+
+def test_iteration_does_not_swallow_baseexception(monkeypatch):
+    task, _db = component(monkeypatch)
+    monkeypatch.setattr(task, "_open", Mock(side_effect=KeyboardInterrupt()))
+    with pytest.raises(KeyboardInterrupt):
+        task.run_once("pressure")
+    assert task.status()["maintenance_error"] is None

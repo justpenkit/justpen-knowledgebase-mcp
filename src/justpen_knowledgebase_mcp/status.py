@@ -85,6 +85,9 @@ class WalStatus(ClosedModel):
     retry_after_ms: Annotated[int, Field(ge=1000, le=30000)]
     estimated_completion_ms: None = None
     reason: Literal["WAL_PRESSURE", "RESET_PENDING"] | None = None
+    maintenance_alive: bool = False
+    maintenance_error: Literal["CONFIGURATION", "PATH_DENIED", "IO_ERROR", "INTERNAL"] | None = None
+    maintenance_failed_permanently: bool = False
 
 
 class DatabaseQueues(ClosedModel):
