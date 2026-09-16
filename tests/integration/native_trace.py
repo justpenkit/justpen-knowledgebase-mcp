@@ -54,8 +54,10 @@ def mutation_paths(name, body):
         if not value.startswith("/"):
             prefix = body[: match.start()]
             bases = re.findall(r"<(/[^>]+)>", prefix)
-            value = posixpath.normpath(posixpath.join(bases[-1], value)) if bases else None
-        paths.append(value)
+            value = posixpath.join(bases[-1], value) if bases else None
+        # Parent traversal can cross a symlink before returning lexically inside.
+        # No filesystem lookup after the trace can establish that historical resolution.
+        paths.append(None if value is None or ".." in value.split("/") else posixpath.normpath(value))
     return paths or [None]
 
 

@@ -40,18 +40,42 @@ async def unavailable_tmp(kb, scenario):
             kb.workspace.tmp.chmod(0o700)
 
 
+def escaped_control(root, outside):
+    escaped = root / ".." / outside.name
+    denied = 0
+    for operation in [
+        (escaped / "victim").unlink,
+        lambda: (root / "stage").rename(escaped / "renamed"),
+        (escaped / "created").mkdir,
+    ]:
+        try:
+            operation()
+        except PermissionError:
+            denied += 1
+    print(json.dumps({"denied_operations": denied}))
+
+
+def denied_control(outside):
+    try:
+        (outside / "forbidden").write_bytes(b"must fail")
+    except PermissionError:
+        print(json.dumps({"denied": True}))
+        return
+    raise AssertionError("native policy failed to deny external write")
+
+
 def main():
     root, outside, scenario = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
     # This import intentionally occurs after process startup under the native policy.
 
     assert callable(cli)
     if scenario == "denied-control":
-        try:
-            (outside / "forbidden").write_bytes(b"must fail")
-        except PermissionError:
-            print(json.dumps({"denied": True}))
-            return
-        raise AssertionError("native policy failed to deny external write")
+        denied_control(outside)
+        return
+
+    if scenario == "escaped-control":
+        escaped_control(root, outside)
+        return
 
     telemetry = None
     if scenario.startswith("telemetry"):

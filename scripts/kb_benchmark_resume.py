@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from justpen_knowledgebase_mcp.identity import identity_key
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
 
@@ -110,13 +112,13 @@ async def validate_nodes(
         measure.check()
         rows = await kb.workers.read(
             lambda c, _t, after=after: c.execute(
-                "select id,uuid,type,properties,metadata,lifecycle from nodes where id>? order by id limit 1000",
+                "select id,uuid,type,properties,metadata,lifecycle,key from nodes where id>? order by id limit 1000",
                 (after,),
             ).fetchall()
         )
         if not rows:
             break
-        for identifier, uuid, kind, raw, metadata, lifecycle in rows:
+        for identifier, uuid, kind, raw, metadata, lifecycle, key in rows:
             if (
                 not isinstance(identifier, int)
                 or not isinstance(uuid, str)
@@ -128,6 +130,7 @@ async def validate_nodes(
                 ordinal >= measure.nodes
                 or kind != "endpoint"
                 or json.loads(raw) != expected_node(ordinal)
+                or key != identity_key("nodes", "endpoint", json.loads(raw))
                 or json.loads(metadata).get("label") is not None
                 or json.loads(metadata).get("source") is not None
                 or lifecycle != "ready"
@@ -149,7 +152,7 @@ async def validate_relations(measure: Measurements, kb: KnowledgeBase, nodes: in
         measure.check()
         rows = await kb.workers.read(
             lambda c, _t, after=after: c.execute(
-                "select r.id,r.type,r.properties,s.uuid,t.id,r.lifecycle from relations r join nodes s on s.id=r.source_id join nodes t on t.id=r.target_id where r.id>? order by r.id limit 1000",
+                "select r.id,r.type,r.properties,s.uuid,t.id,r.lifecycle,r.key from relations r join nodes s on s.id=r.source_id join nodes t on t.id=r.target_id where r.id>? order by r.id limit 1000",
                 (after,),
             ).fetchall()
         )
@@ -164,12 +167,13 @@ async def validate_relations(measure: Measurements, kb: KnowledgeBase, nodes: in
             )
             if not targets:
                 raise RuntimeError("resume relation page has no canonical target prefix")
-            for index, (identifier, kind, raw, source, target, lifecycle) in enumerate(rows[first : first + 100]):
+            for index, (identifier, kind, raw, source, target, lifecycle, key) in enumerate(rows[first : first + 100]):
                 if not isinstance(identifier, int) or not isinstance(raw, str):
                     raise TypeError("invalid canonical relation storage types")
                 if (
                     ordinal >= measure.edges
                     or kind != "redirects_to"
+                    or key != identity_key("relations", "redirects_to", json.loads(raw))
                     or source != measure.hub
                     or target != targets[index % len(targets)][0]
                     or json.loads(raw) != {"context": f"seed{measure.report['seed']}-edge{ordinal}"}
@@ -184,6 +188,12 @@ async def validate_relations(measure: Measurements, kb: KnowledgeBase, nodes: in
     return edges
 
 
+async def require_blob(kb: KnowledgeBase, digest: str, size: int, check: Callable[[], None]) -> None:
+    """Verify actual owned bytes for both inline and path-backed evidence."""
+    if await asyncio.to_thread(kb.job_runner.store.verify_blob, digest, size, check) is None:
+        raise RuntimeError("canonical evidence blob missing")
+
+
 async def validate_evidence(
     measure: Measurements, kb: KnowledgeBase, expected_text: Callable[[int, int], bytes]
 ) -> int:
@@ -194,13 +204,17 @@ async def validate_evidence(
         measure.check()
         rows = await kb.workers.read(
             lambda c, _t, after=after: c.execute(
-                "select id,uuid,sha256,byte_size,index_state,lifecycle from evidence where id>? order by id limit 32",
-                (after,),
+                "select e.id,e.uuid,e.sha256,e.byte_size,e.index_state,e.lifecycle,"
+                "(select count(*) from node_evidence ne where ne.evidence_id=e.id),"
+                "(select count(*) from node_evidence ne join nodes n on n.id=ne.node_id where ne.evidence_id=e.id and n.uuid=?),"
+                "(select count(*) from relation_evidence re where re.evidence_id=e.id) "
+                "from evidence e where e.id>? order by e.id limit 32",
+                (measure.hub, after),
             ).fetchall()
         )
         if not rows:
             break
-        for identifier, uuid, digest, size, state, lifecycle in rows:
+        for identifier, uuid, digest, size, state, lifecycle, node_links, hub_links, relation_links in rows:
             if (
                 not isinstance(identifier, int)
                 or not isinstance(uuid, str)
@@ -210,10 +224,12 @@ async def validate_evidence(
                 raise TypeError("invalid canonical evidence storage types")
             if uuid != "e_" + digest or state != "ready" or lifecycle != "ready":
                 raise RuntimeError("canonical evidence is not ready after reconciliation")
-            if digest == inline_hash and size == 18:
-                verified = await asyncio.to_thread(kb.job_runner.store.verify_blob, digest, size, measure.check)
-                if verified is None:
-                    raise RuntimeError("canonical inline blob missing")
+            is_inline = digest == inline_hash and size == 18
+            expected_links = 0 if is_inline else 1
+            if (node_links, hub_links, relation_links) != (expected_links, expected_links, 0):
+                raise RuntimeError("foreign/missing per-blob canonical evidence links")
+            if is_inline:
+                await require_blob(kb, digest, size, measure.check)
                 measure.inline_present = True
                 after = identifier
                 continue
@@ -227,9 +243,7 @@ async def validate_evidence(
                 or lifecycle != "ready"
             ):
                 raise RuntimeError(f"foreign/mismatched evidence at ordinal{ordinal}")
-            verified = await asyncio.to_thread(kb.job_runner.store.verify_blob, digest, size, measure.check)
-            if verified is None:
-                raise RuntimeError("canonical evidence blob missing")
+            await require_blob(kb, digest, size, measure.check)
             raw_bytes += size
             ordinal += 1
             after = identifier

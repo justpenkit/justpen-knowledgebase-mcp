@@ -20,7 +20,7 @@ import apsw
 from kb_benchmark_instrumentation import Instrumentation
 from kb_benchmark_lifecycle import run_lifecycle
 from kb_benchmark_resume import archive_attempt, benchmark_owner, previous_attempt, reconcile
-from kb_benchmark_variants import run_variants
+from kb_benchmark_variants import checkpoint_worker_comparison, run_variants
 
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import BusyError, LimitError, McpError
@@ -325,6 +325,12 @@ class Measurements:
 
     async def run(self) -> None:
         """Measure product lifecycle before isolated comparison experiments."""
+        if self.phase == "checkpoint":
+            self.report["checkpoint_worker_comparison"] = await asyncio.to_thread(
+                checkpoint_worker_comparison, self.output / "checkpoint", self.deadline
+            )
+            self.report["status"] = "completed"
+            return
         if self.phase == "variants":
             if self.corpus_output is None:
                 raise RuntimeError("variant phase requires a closed corpus output")
@@ -407,31 +413,31 @@ def main() -> None:
     parser.add_argument("--scale", choices=SCALES, default="smoke")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-seconds", type=float, default=600)
-    parser.add_argument("--phase", choices=["corpus", "lifecycle", "variants", "all"], default="all")
+    parser.add_argument("--phase", choices=["corpus", "lifecycle", "variants", "checkpoint", "all"], default="all")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--corpus-output", type=Path)
     options = parser.parse_args()
     output = options.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    if not options.resume and any(
-        (output / name).exists()
-        for name in [
-            "report.json",
-            "variants",
-            "workspace",
-            "clients",
-            "hub",
-            "recovery",
-            "contention",
-            "copy_takeover",
-        ]
-    ):
-        parser.error("output artifacts exist; choose a new output directory")
     if options.resume and options.phase != "corpus":
         parser.error("resume supports only --phase corpus")
     if (options.phase == "variants") != (options.corpus_output is not None):
         parser.error("--corpus-output is required only for --phase variants")
     with benchmark_owner(output):
+        if not options.resume and any(
+            (output / name).exists()
+            for name in [
+                "report.json",
+                "variants",
+                "workspace",
+                "clients",
+                "hub",
+                "recovery",
+                "contention",
+                "copy_takeover",
+            ]
+        ):
+            parser.error("output artifacts exist; choose a new output directory")
         if options.corpus_output is not None:
             with benchmark_owner(options.corpus_output.resolve()):
                 execute(options, output)

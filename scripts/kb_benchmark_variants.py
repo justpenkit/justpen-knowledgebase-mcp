@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import threading
 import time
-from contextlib import contextmanager
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import ExitStack, contextmanager
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -97,9 +101,157 @@ def checkpoint_comparison(root: Path) -> list[dict[str, Any]]:
                 "wal_allocated_high_water": high_water,
                 "workload_and_checkpoint_cpu_seconds": checkpoint_cpu_and_workload,
                 "last_close_ms": (time.perf_counter() - close_start) * 1000,
-                "policy": "isolated raw SQLite comparison; does not measure product gate overhead",
+                "policy": "legacy synchronous-per-batch PASSIVE on foreground connection; NOT separate-maintenance low-trigger experiment; does not measure product gates",
             }
         )
+    return results
+
+
+def worker_checkpoint(connection: apsw.Connection, trigger_frames: int) -> dict[str, Any]:
+    """Time native PASSIVE on its separate owner thread, excluding setup/foreground work."""
+    wall, cpu = time.perf_counter(), time.thread_time()
+    busy = False
+    frames: tuple[int, int] | None = None
+    try:
+        frames = connection.wal_checkpoint("main", apsw.SQLITE_CHECKPOINT_PASSIVE)
+    except apsw.BusyError:
+        busy = True
+    return {
+        "trigger_frames": trigger_frames,
+        "worker_thread": threading.get_ident(),
+        "wall_ms": (time.perf_counter() - wall) * 1000,
+        "thread_cpu_ms": (time.thread_time() - cpu) * 1000,
+        "log_backfilled_frames": frames,
+        "busy": busy,
+    }
+
+
+def open_maintenance(owners: ExitStack, path: Path, deadline: float) -> apsw.Connection:
+    """Create and configure the maintenance handle on its single owning thread."""
+    owned = owners.enter_context(audit_connection(path, deadline))
+    owned.pragma("synchronous", "FULL")
+    owned.pragma("wal_autocheckpoint", 0)
+    return owned
+
+
+def observe_frames(state: list[int], _connection: apsw.Connection, _name: str, frames: int) -> int:
+    """Observe committed WAL frames without doing checkpoint work in the writer callback."""
+    state[0], state[1] = frames, max(state[1], frames)
+    return 0
+
+
+def checkpoint_worker_variant(
+    root: Path, deadline: float, automatic: int, raw_bytes: int, low_bytes: int
+) -> dict[str, Any]:
+    """Keep native auto1000, or use a persistent separate maintenance owner for auto0."""
+    path = root / f"worker-comparison-auto{automatic}.sqlite3"
+    commits: list[float] = []
+    reads: list[float] = []
+    checkpoints: list[dict[str, Any]] = []
+    pending: Future[dict[str, Any]] | None = None
+    frame_state = [0, 0]
+    allocated = 0
+    digest = hashlib.sha256()
+    foreground_thread = threading.get_ident()
+    started, cpu_started = time.perf_counter(), time.process_time()
+    with (
+        audit_connection(path, deadline) as connection,
+        ThreadPoolExecutor(max_workers=1) as pool,
+        ExitStack() as owners,
+    ):
+        connection.pragma("journal_mode", "wal")
+        connection.pragma("synchronous", "FULL")
+        connection.pragma("wal_autocheckpoint", automatic)
+        connection.execute("create table corpus(id integer primary key, payload blob)")
+        page_size = connection.pragma("page_size")
+        maintenance = None
+        if not automatic:
+            maintenance = pool.submit(open_maintenance, owners, path, deadline).result()
+            # A WAL hook replaces SQLite's automatic hook, so install ONLY for auto0.
+            connection.set_wal_hook(partial(observe_frames, frame_state))
+        try:
+            for first in range(0, raw_bytes // 16384, 16):
+                check_deadline(deadline)
+                rows = [(index, bytes([index % 256]) * 16384) for index in range(first, first + 16)]
+                for _index, payload in rows:
+                    digest.update(payload)
+                connection.execute("begin immediate")
+                connection.executemany("insert into corpus values(?,?)", rows)
+                before = time.perf_counter()
+                connection.execute("commit")
+                commits.append((time.perf_counter() - before) * 1000)
+                if pending is not None and pending.done():
+                    checkpoints.append(pending.result())
+                    pending = None
+                if maintenance is not None and pending is None and frame_state[0] * page_size >= low_bytes:
+                    pending = pool.submit(worker_checkpoint, maintenance, frame_state[0])
+                before = time.perf_counter()
+                if connection.execute("select length(payload) from corpus where id=?", (first,)).get != 16384:
+                    raise RuntimeError("worker comparison readback mismatch")
+                reads.append((time.perf_counter() - before) * 1000)
+                allocated = max(allocated, Path(str(path) + "-wal").stat().st_size)
+            if pending is not None:
+                checkpoints.append(pending.result(timeout=max(0.001, deadline - time.monotonic())))
+                pending = None
+            count, total_bytes = connection.execute("select count(*),sum(length(payload)) from corpus").get
+            if total_bytes != raw_bytes or connection.execute("pragma integrity_check").get != "ok":
+                raise RuntimeError("checkpoint comparison corpus/integrity mismatch")
+        finally:
+            # Drain native work before closing its owned connection and the foreground handle.
+            try:
+                if pending is not None:
+                    pending.result()
+            finally:
+                pool.submit(owners.close).result()
+        close_started = time.perf_counter()
+    return {
+        "synchronous": "FULL",
+        "autocheckpoint_frames": automatic,
+        "transaction_rows": 16,
+        "logical_raw_bytes": raw_bytes,
+        "confirmed_rows": count,
+        "corpus_sha256": digest.hexdigest(),
+        "page_size": page_size,
+        "low_trigger_bytes": low_bytes if not automatic else None,
+        "max_observed_wal_frames": frame_state[1] if not automatic else None,
+        "foreground_thread": foreground_thread,
+        "triggered_checkpoints": checkpoints,
+        "foreground_commit_ms": percentiles(commits),
+        "read_ms": percentiles(reads),
+        "wal_allocated_high_water": allocated,
+        "integrity": "ok",
+        "total_wall_seconds": time.perf_counter() - started,
+        "total_process_cpu_seconds": time.process_time() - cpu_started,
+        "last_close_ms": (time.perf_counter() - close_started) * 1000,
+        "native_auto_checkpoint_wall_ms": None,
+        "native_auto_checkpoint_thread_cpu_ms": None,
+        "native_auto_timing_scope": "auto1000 checkpoint work is inseparable from native COMMIT timing; not measured separately",
+        "schedule": "native SQLite auto1000"
+        if automatic
+        else "WAL-hook frame bytes >= low trigger, one outstanding PASSIVE on separate persistent connection/worker",
+        "deadline_scope": "cooperative SQLite progress deadline; active native I/O is drained before closing, not a hard OS I/O deadline",
+    }
+
+
+def checkpoint_worker_comparison(
+    root: Path, deadline: float, *, raw_bytes: int = 134217728, low_bytes: int = 67108864
+) -> list[dict[str, Any]]:
+    """Compare identical FULL corpora crossing the actual separate-maintenance trigger."""
+    if raw_bytes < low_bytes * 2 or raw_bytes % 262144 or low_bytes <= 0:
+        raise ValueError("checkpoint corpus must contain whole16-row batches and cross low trigger twice")
+    check_deadline(deadline)
+    root.mkdir(exist_ok=True)
+    results = [checkpoint_worker_variant(root, deadline, automatic, raw_bytes, low_bytes) for automatic in [1000, 0]]
+    completed = [
+        item
+        for item in results[1]["triggered_checkpoints"]
+        if not item["busy"]
+        and item["log_backfilled_frames"] is not None
+        and item["log_backfilled_frames"][0] > 0
+        and item["log_backfilled_frames"][1] > 0
+    ]
+    if not completed:
+        raise RuntimeError("corpus failed to complete real separate low-trigger maintenance")
     return results
 
 
@@ -223,6 +375,7 @@ def run_variants(root: Path, source: Path, deadline: float) -> dict[str, Any]:
     root.mkdir()
     return {
         "checkpoint": checkpoint_comparison(root),
+        "checkpoint_worker_comparison": checkpoint_worker_comparison(root / "checkpoint-worker", deadline),
         "fts": fts_comparison(root),
         "backup_compaction": backup_compaction(root, source, deadline),
         "split_database": split_database_comparison(root),

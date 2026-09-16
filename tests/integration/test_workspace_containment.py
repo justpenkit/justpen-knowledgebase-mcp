@@ -91,3 +91,29 @@ def test_native_cold_import_and_spill_are_workspace_confined(tmp_path, scenario)
     if trace.exists():
         violations = external_mutations(trace.read_text(), root)
         assert not violations, {"count": len(violations), "examples": violations[:5]}
+
+
+def test_native_absolute_parent_traversal_positive_control(tmp_path):
+    root, outside = tmp_path / "workspace", tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (root / "stage").write_bytes(b"stage")
+    (outside / "victim").write_bytes(b"victim")
+    trace = tmp_path / "trace.log"
+    result = subprocess.run(
+        audit_command(root, outside, "escaped-control", trace), capture_output=True, text=True, timeout=30, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    if sys.platform == "darwin":
+        assert report["denied_operations"] == 3
+        assert (outside / "victim").read_bytes() == b"victim"
+        assert sorted(path.name for path in outside.iterdir()) == ["victim"]
+    else:
+        assert report["denied_operations"] == 0
+        assert not (outside / "victim").exists()
+        assert (outside / "renamed").read_bytes() == b"stage"
+        assert (outside / "created").is_dir()
+        violations = external_mutations(trace.read_text(), root)
+        assert len(violations) == 3, violations
+        assert all("/workspace/../outside/" in line for line in violations)

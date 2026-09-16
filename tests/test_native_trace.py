@@ -52,3 +52,17 @@ def test_relative_escape_and_resumed_calls_are_not_lost():
     assert external_mutations(outside, Path("/workspace"))
     trace = '1 openat(AT_FDCWD</work>, "/outside/new", O_WRONLY|O_CREAT <unfinished ...>\n2 write(2<pipe:[1]>, "log", 3) = 3\n1 <... openat resumed>, 0600) = 5</outside/new>'
     assert len(external_mutations(trace, Path("/workspace"))) == 1
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        'unlink("/workspace/../outside/victim")',
+        'rename("/workspace/stage", "/workspace/../outside/blob")',
+        'mkdir("/workspace/../outside/directory", 0700)',
+        'unlink("/workspace/possible-symlink/../victim")',
+    ],
+)
+def test_absolute_parent_traversal_is_never_a_containment_proof(operation):
+    line = operation + " = 0"
+    assert external_mutations(line, Path("/workspace")) == [line]
