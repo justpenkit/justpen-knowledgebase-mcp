@@ -74,10 +74,10 @@ def test_http_allowed_hosts_are_bounded_concrete_aliases():
         PREFIX + "TRANSPORT": "http",
         PREFIX + "HOST": "0.0.0.0",  # noqa: S104 - validate explicit wildcard HTTP binding
         PREFIX + "ALLOW_NON_LOOPBACK": "true",
-        PREFIX + "ALLOWED_HOSTS": '["kb.example.test", "192.0.2.4"]',
+        PREFIX + "ALLOWED_HOSTS": '["kb.example.test", "192.0.2.4", "2001:db8::1"]',
     }
     cfg = ServerConfig.from_env(env)
-    assert cfg.allowed_hosts == ("kb.example.test", "192.0.2.4")
+    assert cfg.allowed_hosts == ("kb.example.test", "192.0.2.4", "2001:db8::1")
 
 
 @pytest.mark.parametrize(
@@ -90,6 +90,9 @@ def test_http_allowed_hosts_are_bounded_concrete_aliases():
         '["https://kb.example.test"]',
         '["kb.example.test:8934"]',
         '["kb.example.test/path"]',
+        '["fe80::1%*"]',
+        '["fe80::1%?"]',
+        '["fe80::1%[ab]"]',
         '["999.999.999.999"]',
         '["kb.example.test", "kb.example.test"]',
         "[" + ",".join(['"host.example.test"'] * 17) + "]",

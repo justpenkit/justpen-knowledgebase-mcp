@@ -68,7 +68,13 @@ class ServerConfig(BaseModel):
         entries = cast("list[object] | tuple[object, ...]", value)
         hosts: list[str] = []
         for host in entries:
-            if not isinstance(host, str) or not host or len(host) > 253 or not host.isascii():
+            if (
+                not isinstance(host, str)
+                or not host
+                or len(host) > 253
+                or not host.isascii()
+                or any(char in host for char in "*?[]")
+            ):
                 raise ValueError("CONFIGURATION: ALLOWED_HOSTS entries must be concrete hosts")
             try:
                 valid_ip = not ip_address(host).is_unspecified
