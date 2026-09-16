@@ -21,6 +21,7 @@ import pytest
 import justpen_knowledgebase_mcp.__main__ as main_mod
 import justpen_knowledgebase_mcp.service as service_mod
 import justpen_knowledgebase_mcp.shutdown as shutdown_mod
+from justpen_knowledgebase_mcp.errors import ConfigurationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -76,6 +77,22 @@ def test_cli_invokes_asyncio_run(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(main_mod, "parse_config", lambda: main_mod.ServerConfig(workspace_dir=Path("/workspace")))
     main_mod.cli()
     assert len(captured) == 1
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["offline workspace upgrade required", "CONFIGURATION: workspace unavailable"],
+)
+def test_cli_formats_known_runtime_configuration_once(monkeypatch: pytest.MonkeyPatch, capsys, reason: str) -> None:
+    async def fail_startup(_config: main_mod.ServerConfig) -> None:
+        raise ConfigurationError(reason)
+
+    monkeypatch.setattr(main_mod, "parse_config", lambda: main_mod.ServerConfig(workspace_dir=Path("/workspace")))
+    monkeypatch.setattr(main_mod, "main", fail_startup)
+    with pytest.raises(SystemExit) as raised:
+        main_mod.cli()
+    assert raised.value.code == 2
+    assert capsys.readouterr().err == f"CONFIGURATION: {reason.removeprefix('CONFIGURATION: ')}\n"
 
 
 async def test_main_runs_to_completion_when_server_exits(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -7,6 +7,8 @@ import json
 import os
 import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
 from uuid import uuid4
@@ -26,6 +28,7 @@ from ..tools import envelope
 from .mcp_client import (
     CANCELLATION_PROBE,
     client_for,
+    environment,
     free_port,
     http_server,
     initialize,
@@ -39,6 +42,21 @@ pytestmark = pytest.mark.integration
 
 # Explicit wildcard binding and rejection are required transport acceptance cases.
 WILDCARD_HOST = "0.0.0.0"  # noqa: S104
+
+
+def test_stdio_devnull_exits_cleanly(tmp_path):
+    child = subprocess.run(
+        [sys.executable, "-B", "-m", "justpen_knowledgebase_mcp"],
+        env=environment(tmp_path),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert child.returncode == 0, child.stderr
+    assert child.stdout == ""
+    assert "Traceback" not in child.stderr
 
 
 @pytest.mark.parametrize("ending", ["idle-signal", "partial-signal", "eof"])

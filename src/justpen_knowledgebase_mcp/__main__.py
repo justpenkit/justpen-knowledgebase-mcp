@@ -193,10 +193,10 @@ def cli() -> None:
     """Sync entrypoint for the ``justpen-knowledgebase-mcp`` console script."""
     try:
         config = parse_config()
+        asyncio.run(main(config))
     except ConfigurationError as error:
-        sys.stderr.write(f"CONFIGURATION: {error}\n")
+        sys.stderr.write(f"CONFIGURATION: {str(error).removeprefix('CONFIGURATION: ')}\n")
         raise SystemExit(2) from None
-    asyncio.run(main(config))
 
 
 if __name__ == "__main__":

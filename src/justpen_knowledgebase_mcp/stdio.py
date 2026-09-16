@@ -36,8 +36,14 @@ class _PipeFile(anyio.AsyncFile[str]):
     def __init__(self, descriptor: int) -> None:
         super().__init__(io.StringIO())
         self._descriptor = descriptor
-        mode = os.fstat(descriptor).st_mode
+        descriptor_stat = os.fstat(descriptor)
+        mode = descriptor_stat.st_mode
         self._regular = stat.S_ISREG(mode)
+        if stat.S_ISCHR(mode):
+            null_stat = Path(os.devnull).stat()
+            self._null_device = stat.S_ISCHR(null_stat.st_mode) and descriptor_stat.st_rdev == null_stat.st_rdev
+        else:
+            self._null_device = False
         self._socket = stat.S_ISSOCK(mode)
         self._write_size = (
             os.fpathconf(descriptor, "PC_PIPE_BUF") if stat.S_ISFIFO(mode) else 65536 if self._regular else 1
@@ -47,10 +53,10 @@ class _PipeFile(anyio.AsyncFile[str]):
     @override
     async def readline(self) -> str:
         while b"\n" not in self._buffer:
-            if not self._regular:
-                await anyio.wait_readable(self._descriptor)
-            else:
+            if self._regular or self._null_device:
                 await anyio.lowlevel.checkpoint()
+            else:
+                await anyio.wait_readable(self._descriptor)
             try:
                 chunk = os.read(self._descriptor, 65536)
             except BlockingIOError:

@@ -13,6 +13,8 @@ from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.connection import SQLiteRuntime
 from justpen_knowledgebase_mcp.workspace import WorkspacePaths
 
+from .mcp_client import environment
+
 pytestmark = pytest.mark.integration
 
 
@@ -49,3 +51,36 @@ async def test_real_startup_preserves_known_offline_upgrade_reason(tmp_path):
     ):
         async with KnowledgeBase.open(config):
             pytest.fail("unsupported layout admitted startup")
+
+
+def test_incompatible_layout_child_has_one_safe_configuration_line(tmp_path):
+    workspace_dir = tmp_path / "SECRET-MARKER"
+    workspace_dir.mkdir()
+    config = ServerConfig(workspace_dir=workspace_dir)
+    with (
+        WorkspacePaths(config) as workspace,
+        SQLiteRuntime(workspace, config) as factory,
+        closing(factory.connect()) as connection,
+    ):
+        connection.execute("DROP INDEX jobs_active_lane")
+
+    result = subprocess.run(
+        [sys.executable, "-B", "-m", "justpen_knowledgebase_mcp"],
+        env=environment(workspace_dir),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert sum(line.startswith("CONFIGURATION:") for line in result.stderr.splitlines()) == 1
+    assert (
+        result.stderr.splitlines().count(
+            "CONFIGURATION: unsupported supporting index layout; offline workspace upgrade required"
+        )
+        == 1
+    )
+    assert "SECRET-MARKER" not in result.stderr
+    assert "Traceback" not in result.stderr
