@@ -1,6 +1,7 @@
 """Checkpoint orchestration with isolated connection, file measurements and locks."""
 
-from contextlib import nullcontext
+import json
+from contextlib import nullcontext, suppress
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -8,7 +9,7 @@ import apsw
 import pytest
 
 from justpen_knowledgebase_mcp.config import WorkspacePolicy
-from justpen_knowledgebase_mcp.errors import ConfigurationError, StorageIOError
+from justpen_knowledgebase_mcp.errors import BusyError, ConfigurationError, LimitError, StorageIOError
 from justpen_knowledgebase_mcp.storage import maintenance
 from justpen_knowledgebase_mcp.storage.maintenance import StatusCache, WalState
 
@@ -148,6 +149,50 @@ async def test_initial_owner_open_failure_is_fail_fast(monkeypatch, boundary):
     finally:
         with pytest.raises(StorageIOError, match="maintenance unavailable"):
             await task.close()
+
+
+@pytest.mark.parametrize("boundary", ["guard", "start_publication", "finish_publication"])
+async def test_first_iteration_storage_failure_is_fail_fast(monkeypatch, boundary):
+    task, db = component(monkeypatch)
+    db.wal_checkpoint.return_value = (1, 1)
+    db.pragma.return_value = 4096
+    reached = []
+
+    def execute(sql, bindings=None):
+        if sql.startswith("UPDATE settings SET maintenance"):
+            assert bindings is not None
+            finished = json.loads(bindings[0])["attempt_finished_at"] is not None
+            if boundary == ("finish_publication" if finished else "start_publication"):
+                reached.append(boundary)
+                raise StorageIOError("private startup publication")
+        return cursor(value=WalState().model_dump_json())
+
+    def guard(_connection):
+        if boundary == "guard":
+            reached.append(boundary)
+            raise StorageIOError("private startup guard")
+
+    db.execute.side_effect = execute
+    monkeypatch.setattr(task.factory.guard, "check", guard)
+    try:
+        with pytest.raises(StorageIOError, match="maintenance unavailable"):
+            await task.start()
+        assert reached == [boundary]
+        assert task.status()["maintenance_error"] == "IO_ERROR"
+    finally:
+        with suppress(StorageIOError):
+            await task.close()
+
+
+@pytest.mark.parametrize("error", [apsw.BusyError(), apsw.IOError(), OSError(), BusyError(), LimitError()])
+async def test_historically_deferred_startup_attempt_still_initializes(monkeypatch, error):
+    task, _db = component(monkeypatch)
+    monkeypatch.setattr(task, "_start_attempt", Mock(side_effect=error))
+    try:
+        await task.start()
+        assert task.status()["maintenance_alive"]
+    finally:
+        await task.close()
 
 
 def test_local_assessment_and_failure_survive_same_sequence_reads(monkeypatch):

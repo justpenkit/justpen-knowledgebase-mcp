@@ -341,6 +341,7 @@ class CheckpointMaintenance:
         with outcome:
             result = self._run_once(trigger)
         if outcome.error is None:
+            self._initialized = True
             return result
         if not isinstance(outcome.error, Exception):
             raise outcome.error
@@ -362,9 +363,7 @@ class CheckpointMaintenance:
         try:
             fcntl.flock(self._leader_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            self._initialized = True
             return self.status()
-        self._initialized = True
         state: WalState | None = None
         try:
             state = self._start_attempt(connection)
