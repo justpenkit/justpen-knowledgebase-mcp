@@ -1,13 +1,13 @@
-"""Tool modules. Each exports ``register(mcp)``."""
+"""Register the eleven bounded public knowledgebase tools."""
 
 from fastmcp import FastMCP
 
-from . import echo, fail_demo
-
-__all__ = ["register_all"]
+from . import evidence, graph, maintenance, search
+from .request_presence import RequestPresence
 
 
 def register_all(mcp: FastMCP) -> None:
-    """Register every tool category on the FastMCP instance."""
-    echo.register(mcp)
-    fail_demo.register(mcp)
+    """Install unconditional request presence and the four public tool families."""
+    mcp.add_middleware(RequestPresence())
+    for family in (graph, evidence, search, maintenance):
+        family.register(mcp)

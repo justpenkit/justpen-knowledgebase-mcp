@@ -1,5 +1,6 @@
 site_name: "justpen-knowledgebase-mcp"
 site_description: "Knowledge base MCP for justpen pentesting framework"
+site_url: https://justpen-knowledgebase-mcp.justpenkit.justmumu.com/
 repo_url: https://github.com/justpenkit/justpen-knowledgebase-mcp
 repo_name: justpenkit/justpen-knowledgebase-mcp
 edit_uri: ''
@@ -33,24 +34,27 @@ theme:
 
 nav:
   - Home: index.md
-  - API reference: api.md
-  - Template updates: guides/template-updates.md
+  - Quickstart: quickstart.md
+  - Guides:
+      - Workspace and operations: guides/workspace.md
+      - Recon graph: guides/graph.md
+      - Evidence and search: guides/evidence-search.md
+      - Telemetry: guides/telemetry.md
+  - Tool reference:
+      - Overview: tools/index.md
+      - Graph and search: tools/graph.md
+      - Evidence: tools/evidence.md
+      - Maintenance: tools/maintenance.md
   - Contributing:
       - Getting started: contributing/getting-started.md
       - Claude Code and Codex: contributing/agents.md
       - Pre-PR checklist: contributing/pr-checklist.md
       - Lint & typing: contributing/lint-typing.md
       - Release process: contributing/release-process.md
+      - Template updates: contributing/template-updates.md
 
 plugins:
   - search
-  - mkdocstrings:
-      handlers:
-        python:
-          paths: [src]
-          options:
-            docstring_style: google
-            show_source: true
 
 markdown_extensions:
   - admonition

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import shutil
 import subprocess
 import sys
@@ -10,6 +12,12 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
+from fastmcp import Client
+
+from justpen_knowledgebase_mcp.app import create_app
+from justpen_knowledgebase_mcp.config import ServerConfig
+from justpen_knowledgebase_mcp.evidence import IngestRequest
+from justpen_knowledgebase_mcp.models import SearchRequest, TypesRequest, WriteRequest
 
 ROOT = Path(__file__).resolve().parent.parent
 pytestmark = [
@@ -44,6 +52,58 @@ def test_documentation_builds_strictly(documentation_project):
     result = build_documentation(documentation_project)
     assert result.returncode == 0, result.stdout + result.stderr
     assert (documentation_project / "site" / "index.html").is_file()
+    tools = rendered_text(documentation_project / "site" / "tools" / "index.html")
+    assert "exactly 11 tools" in tools
+    assert "kb_ingest_evidence" in tools
+
+
+async def test_mcp_reference_covers_actual_public_tools_once(tmp_path):
+    async with Client(create_app(ServerConfig(workspace_dir=tmp_path))) as client:
+        actual = {tool.name for tool in await client.list_tools()}
+    reference = "\n".join(path.read_text() for path in (ROOT / "docs" / "tools").glob("*.md"))
+    documented = re.findall(r"^## `([a-z_]+)`$", reference, flags=re.MULTILINE)
+    assert len(documented) == len(set(documented)) == 11
+    assert set(documented) == actual
+
+
+def test_public_json_examples_parse_and_match_request_schemas():
+    sources = [
+        ROOT / "docs" / "quickstart.md",
+        ROOT / "docs" / "guides" / "graph.md",
+        ROOT / "docs" / "guides" / "evidence-search.md",
+    ]
+    examples = [
+        json.loads(block)
+        for source in sources
+        for block in re.findall(r"```json\n(.*?)\n```", source.read_text(), flags=re.DOTALL)
+    ]
+    discovery = next(example for example in examples if set(example) == {"kind", "type"})
+    ingest = next(example for example in examples if "path" in example)
+    write = next(example for example in examples if set(example) == {"nodes", "relations"})
+    search = next(example for example in examples if example.get("kind") == "nodes" and "properties" in example)
+    assert TypesRequest.model_validate(discovery).type == "endpoint"
+    assert IngestRequest.model_validate(ingest).effective_media_type == "application/x-ndjson"
+    assert WriteRequest.model_validate(write).nodes[1].properties["name"] == "api.example.com"
+    assert SearchRequest.model_validate(search).properties is not None
+
+
+def test_readme_install_and_mcp_runtime_example_use_checkout():
+    readme = (ROOT / "README.md").read_text()
+    quickstart = (ROOT / "docs" / "quickstart.md").read_text()
+    assert "uv sync --locked" in readme
+    assert '"--directory",\n        "/absolute/path/to/justpen-knowledgebase-mcp"' in quickstart
+    assert '"python",\n        "-B",\n        "-m",\n        "justpen_knowledgebase_mcp"' in quickstart
+    assert "JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR" in quickstart
+
+
+def test_site_is_mcp_focused_and_uses_canonical_publication_settings():
+    configuration = (ROOT / "mkdocs.yml").read_text()
+    assert "site_url: https://justpen-knowledgebase-mcp.justpenkit.justmumu.com/" in configuration
+    assert "mkdocstrings" not in configuration
+    assert "api.md" not in configuration
+    assert not (ROOT / "docs" / "api.md").exists()
+    assert not (ROOT / "docs" / "guides" / "template-updates.md").exists()
+    assert (ROOT / "docs" / "contributing" / "template-updates.md").is_file()
 
 
 @pytest.mark.parametrize("target", ["missing-guide.md", "index.md#missing-anchor"])

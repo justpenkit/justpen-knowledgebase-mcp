@@ -1,0 +1,1 @@
+"""Native SQLite storage foundation."""

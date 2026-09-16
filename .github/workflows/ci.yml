@@ -70,13 +70,17 @@ jobs:
         run: make check-python
 
   integration:
-    name: integration
+    name: integration (py${{ matrix.python-version }})
     needs: quality
     if: needs.quality.outputs.generated == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     env:
-      UV_PYTHON: "3.13"
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.0.1
@@ -88,5 +92,98 @@ jobs:
         run: make lock-check
       - name: make install
         run: make install
+      - name: Install native audit prerequisite
+        run: sudo apt-get update && sudo apt-get install -y strace
       - name: Real tool, release and documentation scenarios
         run: make test-integration
+
+  consumer-runtime:
+    name: consumer/runtime (${{ matrix.runner }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+        python: ["3.11", "3.12", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - name: Install active Python
+        run: uv python install "$UV_PYTHON"
+      - name: Install native Linux audit prerequisite
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y strace
+      - name: Native cold-start confinement including telemetry
+        run: make test-native
+      - name: Isolated locked and minimum wheel consumers
+        run: make test-consumer
+      - name: Record actual runtime architecture
+        run: uv run --no-project python -c 'import platform; print(platform.platform(), platform.machine())'
+
+  deploy-docs:
+    name: Publish documentation
+    needs: [quality, check, integration, consumer-runtime]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.quality.result == 'success' &&
+      needs.check.result == 'success' &&
+      needs.integration.result == 'success' &&
+      needs.consumer-runtime.result == 'success'
+    environment:
+      name: production
+      url: https://justpen-knowledgebase-mcp.justpenkit.justmumu.com/
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      deployments: write
+    env:
+      UV_PYTHON: '3.13'
+    steps:
+      - name: Check publishing credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo '::error::Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in repository Settings > Secrets and variables > Actions.'
+            exit 1
+          fi
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+      - name: Install locked dependencies
+        run: make install
+      - name: Build documentation strictly
+        run: make docs-build
+      - name: Require current main before publication
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          if [ "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]; then
+            echo '::error::A newer main commit exists. Publish that commit instead.'
+            exit 1
+          fi
+      - name: Publish to Cloudflare Pages
+        id: pages
+        uses: cloudflare/wrangler-action@v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site --project-name=justpen-knowledgebase-mcp --branch=main --commit-hash=${{ github.sha }}
+      - name: Verify production deployment
+        env:
+          PAGES_ENVIRONMENT: ${{ steps.pages.outputs.pages-environment }}
+        run: |-
+          if [ "$PAGES_ENVIRONMENT" != 'production' ]; then
+            echo '::error::Pages did not report a production deployment. Set the Pages production branch to main before retrying.'
+            exit 1
+          fi

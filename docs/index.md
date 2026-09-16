@@ -1,29 +1,41 @@
-# justpen-knowledgebase-mcp
+# justpen knowledge base MCP
 
-Knowledge base MCP for justpen pentesting framework
+`justpen-knowledgebase-mcp` gives MCP agents one durable, workspace-local place
+to connect scanner evidence to a strict recon graph. The server computes graph
+identity keys, stores evidence by SHA-256, and exposes incomplete indexing and
+pending deletion states instead of treating them as success.
 
-This MCP server communicates over stdio. After running `make setup`, start it
-with:
+One server deployment owns one configured workspace and one engagement.
+Requests cannot select another workspace, and `JUSTPEN_SESSION_ID` correlates
+telemetry only; it never partitions graph data.
 
-```bash
-uv run justpen-knowledgebase-mcp
-```
+## Start here
 
-Replace the example tools and this introduction with your server's behavior.
-The project starts at version `0.0.0`; follow the
-[release process](contributing/release-process.md) when it is ready to release.
+- [Quickstart](quickstart.md) configures stdio or HTTP and ingests a first file.
+- [Workspace guide](guides/workspace.md) explains paths, copying, recovery, and
+    operational boundaries.
+- [Graph guide](guides/graph.md) discovers the catalog and writes shared nodes.
+- [Evidence and search](guides/evidence-search.md) covers raw bytes, indexing,
+    exact filters, jobs, and deletion.
+- [Tool reference](tools/index.md) documents all 11 MCP tools and their response
+    semantics.
+- [Telemetry](guides/telemetry.md) configures scoped OTLP export and correlation.
 
-## Contributor docs
+## Core guarantees
 
-- [Getting started](contributing/getting-started.md): install the tools with
-    `make setup` and run the development gate.
-- [Claude Code and Codex](contributing/agents.md): activate shared development
-    rules and metadata permissions.
-- [PR checklist](contributing/pr-checklist.md): branch, commits, tests, docs and
-    merge style.
-- [Lint & typing](contributing/lint-typing.md): Ruff and strict Pyright rules,
-    including the suppression protocol.
-- [API reference](api.md): configuration, errors, responses and example tools,
-    rendered from their Python docstrings.
-- [Template updates](guides/template-updates.md): bring future template changes
-    into this project through Copier.
+- Node and relation types come from a fixed catalog returned by `kb_types`.
+- Required identity properties are strictly validated; additional JSON
+    properties remain available for scanner-specific facts.
+- A natural identity maps to one node per workspace, so several parents can
+    point to the same node without copying a parent UUID into its properties.
+- Evidence IDs are `e_` plus the lowercase SHA-256 of the exact stored bytes.
+- Writes and delete admission are atomic. Large native I/O continues as durable
+    jobs with explicit pending, failure, retry, and retention state.
+- Read and search responses expose pagination, truncation, index coverage, and
+    canonical property fallback rather than silently omitting unknown results.
+
+## Contributors
+
+See [Getting started](contributing/getting-started.md), the
+[pre-PR checklist](contributing/pr-checklist.md), and the short
+[template update guide](contributing/template-updates.md).

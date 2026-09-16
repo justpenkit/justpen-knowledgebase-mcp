@@ -23,7 +23,16 @@ classifiers = [
   "Topic :: Software Development :: Libraries",
   "Typing :: Typed",
 ]
-dependencies = ["fastmcp>=2.0"]
+dependencies = [
+  "apsw>=3.53.4.0,<4",
+  "fastmcp>=4.0.3,<5",
+  "opentelemetry-api>=1.41.0,<2",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.41.0,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.41.0,<2",
+  "opentelemetry-sdk>=1.41.0,<2",
+  "pydantic>=2.0,<3",
+  "starlette>=1.3.1,<2",
+]
 
 [project.urls]
 Homepage = "https://github.com/justpenkit/justpen-knowledgebase-mcp"
@@ -51,10 +60,11 @@ dev = [
   "pytest-cov>=5.0",
   "ruff>=0.15",
   "taplo>=0.9.3",
+  "typing-extensions>=4.6,<5",
   "yamlfix>=1.16",
 ]
 
-docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.27"]
+docs = ["mkdocs-material>=9.5"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"

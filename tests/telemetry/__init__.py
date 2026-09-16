@@ -1,0 +1,1 @@
+"""Telemetry contract tests."""

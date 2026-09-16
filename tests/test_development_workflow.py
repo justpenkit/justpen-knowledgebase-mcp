@@ -8,8 +8,50 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_full_integration_suite_runs_on_every_supported_python():
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    integration = workflow["jobs"]["integration"]
+    assert integration["strategy"]["matrix"]["python-version"] == ["3.11", "3.12", "3.13"]
+    assert integration["strategy"]["fail-fast"] is False
+    assert integration["env"]["UV_PYTHON"] == "${{ matrix.python-version }}"
+    assert "${{ matrix.python-version }}" in integration["name"]
+    assert integration["needs"] == "quality"
+    assert integration["if"] == "needs.quality.outputs.generated == 'true'"
+    assert any(step.get("run") == "make test-integration" for step in integration["steps"])
+
+
+def test_documentation_deploy_waits_for_every_validation_job():
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    deploy = workflow["jobs"]["deploy-docs"]
+    assert set(deploy["needs"]) == {"quality", "check", "integration", "consumer-runtime"}
+    condition = deploy["if"]
+    for job in deploy["needs"]:
+        assert f"needs.{job}.result == 'success'" in condition
+    assert "github.event_name == 'push'" in condition
+    assert "github.ref == 'refs/heads/main'" in condition
+    assert deploy["environment"] == {
+        "name": "production",
+        "url": "https://justpen-knowledgebase-mcp.justpenkit.justmumu.com/",
+    }
+
+
+def test_documentation_deploy_checks_credentials_head_and_pages_project():
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    steps = workflow["jobs"]["deploy-docs"]["steps"]
+    rendered = json.dumps(steps)
+    assert "CLOUDFLARE_ACCOUNT_ID" in rendered
+    assert "CLOUDFLARE_API_TOKEN" in rendered
+    assert "make docs-build" in rendered
+    assert "git rev-parse FETCH_HEAD" in rendered
+    publish = next(step for step in steps if step.get("uses") == "cloudflare/wrangler-action@v4.0.0")
+    assert publish["with"]["command"] == (
+        "pages deploy site --project-name=justpen-knowledgebase-mcp --branch=main --commit-hash=${{ github.sha }}"
+    )
 
 
 @pytest.fixture
