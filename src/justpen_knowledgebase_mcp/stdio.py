@@ -11,6 +11,7 @@ from __future__ import annotations
 import fcntl
 import io
 import os
+import socket
 import stat
 import sys
 from contextlib import ExitStack, contextmanager
@@ -37,6 +38,7 @@ class _PipeFile(anyio.AsyncFile[str]):
         self._descriptor = descriptor
         mode = os.fstat(descriptor).st_mode
         self._regular = stat.S_ISREG(mode)
+        self._socket = stat.S_ISSOCK(mode)
         self._write_size = (
             os.fpathconf(descriptor, "PC_PIPE_BUF") if stat.S_ISFIFO(mode) else 65536 if self._regular else 1
         )
@@ -66,6 +68,12 @@ class _PipeFile(anyio.AsyncFile[str]):
     @override
     async def write(self, b: str) -> int:
         remaining = memoryview(b.encode("utf-8"))
+        # Constructing a socket with a process-wide default timeout can change
+        # the shared OFD flags. Embedders with that setting retain the cautious
+        # descriptor path; callers must not race global socket configuration.
+        if self._socket and socket.getdefaulttimeout() is None:
+            await self._write_socket(remaining)
+            return len(b)
         while remaining:
             if not self._regular:
                 await anyio.wait_writable(self._descriptor)
@@ -77,6 +85,34 @@ class _PipeFile(anyio.AsyncFile[str]):
                 continue
             remaining = remaining[written:]
         return len(b)
+
+    async def _write_socket(self, remaining: memoryview) -> None:
+        # The wrapper temporarily owns the duplicate, but _wire_streams retains
+        # responsibility for restoring and closing it. Never change OFD flags:
+        # socket.setblocking/settimeout would also affect the inherited endpoint.
+        sock = socket.socket(fileno=self._descriptor)
+        try:
+            # Darwin's MSG_DONTWAIT does not prevent waiting for buffer space.
+            # With an exclusive writer, readiness guarantees SO_SNDLOWAT bytes.
+            wait_first = sys.platform == "darwin" and os.get_blocking(self._descriptor)
+            write_size = (
+                min(65536, max(1, sock.getsockopt(socket.SOL_SOCKET, socket.SO_SNDLOWAT))) if wait_first else 65536
+            )
+            await anyio.lowlevel.checkpoint()
+            while remaining:
+                if wait_first:
+                    await anyio.wait_writable(self._descriptor)
+                try:
+                    written = sock.send(remaining[:write_size], socket.MSG_DONTWAIT)
+                except BlockingIOError:
+                    await anyio.wait_writable(self._descriptor)
+                else:
+                    if written == 0:
+                        raise BrokenPipeError("Socket stdio write made no progress")
+                    remaining = remaining[written:]
+                    await anyio.lowlevel.checkpoint()
+        finally:
+            sock.detach()
 
     @override
     async def flush(self) -> None:

@@ -51,6 +51,16 @@ Call `kb_status` first. It reports `deployment_scope: "single_workspace"`,
 `request_workspace_selection: false`; every client connected to this process
 shares that scope.
 
+Stdio supports POSIX pipes and stream sockets with exclusive ownership of each
+endpoint. Socket output uses cancellable sends of at most 64 KiB without changing
+inherited file flags. Blocking macOS sockets wait for readiness before sending at
+most `SO_SNDLOWAT` bytes (typically 2 KiB). Pipe writes remain bounded by
+`PIPE_BUF` (512 bytes on macOS), so large responses require more writes. TTY
+endpoints retain conservative one-byte writes; arbitrary terminal modes do not
+have the same cancellation guarantee. Embedders that set a global socket timeout
+also retain the one-byte descriptor path and must not race changes to that global
+setting with transport writes.
+
 ## HTTP transport
 
 Start the same runtime with an explicit transport:

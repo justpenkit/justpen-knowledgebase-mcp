@@ -1,14 +1,179 @@
 """Cancellable stream adapter with SDK and descriptor operations isolated."""
 
+import socket
 import stat
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import anyio
 import pytest
 
 from justpen_knowledgebase_mcp import stdio
+
+
+@pytest.fixture
+def socket_endpoint(monkeypatch):
+    """Model descriptor operations without native resources in the unit suite."""
+    endpoint = SimpleNamespace(
+        parts=[],
+        requests=[],
+        flags=2,
+        opened=True,
+        detached=False,
+        outcome=None,
+        blocking=True,
+        events=[],
+        default_timeout=None,
+        wrappers=0,
+    )
+
+    def send(view, flags=socket.MSG_DONTWAIT):
+        assert endpoint.opened
+        assert flags == socket.MSG_DONTWAIT
+        endpoint.events.append("send")
+        endpoint.requests.append(len(view))
+        if endpoint.outcome is not None:
+            count = endpoint.outcome(view)
+        elif len(endpoint.requests) == 2:
+            raise BlockingIOError
+        else:
+            count = min(len(view), 4093 if len(endpoint.requests) == 1 else 65536)
+        endpoint.parts.append(bytes(view[:count]))
+        return count
+
+    def detach():
+        endpoint.detached = True
+        return 9
+
+    def change_flags(_value):
+        endpoint.flags |= 2048
+
+    def close(fd):
+        assert fd == 9
+        assert endpoint.opened
+        endpoint.opened = False
+
+    async def ready(_fd):
+        endpoint.events.append("wait")
+        await anyio.lowlevel.checkpoint()
+
+    monkeypatch.setattr(
+        stdio,
+        "os",
+        SimpleNamespace(
+            fstat=Mock(return_value=SimpleNamespace(st_mode=stat.S_IFSOCK)),
+            write=lambda _fd, view: send(view),
+            set_blocking=lambda _fd, value: change_flags(value),
+            get_blocking=lambda _fd: endpoint.blocking,
+            close=close,
+            dup2=lambda _owned, _descriptor: None,
+        ),
+    )
+    monkeypatch.setattr(stdio.anyio, "wait_writable", ready)
+    wrapper = SimpleNamespace(
+        send=send, detach=detach, setblocking=change_flags, settimeout=change_flags, getsockopt=lambda *_args: 2048
+    )
+
+    def wrap(*, fileno):
+        endpoint.wrappers += 1
+        if endpoint.default_timeout is not None:
+            change_flags(endpoint.default_timeout)
+        return wrapper
+
+    monkeypatch.setattr(
+        stdio,
+        "socket",
+        SimpleNamespace(
+            socket=wrap,
+            getdefaulttimeout=lambda: endpoint.default_timeout,
+            MSG_DONTWAIT=socket.MSG_DONTWAIT,
+            SOL_SOCKET=socket.SOL_SOCKET,
+            SO_SNDLOWAT=socket.SO_SNDLOWAT,
+        ),
+    )
+    monkeypatch.setattr(stdio, "sys", SimpleNamespace(platform="linux"))
+    return endpoint
+
+
+async def test_socket_large_write_uses_bounded_bulk_sends(socket_endpoint):
+    payload = ("é" * (150 * 1024)).encode()
+    inherited_flags_before = socket_endpoint.flags
+    assert await stdio._PipeFile(9).write(payload.decode()) == 150 * 1024
+    sent_parts, requested_sizes = socket_endpoint.parts, socket_endpoint.requests
+    inherited_flags_after = socket_endpoint.flags
+    assert b"".join(sent_parts) == payload
+    assert max(requested_sizes) <= 65536
+    assert len(requested_sizes) < len(payload) // 100
+    assert inherited_flags_after == inherited_flags_before
+    assert socket_endpoint.detached
+    stdio._restore(1, 9)
+    assert not socket_endpoint.opened
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+async def test_socket_cancellation_detaches_before_descriptor_cleanup(socket_endpoint, blocked):
+    with anyio.CancelScope() as scope:
+
+        def send(view):
+            scope.cancel()
+            if blocked:
+                raise BlockingIOError
+            return len(view)
+
+        socket_endpoint.outcome = send
+        await stdio._PipeFile(9).write("x" * (300 * 1024))
+        pytest.fail("write did not observe cancellation")
+    assert scope.cancelled_caught
+    assert socket_endpoint.detached
+    assert socket_endpoint.opened
+    assert len(socket_endpoint.requests) == 1
+    stdio._restore(1, 9)
+    assert not socket_endpoint.opened
+
+
+@pytest.mark.parametrize("blocking", [False, True])
+async def test_darwin_socket_respects_write_readiness_low_water(socket_endpoint, monkeypatch, blocking):
+    monkeypatch.setattr(stdio.sys, "platform", "darwin")
+    socket_endpoint.blocking = blocking
+    assert await stdio._PipeFile(9).write("x" * (300 * 1024)) == 300 * 1024
+    assert b"".join(socket_endpoint.parts) == b"x" * (300 * 1024)
+    assert max(socket_endpoint.requests) == (2048 if blocking else 65536)
+    if blocking:
+        for index, event in enumerate(socket_endpoint.events):
+            if event == "send":
+                assert index > 0
+                assert socket_endpoint.events[index - 1] == "wait"
+    assert socket_endpoint.detached
+
+
+@pytest.mark.parametrize("default_timeout", [0.0, 1.0])
+async def test_socket_global_timeout_preserves_inherited_flags(socket_endpoint, default_timeout):
+    socket_endpoint.default_timeout = default_timeout
+    inherited_flags_before = socket_endpoint.flags
+    assert await stdio._PipeFile(9).write("response") == 8
+    assert b"".join(socket_endpoint.parts) == b"response"
+    assert socket_endpoint.flags == inherited_flags_before
+    assert socket_endpoint.wrappers == 0
+    stdio._restore(1, 9)
+    assert not socket_endpoint.opened
+
+
+@pytest.mark.parametrize("failure", [BrokenPipeError, OSError, "zero"])
+async def test_socket_failed_send_detaches_and_does_not_retry(socket_endpoint, failure):
+    def send(_view):
+        if failure == "zero" and len(socket_endpoint.requests) == 1:
+            return 0
+        raise (BrokenPipeError if failure == "zero" else failure)("peer closed")
+
+    socket_endpoint.outcome = send
+    with pytest.raises(BrokenPipeError if failure == "zero" else failure):
+        await stdio._PipeFile(9).write("response")
+    assert len(socket_endpoint.requests) == 1
+    assert socket_endpoint.detached
+    stdio._restore(1, 9)
+    assert not socket_endpoint.opened
 
 
 @pytest.mark.parametrize("regular", [False, True])
