@@ -62,7 +62,10 @@ async def invoke(
     # FastMCP exposes unhandled exception messages; hide unexpected content at this boundary.
     except Exception as exc:  # noqa: BLE001
         # Cancellation is a BaseException and must reach the worker/SDK boundary.
-        envelope = exception_response(exc)
+        try:
+            envelope = exception_response(exc)
+        except Exception:  # noqa: BLE001 — preserve a safe envelope even if error mapping fails
+            envelope = {"status": "error", "error": "INTERNAL: operation failed"}
     return ToolResult(structured_content=envelope, is_error=envelope["status"] == "error")
 
 

@@ -43,6 +43,14 @@ async def test_remote_parent_and_terminal_log_are_preserved(tmp_path, collector,
     assert span["resource"]["service.name"] == "justpen-knowledgebase-mcp"
     assert span["attributes"]["gen_ai.tool.name"] == "kb_status"
     assert span["attributes"]["justpen.trace.context.source"] == ("meta" if transport == "stdio" else "http")
+    started = [
+        item
+        for item in collector.logs()
+        if item["body"] == "mcp.request.started"
+        and (item["trace_id"], item["span_id"]) == (span["trace_id"], span["span_id"])
+    ]
+    assert len(started) == 1
+    assert started[0]["attributes"]["gen_ai.tool.name"] == "kb_status"
     terminal = [
         item
         for item in collector.logs()

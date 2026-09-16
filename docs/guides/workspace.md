@@ -68,3 +68,10 @@ for SQLite recovery on the next open.
 
 The v1 server logs diagnostics to stderr and optional OTLP exporters. It does not
 create file logs and has no `LOG_DIR` setting.
+
+For HTTP on a wildcard address, explicitly list the public Host aliases in
+`JUSTPEN_KNOWLEDGEBASE_ALLOWED_HOSTS` as a JSON array, for example
+`["kb.example.test"]`. Each entry is a concrete lowercase DNS name or IP literal;
+up to 16 entries are accepted. This changes Host admission only. FastMCP still
+checks Origin, and non-loopback binding still requires
+`JUSTPEN_KNOWLEDGEBASE_ALLOW_NON_LOOPBACK=true`.

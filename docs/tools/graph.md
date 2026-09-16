@@ -28,6 +28,9 @@ failure; `NOT_FOUND` for an atomic missing reference/evidence set;
 `CONFLICT`/`RECORD_DELETING` for pending records; `BUSY`, `LIMIT`, or storage
 errors. No partial batch commits.
 
+`CONFLICT` also reports attempts to change an existing record's type, required
+identity fields, or relation endpoints, which are immutable.
+
 Object patches merge recursively, arrays replace whole values, and `{}` leaves
 existing object children. Required identity cannot change. Explicit `null`
 clears label/source but is literal data inside properties. A supplied

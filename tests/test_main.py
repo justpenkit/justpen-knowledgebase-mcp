@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -23,6 +23,8 @@ import justpen_knowledgebase_mcp.shutdown as shutdown_mod
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from justpen_knowledgebase_mcp.telemetry.runtime import TelemetryRuntime
 
 
 def capture_signals(monkeypatch: pytest.MonkeyPatch) -> dict[signal.Signals, Callable[[], None]]:
@@ -83,6 +85,28 @@ async def test_main_runs_to_completion_when_server_exits(monkeypatch: pytest.Mon
     monkeypatch.setattr(main_mod, "create_app", lambda config, **kwargs: SimpleNamespace(run_async=quick_exit))
     await main_mod.main()
     assert asyncio.all_tasks() == before
+
+
+async def test_http_launch_wires_explicit_hosts_with_strict_guard(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    capture_signals(monkeypatch)
+    captured: dict[str, Any] = {}
+
+    async def quick_exit(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(main_mod, "create_app", lambda config, **kwargs: SimpleNamespace(run_async=quick_exit))
+    config = main_mod.ServerConfig(
+        workspace_dir=tmp_path,
+        transport="http",
+        host="0.0.0.0",  # noqa: S104 - assert explicit wildcard binding with a fixed Host alias
+        allow_non_loopback=True,
+        allowed_hosts=("kb.example.test",),
+    )
+    await main_mod._serve(config, cast("TelemetryRuntime", SimpleNamespace(asgi_middleware=lambda: None)))
+    assert captured["host_origin_protection"] is True
+    assert captured["allowed_hosts"] == [config.host, "kb.example.test"]
 
 
 @pytest.mark.parametrize("stop_requested", [False, True], ids=["server-failure", "simultaneous-stop-and-failure"])

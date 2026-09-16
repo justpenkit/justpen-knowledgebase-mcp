@@ -101,7 +101,7 @@ async def _serve(config: ServerConfig, telemetry: TelemetryRuntime) -> None:
                 log_level=None,
                 middleware=telemetry.asgi_middleware(),
                 host_origin_protection=True,
-                allowed_hosts=[config.host],
+                allowed_hosts=[config.host, *config.allowed_hosts],
                 uvicorn_config={
                     "timeout_graceful_shutdown": 30,
                     "log_level": config.log_level.lower(),

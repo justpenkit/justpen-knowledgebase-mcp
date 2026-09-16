@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastmcp.server.middleware import MiddlewareContext
 from fastmcp.tools import ToolResult
+from mcp.types import CallToolRequestParams
 from opentelemetry import trace
 
 from justpen_knowledgebase_mcp.app import create_app
@@ -63,6 +64,29 @@ async def test_request_metadata_is_projected_without_payload():
     assert observation.attributes["gen_ai.tool.call.id"] == "call-a"
     assert observation.attributes["justpen.client.name"] == "codex-mcp-client"
     assert "sentinel-secret" not in repr(observation.attributes)
+
+
+@pytest.mark.parametrize(("name", "expected"), [("kb_status", "kb_status"), ("sentinel-secret", None)])
+@pytest.mark.parametrize("typed", [False, True])
+async def test_started_event_uses_only_known_tool_name(name, expected, typed):
+    started: list[dict[str, object]] = []
+    events = MagicMock()
+    events.request_started.side_effect = lambda observation: started.append(dict(observation.attributes))
+    middleware = TelemetryMiddleware(events=events, transport="stdio")
+    await middleware.on_request(
+        MiddlewareContext(
+            method="tools/call",
+            message=(
+                CallToolRequestParams(name=name, arguments={"secret": "sentinel-secret"})
+                if typed
+                else {"name": name, "arguments": {"secret": "sentinel-secret"}}
+            ),
+        ),
+        AsyncMock(return_value={}),
+    )
+    assert len(started) == 1
+    assert started[0].get("gen_ai.tool.name") == expected
+    assert "sentinel-secret" not in repr(started[0])
 
 
 @pytest.mark.parametrize(

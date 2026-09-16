@@ -166,6 +166,24 @@ async def test_http_origin_guard_survives_bind_flag_and_cli_override(tmp_path, h
             assert status["bind_scope"] == ("non_loopback" if host == WILDCARD_HOST else "loopback")
 
 
+async def test_http_explicit_host_alias_keeps_strict_host_and_origin_guard(tmp_path):
+    async with (
+        http_server(
+            tmp_path,
+            host=WILDCARD_HOST,
+            allow=True,
+            env={"JUSTPEN_KNOWLEDGEBASE_ALLOWED_HOSTS": '["kb.example.test"]'},
+        ) as (url, _child),
+        httpx2.AsyncClient() as http,
+    ):
+        allowed = await http.get(url, headers={"Host": "kb.example.test"})
+        assert allowed.status_code != 421
+        unknown = await http.get(url, headers={"Host": "unknown.example.test"})
+        assert unknown.status_code == 421
+        bad_origin = await http.get(url, headers={"Host": "kb.example.test", "Origin": "https://invalid.example.test"})
+        assert bad_origin.status_code == 403
+
+
 @pytest.mark.parametrize("transport", ["stdio", "http"])
 @pytest.mark.parametrize("phase", ["precommit", "committing"])
 async def test_real_cancellation_notification_and_late_cancel(tmp_path, transport, phase):

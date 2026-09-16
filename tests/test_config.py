@@ -66,3 +66,35 @@ def test_cli_override_guard_applies_before_server_launch(monkeypatch):
     monkeypatch.setenv(PREFIX + "WORKSPACE_DIR", "/workspace")
     with pytest.raises(ValidationError):
         entrypoint.parse_config(["--transport", "http", "--host", "192.0.2.1"])
+
+
+def test_http_allowed_hosts_are_bounded_concrete_aliases():
+    env = {
+        PREFIX + "WORKSPACE_DIR": "/workspace",
+        PREFIX + "TRANSPORT": "http",
+        PREFIX + "HOST": "0.0.0.0",  # noqa: S104 - validate explicit wildcard HTTP binding
+        PREFIX + "ALLOW_NON_LOOPBACK": "true",
+        PREFIX + "ALLOWED_HOSTS": '["kb.example.test", "192.0.2.4"]',
+    }
+    cfg = ServerConfig.from_env(env)
+    assert cfg.allowed_hosts == ("kb.example.test", "192.0.2.4")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "kb.example.test",
+        '"kb.example.test"',
+        '["*"]',
+        '["*.example.test"]',
+        '["https://kb.example.test"]',
+        '["kb.example.test:8934"]',
+        '["kb.example.test/path"]',
+        '["999.999.999.999"]',
+        '["kb.example.test", "kb.example.test"]',
+        "[" + ",".join(['"host.example.test"'] * 17) + "]",
+    ],
+)
+def test_http_allowed_hosts_reject_invalid_or_unbounded_values(value):
+    with pytest.raises(ValidationError):
+        ServerConfig.from_env({PREFIX + "WORKSPACE_DIR": "/workspace", PREFIX + "ALLOWED_HOSTS": value})

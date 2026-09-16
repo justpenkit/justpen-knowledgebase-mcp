@@ -64,10 +64,22 @@ JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR="$PWD/workspace" \
 
 Connect the MCP client to `http://127.0.0.1:8934/mcp`. The default loopback
 listener still reports `authentication: "none"`. A non-loopback host also
-requires `JUSTPEN_KNOWLEDGEBASE_ALLOW_NON_LOOPBACK=true`; that opt-in only
-permits the bind. It does not add authentication or replace network access
-controls, and it does not claim Origin validation. Put an appropriate
-authenticated access layer in front of any externally reachable deployment.
+requires `JUSTPEN_KNOWLEDGEBASE_ALLOW_NON_LOOPBACK=true`. For a wildcard bind
+with a public Host name, use:
+
+```bash
+JUSTPEN_KNOWLEDGEBASE_ALLOWED_HOSTS='["kb.example.test"]' \
+JUSTPEN_KNOWLEDGEBASE_ALLOW_NON_LOOPBACK=true \
+JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR="$PWD/workspace" \
+  uv run python -B -m justpen_knowledgebase_mcp --transport http --host 0.0.0.0
+```
+
+The host setting is a JSON array of at most 16 lowercase
+DNS names or IP literals, without ports, schemes, paths, or wildcards. The bind
+host and local defaults remain allowed; unknown Host names and invalid Origin
+headers are rejected. Bind opt-in and Host validation do not add authentication
+or replace network access controls. Put an appropriate authenticated access
+layer in front of any externally reachable deployment.
 
 With HTTP, `path` inputs name files on the server's workspace, never files on a
 remote MCP client's machine. Inline `text` or strict `base64` is limited to

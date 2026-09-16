@@ -3,6 +3,9 @@
 Telemetry is disabled by default. When enabled, the server exports MCP request
 spans, fixed operational events, and low-cardinality request count/duration
 metrics to an OTLP collector over HTTP/protobuf or gRPC.
+Enabled telemetry requires FastMCP's `FASTMCP_TELEMETRY_MODE=native` (the default)
+so the server can enrich its native request spans. A different FastMCP mode fails
+startup configuration validation.
 
 Complete the workspace and runtime setup in the [Quickstart](../quickstart.md)
 first; the launch snippet below assumes its required workspace variable is set.

@@ -24,6 +24,19 @@ def test_error_envelope():
     assert error_response("INVALID", "bad input") == {"status": "error", "error": "INVALID: bad input"}
 
 
+def test_long_authored_error_keeps_prefix_and_envelope_limit():
+    result = exception_response(errors.BusyError("x" * 2000))
+    assert result["status"] == "error"
+    assert result["error"].startswith("BUSY: ")
+    assert len(result["error"]) == 1024
+
+
+def test_broken_expected_error_mapping_returns_fixed_internal():
+    error = errors.McpError("private /workspace/secret")
+    error.error_type = "PRIVATE"
+    assert exception_response(error) == {"status": "error", "error": "INTERNAL: operation failed"}
+
+
 def test_arbitrary_details_rejected():
     with pytest.raises(ValueError):
         ErrorResult.model_validate({"error": "BUSY: wait", "details": {"sql": "secret"}})

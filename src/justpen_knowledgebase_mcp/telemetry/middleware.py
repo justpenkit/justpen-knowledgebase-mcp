@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Mapping
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastmcp.server.middleware import Middleware
+from mcp.types import CallToolRequestParams
 from opentelemetry import trace
 from typing_extensions import override
 
@@ -22,8 +24,6 @@ from .context import (
 from .payloads import KNOWN_TOOLS, apply_tool_result, known_method, safe_attributes
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from fastmcp.server.middleware import CallNext, MiddlewareContext
     from fastmcp.tools import ToolResult
     from opentelemetry.util.types import AttributeValue
@@ -78,6 +78,16 @@ class TelemetryMiddleware(Middleware):
         observation = RequestObservation(
             known_method(context.method), self.transport, time.monotonic(), _request_attributes(context)
         )
+        # Normal calls carry validated params; early failures carry raw params.
+        if context.method == "tools/call":
+            message = context.message
+            name: object = None
+            if isinstance(message, CallToolRequestParams):
+                name = message.name
+            elif isinstance(message, Mapping):
+                name = cast("Mapping[object, object]", message).get("name")
+            if isinstance(name, str) and name in KNOWN_TOOLS:
+                observation.attributes["gen_ai.tool.name"] = name
         token = current_observation.set(observation)
         span = trace.get_current_span()
         try:

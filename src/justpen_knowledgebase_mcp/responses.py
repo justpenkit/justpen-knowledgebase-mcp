@@ -82,7 +82,10 @@ def success_response(data: dict[str, Any] | None = None) -> dict[str, Any]:
 
 def error_response(error_type: str, message: str, details: ErrorDetails | None = None) -> dict[str, Any]:
     """Build a checked envelope from a server-authored, content-free message."""
-    result = ErrorResult(error=f"{error_type}: {message}", details=details).model_dump(mode="json", exclude_none=True)
+    prefix = f"{error_type}: "
+    result = ErrorResult(error=prefix + message[: 1024 - len(prefix)], details=details).model_dump(
+        mode="json", exclude_none=True
+    )
     if isinstance(details, BlockerDetails):
         result["details"] = details.model_dump(
             mode="json", exclude={"deletion_owner"} if details.deletion_owner is None else set()
@@ -92,18 +95,21 @@ def error_response(error_type: str, message: str, details: ErrorDetails | None =
 
 def exception_response(error: BaseException) -> dict[str, Any]:
     """Map expected server-authored errors and hide all unexpected exception data."""
-    if isinstance(error, WalBusyError):
-        return error_response(
-            "BUSY", error.reason, WalRetryDetails(reason=error.reason, retry_after_ms=error.retry_after_ms)
-        )
-    if isinstance(error, (RecordConflictError, MissingRecordsError)):
-        return error_response(error.error_type, str(error), error.details)
-    if isinstance(error, McpError):
-        message = str(error)
-        prefix = error.error_type + ": "
-        message = message.removeprefix(prefix)
-        return error_response(error.error_type, message)
-    return error_response("INTERNAL", "operation failed")
+    try:
+        if isinstance(error, WalBusyError):
+            return error_response(
+                "BUSY", error.reason, WalRetryDetails(reason=error.reason, retry_after_ms=error.retry_after_ms)
+            )
+        if isinstance(error, (RecordConflictError, MissingRecordsError)):
+            return error_response(error.error_type, str(error), error.details)
+        if isinstance(error, McpError):
+            message = str(error)
+            prefix = error.error_type + ": "
+            message = message.removeprefix(prefix)
+            return error_response(error.error_type, message)
+    except Exception:  # noqa: BLE001 — mapper failure must never expose exception content
+        return {"status": "error", "error": "INTERNAL: operation failed"}
+    return {"status": "error", "error": "INTERNAL: operation failed"}
 
 
 def bounded_response(data: dict[str, Any]) -> dict[str, Any]:

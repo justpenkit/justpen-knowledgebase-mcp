@@ -49,6 +49,36 @@ async def test_tool_exception_boundary_does_not_leak_internal_content(monkeypatc
     assert "secret" not in str(result.structured_content)
 
 
+async def test_mapper_failure_still_returns_private_safe_tool_envelope(monkeypatch):
+    monkeypatch.setattr(
+        request_presence,
+        "get_service",
+        Mock(return_value=Mock(status=AsyncMock(side_effect=ValueError("secret path")))),
+    )
+    monkeypatch.setattr(request_presence, "exception_response", Mock(side_effect=ValueError("mapper secret")))
+
+    async def call(context):
+        del context
+        return await request_presence.invoke(Mock(), "status", {})
+
+    result = await request_presence.RequestPresence().on_call_tool(Mock(message=Mock(arguments={})), call)
+    assert result.is_error
+    assert result.structured_content == {"status": "error", "error": "INTERNAL: operation failed"}
+
+
+async def test_invoke_cancellation_is_not_mapped_to_an_error(monkeypatch):
+    monkeypatch.setattr(
+        request_presence, "get_service", Mock(return_value=Mock(status=AsyncMock(side_effect=asyncio.CancelledError)))
+    )
+
+    async def call(context):
+        del context
+        return await request_presence.invoke(Mock(), "status", {})
+
+    with pytest.raises(asyncio.CancelledError):
+        await request_presence.RequestPresence().on_call_tool(Mock(message=Mock(arguments={})), call)
+
+
 async def test_invalid_tool_model_never_dispatches(monkeypatch):
     service = Mock()
     monkeypatch.setattr(request_presence, "get_service", service)

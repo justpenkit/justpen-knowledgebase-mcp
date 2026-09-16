@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import re
 from ipaddress import ip_address
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Self
+from typing import TYPE_CHECKING, Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -26,6 +28,7 @@ class ServerConfig(BaseModel):
     lock_dir: Path | None = None
     transport: Literal["stdio", "http"] = "stdio"
     host: str = "127.0.0.1"
+    allowed_hosts: tuple[str, ...] = ()
     port: int = Field(default=8934, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     allow_non_loopback: bool = False
@@ -50,6 +53,34 @@ class ServerConfig(BaseModel):
                 raise ValueError("CONFIGURATION: expected true or false")
             return value.lower() == "true"
         return value
+
+    @field_validator("allowed_hosts", mode="before")
+    @classmethod
+    def concrete_allowed_hosts(cls, value: object) -> tuple[str, ...]:
+        """Accept a small JSON array of concrete host names, without URL or wildcard syntax."""
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError("CONFIGURATION: ALLOWED_HOSTS must be a JSON array") from exc
+        if not isinstance(value, (list, tuple)) or len(cast("list[object] | tuple[object, ...]", value)) > 16:
+            raise ValueError("CONFIGURATION: ALLOWED_HOSTS must be a JSON array of at most 16 hosts")
+        entries = cast("list[object] | tuple[object, ...]", value)
+        hosts: list[str] = []
+        for host in entries:
+            if not isinstance(host, str) or not host or len(host) > 253 or not host.isascii():
+                raise ValueError("CONFIGURATION: ALLOWED_HOSTS entries must be concrete hosts")
+            try:
+                valid_ip = not ip_address(host).is_unspecified
+            except ValueError:
+                labels = host.split(".")
+                valid_ip = not all(label.isdecimal() for label in labels) and all(
+                    re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in labels
+                )
+            if not valid_ip or host in hosts:
+                raise ValueError("CONFIGURATION: ALLOWED_HOSTS entries must be unique concrete hosts")
+            hosts.append(host)
+        return tuple(hosts)
 
     @model_validator(mode="after")
     def validate_bind(self) -> Self:
