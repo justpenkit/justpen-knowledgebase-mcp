@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
+import anyio
 import pytest
 
 import justpen_knowledgebase_mcp.__main__ as main_mod
@@ -23,6 +24,8 @@ import justpen_knowledgebase_mcp.shutdown as shutdown_mod
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from fastmcp import FastMCP
 
     from justpen_knowledgebase_mcp.telemetry.runtime import TelemetryRuntime
 
@@ -128,8 +131,12 @@ async def test_main_propagates_server_failure(monkeypatch: pytest.MonkeyPatch, *
 
 
 @pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
-async def test_signal_waits_for_server_cleanup(monkeypatch: pytest.MonkeyPatch, sig: signal.Signals) -> None:
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+async def test_signal_waits_for_server_cleanup(
+    monkeypatch: pytest.MonkeyPatch, sig: signal.Signals, transport: str
+) -> None:
     handlers = capture_signals(monkeypatch)
+    monkeypatch.setenv("JUSTPEN_KNOWLEDGEBASE_TRANSPORT", transport)
     before = asyncio.all_tasks()
     cleaned_up = asyncio.Event()
 
@@ -167,6 +174,94 @@ async def test_cancelling_main_cleans_up_server(monkeypatch: pytest.MonkeyPatch)
         await task
     assert cleaned_up.is_set()
     assert asyncio.all_tasks() == before
+
+
+@pytest.mark.parametrize("trigger", ["signal", "main-cancel"])
+async def test_stdio_stop_cancels_relay_before_receiver_teardown(monkeypatch, trigger):
+    handlers = capture_signals(monkeypatch)
+    pending = asyncio.Event()
+    relayed = asyncio.Event()
+    failures = []
+    before = asyncio.all_tasks()
+
+    async def running_server(**_kwargs):
+        send, receive = anyio.create_memory_object_stream[str]()
+
+        async def relay():
+            pending.set()
+            try:
+                await send.send("pending frame")
+            except anyio.BrokenResourceError as error:
+                failures.append(error)
+                raise
+            finally:
+                relayed.set()
+
+        async with send, anyio.create_task_group() as tasks:
+            tasks.start_soon(relay)
+            try:
+                await asyncio.Event().wait()
+            finally:
+                # The SDK dispatcher closes its input before the enclosing
+                # replay task group exits. Yield at that exact shutdown window.
+                receive.close()
+                await anyio.lowlevel.cancel_shielded_checkpoint()
+
+    monkeypatch.setattr(main_mod, "create_app", lambda config, **kwargs: SimpleNamespace(run_async=running_server))
+    config = main_mod.ServerConfig(workspace_dir=Path("/workspace"))
+    task = asyncio.create_task(main_mod._serve(config, cast("TelemetryRuntime", None)))
+    await pending.wait()
+    if trigger == "signal":
+        handlers[signal.SIGTERM]()
+        await task
+    else:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert relayed.is_set()
+    assert failures == []
+    assert asyncio.all_tasks() == before
+
+
+async def test_stdio_cancel_scope_remembers_stop_before_server_entry():
+    scope = anyio.CancelScope()
+    scope.cancel()
+    cleaned = asyncio.Event()
+
+    async def running_server(**_kwargs):
+        try:
+            await anyio.lowlevel.checkpoint()
+            pytest.fail("a pre-cancelled server cannot accept work")
+        finally:
+            cleaned.set()
+
+    server = cast("FastMCP", SimpleNamespace(run_async=running_server))
+    await asyncio.create_task(main_mod._run_stdio(server, scope))
+    assert cleaned.is_set()
+    assert scope.cancelled_caught
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_stdio_stop_preserves_genuine_transport_errors(monkeypatch, mixed):
+    handlers = capture_signals(monkeypatch)
+    broken = anyio.BrokenResourceError()
+    failure = ExceptionGroup("SDK failures", [broken, ValueError("server failure")]) if mixed else broken
+    cleaned = asyncio.Event()
+
+    async def running_server(**_kwargs):
+        try:
+            handlers[signal.SIGTERM]()
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
+            raise failure
+
+    monkeypatch.setattr(main_mod, "create_app", lambda config, **kwargs: SimpleNamespace(run_async=running_server))
+    config = main_mod.ServerConfig(workspace_dir=Path("/workspace"))
+    with pytest.raises(type(failure)) as raised:
+        await main_mod._serve(config, cast("TelemetryRuntime", None))
+    assert raised.value is failure
+    assert cleaned.is_set()
 
 
 @pytest.mark.integration
@@ -389,7 +484,8 @@ async def test_signal_timeout_before_lifespan_cleanup_logs_once(monkeypatch, cap
             await asyncio.Event().wait()
         finally:
             # Model a transport teardown still waiting before lifespan unwinds.
-            await release.wait()
+            with anyio.CancelScope(shield=True):
+                await release.wait()
 
     monkeypatch.setattr(main_mod, "create_app", lambda config, **kwargs: SimpleNamespace(run_async=server))
     monkeypatch.setattr(shutdown_mod, "SHUTDOWN_GRACE_SECONDS", 0.01)

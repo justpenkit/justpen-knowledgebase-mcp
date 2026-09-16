@@ -60,6 +60,59 @@ async def test_stdio_normal_shutdown_with_open_or_partial_stdin(tmp_path, ending
         assert b"shutdown_timeout" not in stderr
 
 
+async def test_stdio_signal_with_pending_sdk_relay_send(tmp_path):
+    probe = """
+import asyncio, os
+from pathlib import Path
+import anyio
+from anyio.streams.memory import MemoryObjectSendStream
+from mcp.shared._context_streams import ContextReceiveStream
+from mcp.shared.jsonrpc_dispatcher import JSONRPCDispatcher
+from justpen_knowledgebase_mcp.__main__ import cli
+root = Path(os.environ["JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR"])
+replayed = None
+dispatch = JSONRPCDispatcher._dispatch
+send = MemoryObjectSendStream.send
+close = ContextReceiveStream.aclose
+async def hold_after_initialize(self, item, *args):
+    global replayed
+    await dispatch(self, item, *args)
+    if getattr(getattr(item, "message", None), "method", None) == "initialize":
+        replayed = self._read_stream
+        await anyio.sleep_forever()
+async def observe_relay(self, item):
+    if replayed is not None and self._state is replayed._inner._state:
+        def pending():
+            assert self.statistics().tasks_waiting_send == 1
+            (root / "relay-pending").write_text("pending")
+        loop = asyncio.get_running_loop()
+        # First run the send's checkpoint, then observe the actual blocked send.
+        loop.call_soon(loop.call_soon, pending)
+    await send(self, item)
+async def close_then_yield(self):
+    await close(self)
+    if self is replayed:
+        # Widen the real dispatcher-close / relay-task-group-exit interval.
+        await anyio.lowlevel.cancel_shielded_checkpoint()
+JSONRPCDispatcher._dispatch = hold_after_initialize
+MemoryObjectSendStream.send = observe_relay
+ContextReceiveStream.aclose = close_then_yield
+cli()
+"""
+    async with process(tmp_path, probe=probe) as child:
+        await initialize(child)
+        await wait_file(tmp_path / "relay-pending")
+        assert child.stdin is not None
+        child.stdin.write(b'{"jsonrpc":"2.0","id":')
+        await child.stdin.drain()
+        child.send_signal(signal.SIGTERM)
+        await asyncio.wait_for(child.wait(), 3)
+        assert child.stderr is not None
+        stderr = await child.stderr.read()
+        assert child.returncode == 0, stderr.decode(errors="replace")
+        assert b"shutdown_timeout" not in stderr
+
+
 @pytest.mark.parametrize("transport", ["stdio", "http"])
 async def test_all_tools_and_presence_over_real_wire(tmp_path, transport):
 

@@ -10,6 +10,8 @@ import sys
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
+import anyio
+
 from .cli import parse_config, temporary_environment
 from .config import ServerConfig
 from .shutdown import ShutdownObserver
@@ -88,12 +90,47 @@ async def _serve(config: ServerConfig, telemetry: TelemetryRuntime) -> None:
     installed: list[signal.Signals] = []
     server_task: asyncio.Task[None] | None = None
     stop_task: asyncio.Task[bool] | None = None
+    cancel_server: Callable[[], object] | None = None
+
     try:
         for sig in original_handlers:
             loop.add_signal_handler(sig, request_stop)
             installed.append(sig)
-        if config.transport == "http":
-            run_server = mcp.run_async(
+        server_task, cancel_server = _start_server(mcp, config, telemetry)
+        stop_task = asyncio.create_task(stop_event.wait(), name="stop-signal")
+        done, _ = await asyncio.wait({server_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+        if stop_task in done and not server_task.done():
+            observer.start()
+            cancel_server()
+            # Native owners drain before optional exporters are closed by main.
+            await _await_cleanup(server_task)
+            if server_task.cancelled():
+                return
+        await server_task
+    finally:
+        observer.start()
+        if cancel_server is not None:
+            cancel_server()
+        if stop_task is not None:
+            stop_task.cancel()
+        try:
+            if server_task is not None:
+                await _await_cleanup(server_task)
+        finally:
+            try:
+                if stop_task is not None:
+                    await asyncio.gather(stop_task, return_exceptions=True)
+                await observer.close()
+            finally:
+                _restore_handlers(loop, installed, original_handlers)
+
+
+def _start_server(
+    mcp: FastMCP, config: ServerConfig, telemetry: TelemetryRuntime
+) -> tuple[asyncio.Task[None], Callable[[], object]]:
+    if config.transport == "http":
+        task = asyncio.create_task(
+            mcp.run_async(
                 transport="http",
                 host=config.host,
                 port=config.port,
@@ -108,36 +145,20 @@ async def _serve(config: ServerConfig, telemetry: TelemetryRuntime) -> None:
                     "log_config": None,
                     "access_log": False,
                 },
-            )
-        else:
-            run_server = mcp.run_async(transport="stdio")
-        server_task = asyncio.create_task(run_server, name="mcp-server")
-        stop_task = asyncio.create_task(stop_event.wait(), name="stop-signal")
-        done, _ = await asyncio.wait({server_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
-        if stop_task in done and not server_task.done():
-            observer.start()
-            server_task.cancel()
-            # Native owners drain before optional exporters are closed by main.
-            await _await_cleanup(server_task)
-            if server_task.cancelled():
-                return
-        await server_task
-    finally:
-        observer.start()
-        if server_task is not None:
-            server_task.cancel()
-        if stop_task is not None:
-            stop_task.cancel()
-        try:
-            if server_task is not None:
-                await _await_cleanup(server_task)
-        finally:
-            try:
-                if stop_task is not None:
-                    await asyncio.gather(stop_task, return_exceptions=True)
-                await observer.close()
-            finally:
-                _restore_handlers(loop, installed, original_handlers)
+            ),
+            name="mcp-server",
+        )
+        return task, task.cancel
+    scope = anyio.CancelScope()
+    # Cancel SDK relays with their host, before it closes their channels.
+    return asyncio.create_task(_run_stdio(mcp, scope), name="mcp-server"), scope.cancel
+
+
+async def _run_stdio(mcp: FastMCP, scope: anyio.CancelScope) -> None:
+    # The server task owns scope entry/exit, including a stop requested before
+    # this coroutine starts. HTTP retains its existing task-cancellation path.
+    with scope:
+        await mcp.run_async(transport="stdio")
 
 
 def _restore_handlers(
