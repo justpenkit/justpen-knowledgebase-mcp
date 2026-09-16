@@ -841,3 +841,18 @@ async def _settle(task: asyncio.Future[T]) -> T:
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.shield(task)
     return task.result()
+
+
+def safe_background_error(message: str | None) -> str | None:
+    """Expose only the fixed diagnostics authored by background failure sites."""
+    if message is None:
+        return None
+    allowed = (
+        "IO_ERROR: periodic job recovery failed",
+        "IO_ERROR: background job admission failed",
+        "IO_ERROR: job retention purge needs attention",
+        "IO_ERROR: retention ownership metadata needs attention",
+        "IO_ERROR: job retention failed",
+        "IO_ERROR: job failure could not be committed",
+    )
+    return message if message in allowed else "IO_ERROR: background job failure"

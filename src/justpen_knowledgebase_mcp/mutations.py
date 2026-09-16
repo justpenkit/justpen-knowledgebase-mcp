@@ -7,6 +7,8 @@ import json
 import math
 from typing import Any, cast
 
+from .errors import ExpectedValidationError
+
 
 def canonical_json(value: object) -> str:
     """Serialize JSON without changing types or Unicode property values."""
@@ -15,52 +17,52 @@ def canonical_json(value: object) -> str:
 
 def _visit(item: object, depth: int) -> None:
     if depth > 16:
-        raise ValueError("properties depth exceeds 16")
+        raise ExpectedValidationError("properties depth exceeds 16")
     if item is None or type(item) in (str, bool):
         return
     if type(item) is int:
         if not -(2**63) <= item < 2**63:
-            raise ValueError("integer outside signed64")
+            raise ExpectedValidationError("integer outside signed64")
     elif type(item) is float:
         if not math.isfinite(item):
-            raise ValueError("number must be finite")
+            raise ExpectedValidationError("number must be finite")
     elif isinstance(item, list):
         for child in cast("list[object]", item):
             _visit(child, depth + 1)
     elif isinstance(item, dict):
         _visit_object(cast("dict[object, object]", item), depth)
     else:
-        raise ValueError("not a JSON value")
+        raise ExpectedValidationError("not a JSON value")
 
 
 def _visit_object(item: dict[object, object], depth: int) -> None:
     for key, child in item.items():
         if type(key) is not str:
-            raise ValueError("object keys must be strings")
+            raise ExpectedValidationError("object keys must be strings")
         _visit(child, depth + 1)
 
 
 def validate_properties(value: object) -> None:
     """Validate every value, with the root object at depth zero."""
     if type(value) is not dict:
-        raise ValueError("properties must be an object")
+        raise ExpectedValidationError("properties must be an object")
     mapping = cast("dict[str, Any]", value)
     _visit(mapping, 0)
     if len(canonical_json(mapping).encode("utf-8")) > 65536:
-        raise ValueError("properties exceed 65536 bytes")
+        raise ExpectedValidationError("properties exceed 65536 bytes")
 
 
 def pointer_tokens(pointer: str) -> tuple[str, ...]:
     """Decode an object-property JSON Pointer, rejecting malformed escapes."""
     if not pointer.startswith("/"):
-        raise ValueError("property pointer must start with slash")
+        raise ExpectedValidationError("property pointer must start with slash")
     result: list[str] = []
     for token in pointer[1:].split("/"):
         position = 0
         while position < len(token):
             if token[position] == "~":
                 if position + 1 == len(token) or token[position + 1] not in "01":
-                    raise ValueError("invalid pointer escape")
+                    raise ExpectedValidationError("invalid pointer escape")
                 position += 1
             position += 1
         result.append(token.replace("~1", "/").replace("~0", "~"))
@@ -101,7 +103,7 @@ def _remove(result: dict[str, Any], remove: tuple[str, ...]) -> None:
     target: object = result
     for token in remove[:-1]:
         if type(target) is list:
-            raise ValueError("array element removal is unsupported")
+            raise ExpectedValidationError("array element removal is unsupported")
         mapping = _object_mapping(target)
         if mapping is None:
             return
@@ -109,7 +111,7 @@ def _remove(result: dict[str, Any], remove: tuple[str, ...]) -> None:
             return
         target = mapping[token]
     if type(target) is list:
-        raise ValueError("array element removal is unsupported")
+        raise ExpectedValidationError("array element removal is unsupported")
     if isinstance(target, dict):
         cast("dict[str, Any]", target).pop(remove[-1], None)
 
@@ -131,11 +133,11 @@ def merge_properties(current: dict[str, Any], patch: dict[str, Any], remove_prop
     objects = _object_paths(patch)
     for remove in removals:
         if any(path[: len(remove)] == remove for path in objects):
-            raise ValueError("remove and set paths conflict")
+            raise ExpectedValidationError("remove and set paths conflict")
         for write in writes:
             common = min(len(remove), len(write))
             if remove[:common] == write[:common]:
-                raise ValueError("remove and set paths conflict")
+                raise ExpectedValidationError("remove and set paths conflict")
     result = copy.deepcopy(current)
     for remove in removals:
         _remove(result, remove)

@@ -9,7 +9,13 @@ import apsw
 import pytest
 
 from justpen_knowledgebase_mcp.config import WorkspacePolicy
-from justpen_knowledgebase_mcp.errors import BusyError, ConfigurationError, LimitError, StorageIOError
+from justpen_knowledgebase_mcp.errors import (
+    BusyError,
+    ConfigurationError,
+    LimitError,
+    StorageIOError,
+    UnsupportedLayoutError,
+)
 from justpen_knowledgebase_mcp.storage import maintenance
 from justpen_knowledgebase_mcp.storage.maintenance import StatusCache, WalState
 
@@ -251,3 +257,126 @@ def test_iteration_does_not_swallow_baseexception(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         task.run_once("pressure")
     assert task.status()["maintenance_error"] is None
+
+
+def fresh_sample(seq=1, phase: maintenance.Phase = "pressure"):
+    return WalState(
+        phase=phase,
+        sample_seq=seq,
+        sample_at=maintenance.time.time(),
+        allocated_bytes=4096,
+        log_frames=1,
+        checkpointed_frames=0,
+        page_size=4096,
+        unbackfilled_bytes=4096,
+    )
+
+
+@pytest.mark.parametrize("permanent", [False, True])
+def test_fresh_pressure_clears_only_transient_health(monkeypatch, permanent):
+    monkeypatch.setattr(maintenance.time, "time", lambda: 100.0)
+    cache = StatusCache()
+    cache.failed(StorageIOError("bounded"), permanent=permanent)
+    cache.update(fresh_sample())
+    snapshot = cache.snapshot()
+    assert snapshot["maintenance_error"] == ("IO_ERROR" if permanent else None)
+    assert snapshot["maintenance_failed_permanently"] is permanent
+    assert snapshot["phase"] == ("unknown" if permanent else "pressure")
+
+
+@pytest.mark.parametrize("invalid", [{"sample_at": 101.0}, {"unbackfilled_bytes": 0}, {"sample_seq": 0}])
+def test_invalid_sample_never_clears_transient_health(monkeypatch, invalid):
+    monkeypatch.setattr(maintenance.time, "time", lambda: 100.0)
+    cache = StatusCache()
+    cache.failed(StorageIOError("bounded"), permanent=False)
+    cache.update(fresh_sample().model_copy(update=invalid))
+    assert cache.snapshot()["maintenance_error"] == "IO_ERROR"
+
+
+def test_known_layout_reason_survives_maintenance(monkeypatch):
+    task, _db = component(monkeypatch)
+    monkeypatch.setattr(task, "_open", Mock(side_effect=UnsupportedLayoutError("job ownership")))
+    with pytest.raises(
+        ConfigurationError, match="unsupported job ownership layout; offline workspace upgrade required"
+    ):
+        task.run_once("startup")
+    with pytest.raises(ConfigurationError, match="offline workspace upgrade required"):
+        task.factory.status_cache.check_health()
+
+
+def test_failure_logs_rate_limit_and_recovery_requires_fresh_measurement(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    now = [100.0]
+    monkeypatch.setattr(maintenance.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(maintenance.time, "time", lambda: now[0])
+    task, _db = component(monkeypatch)
+    monkeypatch.setattr(task, "_run_once", lambda _trigger: task.status())
+    task.run_once("startup")
+    for _ in range(4):
+        task._record_failure(StorageIOError("SECRET-MARKER"), permanent=False)
+    assert caplog.text.count("maintenance_failed") == 1
+    assert task._retry_not_before == 101.0
+    task.run_once("timer")  # A no-op is not recovery.
+    assert "maintenance_recovered" not in caplog.text
+    now[0] = 130.0
+    task._record_failure(StorageIOError("SECRET-MARKER"), permanent=False)
+    assert caplog.text.count("maintenance_failed") == 2
+    task._record_failure(BusyError("SECRET-MARKER"), permanent=False)
+    assert caplog.text.count("maintenance_failed") == 3
+
+    def sample_then_fail(_trigger):
+        task.factory.status_cache.update(fresh_sample())
+        task._record_failure(StorageIOError("SECRET-MARKER"), permanent=False)
+        return task.status()
+
+    monkeypatch.setattr(task, "_run_once", sample_then_fail)
+    task.run_once("timer")
+    assert "maintenance_recovered" not in caplog.text
+
+    monkeypatch.setattr(task, "_run_once", maintenance.CheckpointMaintenance._run_once.__get__(task))
+    monkeypatch.setattr(task, "_start_attempt", lambda _db: fresh_sample())
+    monkeypatch.setattr(task, "_attempt", lambda *_args: task.factory.status_cache.update(fresh_sample(2)))
+    task.run_once("timer")
+    task.run_once("timer")
+    assert caplog.text.count("maintenance_recovered") == 1
+    assert "suppressed=3" in caplog.text
+    assert "SECRET-MARKER" not in caplog.text
+
+
+def test_old_measurement_cannot_recover_even_with_newer_sequence(monkeypatch):
+    monkeypatch.setattr(maintenance.time, "time", lambda: 100.0)
+    cache = StatusCache()
+    cache.failed(StorageIOError("bounded"), permanent=False)
+    cache.update(fresh_sample().model_copy(update={"sample_at": 90.0}))
+    assert cache.snapshot()["maintenance_error"] == "IO_ERROR"
+
+
+def test_nonleader_cannot_report_recovery_from_another_owner_sample(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    task, _db = component(monkeypatch)
+    task._record_failure(StorageIOError("bounded"), permanent=False)
+    task.factory.status_cache.update(fresh_sample().model_copy(update={"sample_at": maintenance.time.time()}))
+    monkeypatch.setattr(maintenance.fcntl, "flock", Mock(side_effect=BlockingIOError()))
+    task.run_once("timer")
+    assert "maintenance_recovered" not in caplog.text
+
+
+def test_health_rejections_do_not_accumulate_cached_exception_tracebacks():
+    cache = StatusCache()
+    error = UnsupportedLayoutError("supporting index")
+    cache.failed(error, permanent=True)
+    for _ in range(3):
+        with pytest.raises(ConfigurationError, match="offline workspace upgrade required"):
+            cache.check_health()
+    assert error.__traceback__ is None
+
+
+def test_invalid_local_cycle_cannot_report_recovery_after_peer_sample(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    task, _db = component(monkeypatch)
+    task._record_failure(StorageIOError("bounded"), permanent=False)
+    task.factory.status_cache.update(fresh_sample())
+    monkeypatch.setattr(task, "_start_attempt", lambda _db: fresh_sample())
+    monkeypatch.setattr(task, "_attempt", lambda *_args: task.factory.status_cache.update(WalState(sample_seq=2)))
+    task.run_once("timer")
+    assert "maintenance_recovered" not in caplog.text

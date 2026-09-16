@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+from .errors import ExpectedValidationError
 from .mutations import validate_properties
 
 CATALOG_VERSION = 1
@@ -464,10 +465,10 @@ def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> No
     validate_properties(properties)
     definitions = catalog_manifest().get(kind, {})
     if type_name not in definitions:
-        raise ValueError("unknown catalog type")
+        raise ExpectedValidationError("unknown catalog type")
     for field, rule in definitions[type_name]["required"].items():
         if field not in properties or not _valid_field(properties[field], rule):
-            raise ValueError(f"/properties/{field}: expected {rule}")
+            raise ExpectedValidationError(f"/properties/{field}: expected {rule}")
 
 
 def _valid_field(value: object, rule: str | list[str]) -> bool:
@@ -580,7 +581,7 @@ def catalog_schema(kind: str, type_name: str) -> dict[str, Any]:
     """Expose JSON types and exact format references from the sole manifest."""
     manifest = catalog_manifest()
     if kind not in ("nodes", "relations") or type_name not in manifest[kind]:
-        raise ValueError("unknown catalog type")
+        raise ExpectedValidationError("unknown catalog type")
     definition = manifest[kind][type_name]
     properties: dict[str, Any] = {}
     for name, rule in definition["required"].items():

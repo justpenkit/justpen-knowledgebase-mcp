@@ -46,6 +46,12 @@ queue saturation remains retryable `BUSY`.
 **Errors:** only bounded internal/configuration failure at the wrapper; stale or
 unavailable sampled state normally remains successful structured data.
 
+`kb_status.background_error` contains the latest sanitized background-job
+failure, or `null` when no failure has been cached. It is an attention diagnostic,
+not a live database check or proof of current job state. Maintenance health is
+separate from WAL pressure: a fresh valid sample clears a transient error even
+when pressure remains. Permanent maintenance failure stays latched.
+
 ## `kb_delete`
 
 **Input:** `kind`, 1–100 unique IDs, and `cascade` defaulting to false.

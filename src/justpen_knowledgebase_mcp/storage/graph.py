@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from ..catalog import catalog_manifest, catalog_schema, validate_record
 from ..cursors import CursorBinding
-from ..errors import ConflictError, InvalidParamsError, NotFoundError, RecordConflictError
+from ..errors import ConflictError, ExpectedValidationError, InvalidParamsError, NotFoundError, RecordConflictError
 from ..identity import format_timestamp, identity_json, identity_key, parse_timestamp
 from ..models import GetRequest, Mutation, NodeRef, RelationWrite, WriteRequest, WriteResult
 from ..mutations import canonical_json, merge_properties
@@ -321,8 +321,10 @@ class Graph:
                     )
                     if kind == "nodes":
                         nodes.append(row)
-        except ValueError as exc:
-            raise InvalidParamsError("invalid graph mutation") from exc
+        except ExpectedValidationError as exc:
+            raise InvalidParamsError(exc.message) from None
+        except ValueError:
+            raise InvalidParamsError("invalid graph mutation") from None
         return WriteResult.model_validate(output).model_dump()
 
     @staticmethod

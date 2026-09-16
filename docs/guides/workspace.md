@@ -56,8 +56,8 @@ Unreleased v1 workspaces must also contain the required job scheduling and
 ownership indexes with the expected definitions, plus the checked nullable
 `jobs.blob_sha256` ownership column. The locator is independent of job progress
 JSON and includes jobs awaiting purge. A missing ownership column or incompatible
-supporting index fails startup with `CONFIGURATION`; the service may report the
-bounded message `maintenance unavailable`. Use the creating build to access or
+supporting index fails startup with `CONFIGURATION` and an authored
+`offline workspace upgrade required` reason identifying the layout category. Use the creating build to access or
 export its data, preserve a complete offline copy, then recreate the workspace
 or apply an explicitly reviewed offline upgrade. Startup does not install
 missing indexes or modify an older layout silently.
@@ -73,7 +73,9 @@ For an offline backup or move:
 
 SIGTERM/SIGINT grants 30 seconds for coordinated shutdown, but that grace period
 is not a hard timeout for native SQLite close or fsync. A supervisor may stop an
-unresponsive process after diagnostics; remaining committed WAL is valid input
+unresponsive process after diagnostics. `shutdown_timeout` includes the PID and
+states that the supervisor must kill if cleanup cannot finish; the server keeps
+waiting for its native owners. Remaining committed WAL is valid input
 for SQLite recovery on the next open.
 
 The v1 server logs diagnostics to stderr and optional OTLP exporters. It does not
@@ -85,3 +87,8 @@ For HTTP on a wildcard address, explicitly list the public Host aliases in
 up to 16 entries are accepted. This changes Host admission only. FastMCP still
 checks Origin, and non-loopback binding still requires
 `JUSTPEN_KNOWLEDGEBASE_ALLOW_NON_LOOPBACK=true`.
+
+Startup configuration errors name the setting and expected rule without echoing
+values. Maintenance retries remain one second apart; identical failure-category
+logs are limited to one per 30 seconds. Category changes log immediately, and a
+fresh successful cycle logs one recovery summary with a bounded suppressed count.

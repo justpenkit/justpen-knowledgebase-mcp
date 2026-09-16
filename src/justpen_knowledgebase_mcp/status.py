@@ -181,6 +181,7 @@ class StatusResult(ClosedModel):
     bind_scope: Literal["stdio", "loopback", "non_loopback"]
     authentication: Literal["none"] = "none"
     allowed_hosts: list[str]
+    background_error: Annotated[str, Field(max_length=1024)] | None = None
     database: DatabaseStatus
     wal: WalStatus
     retention: RetentionStatus

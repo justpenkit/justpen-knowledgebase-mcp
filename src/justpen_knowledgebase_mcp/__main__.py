@@ -14,6 +14,7 @@ import anyio
 
 from .cli import parse_config, temporary_environment
 from .config import ServerConfig
+from .errors import ConfigurationError
 from .shutdown import ShutdownObserver
 from .telemetry.config import TelemetryConfig, configure_sdk_environment, read_config
 
@@ -190,7 +191,12 @@ async def _await_cleanup(task: asyncio.Task[None]) -> None:
 
 def cli() -> None:
     """Sync entrypoint for the ``justpen-knowledgebase-mcp`` console script."""
-    asyncio.run(main(parse_config()))
+    try:
+        config = parse_config()
+    except ConfigurationError as error:
+        sys.stderr.write(f"CONFIGURATION: {error}\n")
+        raise SystemExit(2) from None
+    asyncio.run(main(config))
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from ..catalog import CATALOG_FINGERPRINT, CATALOG_VERSION
 from ..config import WorkspacePolicy
-from ..errors import ConfigurationError
+from ..errors import ConfigurationError, UnsupportedLayoutError
 
 if TYPE_CHECKING:
     import apsw
@@ -187,7 +187,7 @@ class SchemaGuard:
         """Reject any schema/catalog/index mismatch, including additive changes."""
         columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
         if "blob_sha256" not in columns:
-            raise ConfigurationError("unsupported job ownership layout; offline workspace upgrade required")
+            raise UnsupportedLayoutError("job ownership")
         expected = (SCHEMA_VERSION, CATALOG_VERSION, CATALOG_FINGERPRINT, INDEX_FORMAT_VERSION, self.paths)
         row = connection.execute(
             "SELECT schema_version,catalog_version,catalog_fingerprint,index_format_version,managed_paths "
@@ -247,4 +247,4 @@ class SchemaGuard:
         for name, expected in REQUIRED_INDEXES.items():
             actual = connection.execute("SELECT sql FROM sqlite_schema WHERE type='index' AND name=?", (name,)).get
             if not isinstance(actual, str) or " ".join(actual.split()) != " ".join(expected.split()):
-                raise ConfigurationError("unsupported supporting index layout; offline workspace upgrade required")
+                raise UnsupportedLayoutError("supporting index")

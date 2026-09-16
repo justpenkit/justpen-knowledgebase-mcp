@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import os
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
+
+from typing_extensions import override
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -15,12 +17,19 @@ if TYPE_CHECKING:
 from .config import ServerConfig
 
 
+class _SafeArgumentParser(argparse.ArgumentParser):
+    @override
+    def error(self, message: str) -> NoReturn:
+        del message  # argparse includes untrusted tokens in its error text.
+        self.exit(2, "CONFIGURATION: invalid command syntax; use --help\n")
+
+
 def parse_config(argv: list[str] | None = None) -> ServerConfig:
     """Merge explicit CLI settings before validating the effective HTTP host."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--transport", choices=("stdio", "http"))
+    parser = _SafeArgumentParser(prog="justpen-knowledgebase-mcp")
+    parser.add_argument("--transport", metavar="{stdio,http}")
     parser.add_argument("--host")
-    parser.add_argument("--port", type=int)
+    parser.add_argument("--port")
     parser.add_argument("--log-level")
     return ServerConfig.from_env(os.environ, overrides=vars(parser.parse_args(argv)))
 

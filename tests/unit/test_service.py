@@ -96,8 +96,9 @@ async def test_search_budget_reports_incomplete():
         await kb.search({"kind": "nodes"})
 
 
+@pytest.mark.parametrize("background_error", [None, "IO_ERROR: job retention purge needs attention", "SECRET-MARKER"])
 @pytest.mark.parametrize("phase", ["normal", "reset", "unknown"])
-async def test_status_uses_only_cached_collaborators(phase):
+async def test_status_uses_only_cached_collaborators(phase, background_error):
     kb, workers, runner, maintenance, sampler = facade()
     wal = StatusCache().snapshot()
     wal["phase"] = phase
@@ -116,7 +117,11 @@ async def test_status_uses_only_cached_collaborators(phase):
         WorkspacePolicy().model_dump(include=set(RetentionPolicyView.model_fields))
     )
     runner.retention_status.return_value = RetentionStatus(policy=policy).model_dump()
+    runner.last_error = background_error
     result = await kb.status()
+    assert result["background_error"] == (
+        "IO_ERROR: background job failure" if background_error == "SECRET-MARKER" else background_error
+    )
     assert result["allowed_hosts"] == []
     assert result["wal"]["reason"] == (
         None if phase == "normal" else "RESET_PENDING" if phase == "reset" else "WAL_PRESSURE"
@@ -205,3 +210,16 @@ async def test_reindex_captures_context_before_worker_thread(monkeypatch):
     finally:
         detach(token)
     assert saved == [{"traceparent": parent}]
+
+
+async def test_write_preserves_typed_property_rule_at_model_boundary():
+    kb, _workers, _runner, _maintenance, _sampler = facade()
+    with pytest.raises(InvalidParamsError, match="integer outside signed64"):
+        await kb.write({"nodes": [{"type": "domain", "properties": {"name": "example.com", "extra": 2**64}}]})
+
+
+async def test_write_sanitizes_unexpected_validator_exception(monkeypatch):
+    kb, _workers, _runner, _maintenance, _sampler = facade()
+    monkeypatch.setattr(service.WriteRequest, "model_validate", Mock(side_effect=ValueError("SECRET-MARKER")))
+    with pytest.raises(InvalidParamsError, match=r"^invalid write request$"):
+        await kb.write({})

@@ -36,6 +36,11 @@ existing object children. Required identity cannot change. Explicit `null`
 clears label/source but is literal data inside properties. A supplied
 `observed_at` is last-writer-wins rather than maximum timestamp.
 
+Removing `/a` while setting `{"a": {}}` conflicts because the set recreates the
+removed object. Removing `/a/x` while setting `{"a": {"y": 1}}` is valid: it
+removes one child and merges a different child. Known catalog and mutation
+errors identify the field and rule without returning submitted values.
+
 ## `kb_get`
 
 **Input:** `kind`, 1–100 IDs, `view` (`record` default, `links`, or `sources`),

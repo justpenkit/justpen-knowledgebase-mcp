@@ -9,9 +9,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import uuid4
 
-from .errors import InvalidParamsError, LimitError
+from pydantic import ValidationError
+
+from .errors import ExpectedValidationError, InvalidParamsError, LimitError
 from .evidence import IngestRequest, ReadEvidenceRequest
-from .jobs import JobRunner, JobsRequest
+from .jobs import JobRunner, JobsRequest, safe_background_error
 from .models import DeleteRequest, GetRequest, NeighborsRequest, SearchRequest, TypesRequest, WriteRequest
 from .reindex import ReindexRequest, admit_reindex
 from .responses import bounded_response
@@ -64,6 +66,7 @@ class KnowledgeBase:
                 "allowed_hosts": []
                 if self.config.transport == "stdio"
                 else [self.config.host, *self.config.allowed_hosts],
+                "background_error": safe_background_error(self.job_runner.last_error),
                 "database": self.status_sampler.snapshot(),
                 "wal": wal,
                 "retention": self.job_runner.retention_status(),
@@ -136,7 +139,12 @@ class KnowledgeBase:
         try:
             validated = WriteRequest.model_validate(request)
         except ValueError as exc:
-            raise InvalidParamsError("invalid write request") from exc
+            if isinstance(exc, ValidationError):
+                for detail in exc.errors(include_input=False, include_url=False):
+                    cause = detail.get("ctx", {}).get("error")
+                    if isinstance(cause, ExpectedValidationError):
+                        raise InvalidParamsError(cause.message) from None
+            raise InvalidParamsError("invalid write request") from None
         return await self.workers.write(
             lambda connection, token: Graph.write(connection, token, validated), OperationToken(deadline)
         )

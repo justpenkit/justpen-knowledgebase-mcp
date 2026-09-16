@@ -319,3 +319,16 @@ def test_evidence_record_projects_current_bounded_coverage(state, incomplete):
     assert record["index_state"] == state
     assert record["incomplete"] is bool(incomplete)
     assert "index_owner_token" not in record
+
+
+def test_catalog_validation_preserves_authored_field_rule():
+    request = WriteRequest(nodes=[NodeWrite(type="domain", properties={"name": "SECRET-MARKER"})])
+    with pytest.raises(InvalidParamsError, match="/properties/name: expected dns"):
+        graph.Graph.write(database(cursor(value=None)), Mock(), request)
+
+
+def test_mutation_validation_preserves_authored_conflict(monkeypatch):
+    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner(properties='{"name":"example.com","a":{}}')))
+    request = WriteRequest(nodes=[NodeWrite(id=NODE, properties={"a": {}}, remove_properties=["/a"])])
+    with pytest.raises(InvalidParamsError, match="remove and set paths conflict"):
+        graph.Graph.write(database(), Mock(), request)

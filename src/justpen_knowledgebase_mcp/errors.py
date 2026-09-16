@@ -36,6 +36,15 @@ class InvalidParamsError(McpError):
     error_type = "INVALID"
 
 
+class ExpectedValidationError(ValueError):
+    """A bounded, server-authored catalog or mutation rule; never input text."""
+
+    def __init__(self, message: str) -> None:
+        """Accept only authored rule text at trusted validation sites."""
+        self.message = message[:1000]
+        super().__init__(self.message)
+
+
 class InternalError(McpError):
     """An unexpected failure, without its internal details."""
 
@@ -44,6 +53,19 @@ class ConfigurationError(McpError):
     """Incompatible configuration or stored contract."""
 
     error_type = "CONFIGURATION"
+
+
+class UnsupportedLayoutError(ConfigurationError):
+    """An actionable known storage layout mismatch, without database contents."""
+
+    def __init__(self, layout: Literal["job ownership", "supporting index"]) -> None:
+        """Select a fixed message without interpolating exception or stored text."""
+        messages = {
+            "job ownership": "unsupported job ownership layout; offline workspace upgrade required",
+            "supporting index": "unsupported supporting index layout; offline workspace upgrade required",
+        }
+        self.layout: Literal["job ownership", "supporting index"] = layout
+        super().__init__(messages[layout])
 
 
 class PathDeniedError(McpError):

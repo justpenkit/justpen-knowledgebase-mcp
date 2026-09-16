@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 SHUTDOWN_GRACE_SECONDS = 30.0
 
@@ -23,7 +24,9 @@ class ShutdownObserver:
 
     async def _observe(self, deadline: float) -> None:
         await asyncio.sleep(max(0, deadline - asyncio.get_running_loop().time()))
-        logging.getLogger(__name__).error("shutdown_timeout")
+        logging.getLogger(__name__).error(
+            "shutdown_timeout: pid=%s; supervisor must kill if cleanup cannot finish", os.getpid()
+        )
 
     async def close(self) -> None:
         """Retire the observer after all transport/lifespan cleanup finishes."""

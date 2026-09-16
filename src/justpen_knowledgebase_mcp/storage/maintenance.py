@@ -16,7 +16,16 @@ from uuid import uuid4
 import apsw
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..errors import BusyError, ConfigurationError, InternalError, LimitError, McpError, PathDeniedError, StorageIOError
+from ..errors import (
+    BusyError,
+    ConfigurationError,
+    InternalError,
+    LimitError,
+    McpError,
+    PathDeniedError,
+    StorageIOError,
+    UnsupportedLayoutError,
+)
 from .admission import open_lock
 from .worker import OperationToken, OwnerOutcome
 
@@ -116,8 +125,16 @@ class StatusCache:
                 self._evaluation_requested = False
                 if self._assessment_seq is not None and state.sample_seq > self._assessment_seq:
                     self._assessment_seq = None
-                if self._failure is not None and not self._failure[1] and state.sample_seq > self._failure[2]:
-                    self._failure = None
+            if (
+                self._failure is not None
+                and not self._failure[1]
+                and state.sample_seq > self._failure[2]
+                and state.phase in ("normal", "pressure")
+                and state.valid_sample(self._cached_at)
+                and state.sample_at is not None
+                and state.sample_at >= self._failure[3]
+            ):
+                self._failure = None
 
     def assessment(self) -> None:
         """Keep a local high-allocation observation until a newer normal sample."""
@@ -134,8 +151,10 @@ class StatusCache:
         """Reject product work after a permanent local maintenance fault."""
         with self._lock:
             error = self._failure[0] if self._failure is not None and self._failure[1] else None
+        if isinstance(error, UnsupportedLayoutError):
+            raise UnsupportedLayoutError(error.layout) from None
         if error is not None:
-            raise type(error)(str(error))
+            raise type(error)(str(error)) from None
 
     def request(self) -> None:
         """Report pending evaluation without inventing a shared measurement."""
@@ -198,6 +217,10 @@ class CheckpointMaintenance:
         self._closed_error: BaseException | None = None
         self._retry_not_before = 0.0
         self._initialized = False
+        self._cycle_completed = False
+        self._failure_category: str | None = None
+        self._failure_logged_at = 0.0
+        self._suppressed_failures = 0
         self.factory.wake_maintenance = self.request
 
     def request(self, trigger: Trigger) -> None:
@@ -338,10 +361,28 @@ class CheckpointMaintenance:
         """Attempt shared PASSIVE and eligible RESTART with shared start/finish cooldown."""
         outcome = OwnerOutcome()
         result: dict[str, object] = {}
+        previous_seq = self.factory.status_cache.snapshot()["sample_seq"]
+        self._cycle_completed = False
         with outcome:
             result = self._run_once(trigger)
         if outcome.error is None:
             self._initialized = True
+            snapshot = self.factory.status_cache.snapshot()
+            if (
+                self._failure_category is not None
+                and self._cycle_completed
+                and snapshot["maintenance_error"] is None
+                and snapshot["phase"] in ("normal", "pressure")
+                and snapshot["unavailable"] is False
+                and isinstance(previous_seq, int)
+                and isinstance(snapshot["sample_seq"], int)
+                and snapshot["sample_seq"] > previous_seq
+            ):
+                logging.getLogger(__name__).info(
+                    "maintenance_recovered: %s suppressed=%s", self._failure_category, self._suppressed_failures
+                )
+                self._failure_category = None
+                self._suppressed_failures = 0
             return result
         if not isinstance(outcome.error, Exception):
             raise outcome.error
@@ -353,8 +394,16 @@ class CheckpointMaintenance:
 
     def _record_failure(self, error: McpError, *, permanent: bool) -> None:
         self.factory.status_cache.failed(error, permanent=permanent)
-        self._retry_not_before = time.monotonic() + 1
-        logging.getLogger(__name__).error("maintenance_failed: %s", error.error_type)
+        now = time.monotonic()
+        self._retry_not_before = now + 1
+        if error.error_type != self._failure_category or now - self._failure_logged_at >= 30:
+            logging.getLogger(__name__).error(
+                "maintenance_failed: %s suppressed=%s", error.error_type, self._suppressed_failures
+            )
+            self._failure_category = error.error_type
+            self._failure_logged_at = now
+        else:
+            self._suppressed_failures = min(65535, self._suppressed_failures + 1)
 
     def _run_once(self, trigger: Trigger) -> dict[str, object]:
         connection = self._open()
@@ -370,6 +419,7 @@ class CheckpointMaintenance:
             if state is None:
                 return self.status()
             self._attempt(connection, state, trigger)
+            self._cycle_completed = True
         except (apsw.Error, BusyError, LimitError, OSError) as error:
             if isinstance(error, (apsw.CorruptError, apsw.NotADBError)):
                 raise
@@ -531,6 +581,8 @@ def _startup_failed(ready: asyncio.Future[None], error: BaseException) -> None:
 
 
 def _maintenance_failure(error: Exception) -> tuple[McpError, bool]:
+    if isinstance(error, UnsupportedLayoutError):
+        return error, True
     if isinstance(error, ConfigurationError):
         return ConfigurationError("maintenance unavailable"), True
     if isinstance(error, PathDeniedError):

@@ -8,10 +8,12 @@ from ipaddress import ip_address
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+from .errors import ConfigurationError
 
 PREFIX = "JUSTPEN_KNOWLEDGEBASE_"
 
@@ -19,7 +21,7 @@ PREFIX = "JUSTPEN_KNOWLEDGEBASE_"
 class ServerConfig(BaseModel):
     """Validated settings; workspace existence is checked by WorkspacePaths."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
     workspace_dir: Path
     data_dir: Path = Path(".justpen/knowledgebase")
     db_path: Path | None = None
@@ -115,7 +117,33 @@ class ServerConfig(BaseModel):
             values["log_level"] = str(values["log_level"]).strip().upper()
         if overrides:
             values.update({key: value for key, value in overrides.items() if value is not None})
-        return cls.model_validate(values)
+        try:
+            return cls.model_validate(values)
+        except ValidationError as error:
+            # Locations are filtered through known settings; raw inputs, message
+            # text and validator context never cross the parsing boundary.
+            rules = {
+                "workspace_dir": "absolute workspace path required",
+                "transport": "expected stdio or http",
+                "port": "expected integer from 1 to 65535",
+                "log_level": "expected DEBUG, INFO, WARNING, ERROR or CRITICAL",
+                "allow_non_loopback": "expected true or false",
+                "allowed_hosts": "expected JSON array of at most 16 unique concrete hosts",
+                "db_reader_threads": "expected integer from 1 to 8",
+                "db_busy_timeout_ms": "expected positive integer",
+                "query_timeout_ms": "expected positive integer",
+            }
+            messages: list[str] = []
+            for detail in error.errors(include_input=False, include_context=False, include_url=False):
+                location = detail["loc"]
+                field = location[0] if location else "host"
+                if field not in cls.model_fields:
+                    messages.append("settings: unexpected field")
+                elif not location:
+                    messages.append("host: non-loopback HTTP requires ALLOW_NON_LOOPBACK=true")
+                else:
+                    messages.append(f"{field}: {rules.get(str(field), 'invalid setting')}")
+            raise ConfigurationError("; ".join(messages)[:1000]) from None
 
 
 class WorkspacePolicy(BaseModel):
