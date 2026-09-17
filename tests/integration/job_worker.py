@@ -47,8 +47,11 @@ def install_failpoints(scenario, ready, release):
     original_stage = EvidenceStore.stage_inline
     stage_count = 0
 
+    if scenario == "race_peer":
+        install_peer_claims()
+
     def copy(self, *args, **kwargs):
-        if scenario in ("before_hash", "race"):
+        if scenario in ("before_hash", "race", "race_peer"):
             barrier(ready, release)
         return original_copy(self, *args, **kwargs)
 
@@ -75,6 +78,30 @@ def install_failpoints(scenario, ready, release):
     EvidenceStore.publish = publish
     EvidenceStore.unlink_blob = unlink
     EvidenceStore.stage_inline = stage
+
+
+def install_peer_claims():
+    """Force the valid schedule where each process executes its peer's ingest."""
+    original_claim = JobStore._claim_selected
+
+    def peer_claim(connection, value, now):
+        source = connection.execute("SELECT json_extract(payload,'$.source') FROM jobs WHERE uuid=?", (value,)).get
+        if source == str(os.getpid()):
+            return None
+        return original_claim(connection, value, now)
+
+    JobStore._claim_selected = staticmethod(peer_claim)
+
+
+async def wait_for_race_jobs(kb, ready):
+    """Keep both executors alive until all admitted ingests reach completion."""
+    os.write(ready, b"1")  # this process's request is done, its peer's may not be
+    job_ids = await kb.workers.read(lambda c, t: [row[0] for row in c.execute("SELECT uuid FROM jobs")])
+    assert len(job_ids) == 2
+    deadline = time.monotonic() + 60
+    for job_id in job_ids:
+        result = await kb.job_runner.wait(job_id, deadline)
+        assert result["state"] == "completed", result
 
 
 def install_purge_failpoints(scenario, ready, release):
@@ -107,8 +134,13 @@ async def run(root, scenario, ready, release):
         if scenario in ("admission", "inline_accepted"):
             result = await kb.ingest_evidence({"base64": "AP8="})
         else:
-            result = await kb.ingest_evidence({"path": "input.bin"})
+            request = {"path": "input.bin"}
+            if scenario == "race_peer":
+                request["source"] = str(os.getpid())
+            result = await kb.ingest_evidence(request)
         result = await kb.job_runner.wait(result["job_id"], time.monotonic() + 60)
+        if scenario in ("race", "race_peer"):
+            await wait_for_race_jobs(kb, ready)
         if scenario == "ready":
             await asyncio.to_thread(barrier, ready, release)
         if scenario == "unlink":
