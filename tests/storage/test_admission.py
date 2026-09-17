@@ -51,19 +51,24 @@ def test_factory_connections_own_independent_persistent_gate_descriptors(tmp_pat
                 os.fstat(fd)
 
 
-def test_factory_open_and_close_wait_for_reset_without_native_sql(tmp_path):
-    cfg = ServerConfig(workspace_dir=tmp_path, db_busy_timeout_ms=20)
+def test_factory_open_and_close_wait_for_reset_without_native_sql(tmp_path, monkeypatch):
+    cfg = ServerConfig(workspace_dir=tmp_path)
     with WorkspacePaths(cfg) as ws, SQLiteRuntime(ws, cfg) as runtime:
         connection = runtime.connect()
         assert hasattr(connection, "gate"), "close must use factory gate"
         lock = os.open(ws.locks / "reset-intent.lock", os.O_RDWR)
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with pytest.raises(BusyError):
-                runtime.open_reader()
-            with pytest.raises(BusyError):
-                connection.close()
-            assert not connection.gate.closed
+            # Only the deliberately blocked operations need a short deadline.
+            # Native schema setup and final cleanup keep their normal budget.
+            with monkeypatch.context() as blocked:
+                blocked.setattr(runtime, "config", cfg.model_copy(update={"db_busy_timeout_ms": 20}))
+                blocked.setattr(connection, "close_timeout_ms", 20)
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with pytest.raises(BusyError):
+                    runtime.open_reader()
+                with pytest.raises(BusyError):
+                    connection.close()
+                assert not connection.gate.closed
         finally:
             os.close(lock)
             connection.close()

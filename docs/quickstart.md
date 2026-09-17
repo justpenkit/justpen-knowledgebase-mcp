@@ -2,13 +2,10 @@
 
 ## Prerequisites
 
-Install [uv](https://docs.astral.sh/uv/) and create a workspace directory. uv
-resolves Python and package artifacts in its own cache;
-the running MCP writes its database, evidence, staging files, and locks only
-under the configured workspace.
+Install [uv](https://docs.astral.sh/uv/) and create a workspace directory for
+the database, evidence, staging files, and locks.
 
-Clone and install the locked project, then start Python with `-B` before package
-imports. This prevents cold-start bytecode writes beside installed modules:
+Clone and install the locked project, then start the server:
 
 ```bash
 git clone https://github.com/justpenkit/justpen-knowledgebase-mcp.git
@@ -16,7 +13,7 @@ cd justpen-knowledgebase-mcp
 uv sync --locked
 mkdir -p "$PWD/workspace"
 JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR="$PWD/workspace" \
-  uv run python -B -m justpen_knowledgebase_mcp
+  uv run python -m justpen_knowledgebase_mcp
 ```
 
 ## Stdio client configuration
@@ -34,7 +31,6 @@ clients that support `mcpServers`:
         "/absolute/path/to/justpen-knowledgebase-mcp",
         "run",
         "python",
-        "-B",
         "-m",
         "justpen_knowledgebase_mcp"
       ],
@@ -68,7 +64,7 @@ Start the same runtime with an explicit transport:
 ```bash
 JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR="$PWD/workspace" \
   uv --directory /absolute/path/to/justpen-knowledgebase-mcp \
-  run python -B -m justpen_knowledgebase_mcp \
+  run python -m justpen_knowledgebase_mcp \
   --transport http --host 127.0.0.1 --port 8934
 ```
 
@@ -81,7 +77,7 @@ with a public Host name, use:
 JUSTPEN_KNOWLEDGEBASE_ALLOWED_HOSTS='["kb.example.test"]' \
 JUSTPEN_KNOWLEDGEBASE_ALLOW_NON_LOOPBACK=true \
 JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR="$PWD/workspace" \
-  uv run python -B -m justpen_knowledgebase_mcp --transport http --host 0.0.0.0
+  uv run python -m justpen_knowledgebase_mcp --transport http --host 0.0.0.0
 ```
 
 The host setting is a JSON array of at most 16 lowercase

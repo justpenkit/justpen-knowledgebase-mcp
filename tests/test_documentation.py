@@ -87,13 +87,25 @@ def test_public_json_examples_parse_and_match_request_schemas():
     assert SearchRequest.model_validate(search).properties is not None
 
 
-def test_readme_install_and_mcp_runtime_example_use_checkout():
+def test_readme_install_pin_matches_release_metadata():
     readme = (ROOT / "README.md").read_text()
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    repository = project["urls"]["Repository"].removesuffix(".git")
+    pins = re.findall(r'git\+https://[^\s"]+@v([^\s"]+)', readme)
+    assert pins == [project["version"]]
+    assert f"git+{repository}.git@v{project['version']}" in readme
+
+
+async def test_quickstart_client_configuration_starts_stdio_server(tmp_path):
     quickstart = (ROOT / "docs" / "quickstart.md").read_text()
-    assert "uv sync --locked" in readme
-    assert '"--directory",\n        "/absolute/path/to/justpen-knowledgebase-mcp"' in quickstart
-    assert '"python",\n        "-B",\n        "-m",\n        "justpen_knowledgebase_mcp"' in quickstart
-    assert "JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR" in quickstart
+    block = re.findall(r"```json\n(.*?)\n```", quickstart, flags=re.DOTALL)[0]
+    block = block.replace("/absolute/path/to/justpen-knowledgebase-mcp/workspace", str(tmp_path))
+    block = block.replace("/absolute/path/to/justpen-knowledgebase-mcp", str(ROOT))
+    async with Client(json.loads(block), timeout=10) as client:
+        result = await client.call_tool("kb_status", {})
+    assert result.structured_content is not None
+    assert result.structured_content["status"] == "ok"
+    assert result.structured_content["data"]["deployment_scope"] == "single_workspace"
 
 
 def test_site_is_mcp_focused_and_uses_canonical_publication_settings():
