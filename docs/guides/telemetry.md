@@ -16,7 +16,7 @@ export JUSTPEN_KNOWLEDGEBASE_OTEL_PROTOCOL=http/protobuf
 export JUSTPEN_KNOWLEDGEBASE_OTEL_ENDPOINT=http://127.0.0.1:4318
 export JUSTPEN_SESSION_ID=pentest-example
 export JUSTPEN_KNOWLEDGEBASE_OTEL_RESOURCE_ATTRIBUTES=justpen.run.id=run-example,deployment.environment.name=local
-uv run python -B -m justpen_knowledgebase_mcp
+uv run python -m justpen_knowledgebase_mcp
 ```
 
 The endpoint above is the collector, separate from the MCP HTTP listener. Pass

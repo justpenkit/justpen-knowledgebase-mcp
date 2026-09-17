@@ -36,7 +36,7 @@ mkdir -p "$PWD/workspace"
 JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR="$PWD/workspace" \
   uv run --no-project --python 3.13 \
   --with "justpen-knowledgebase-mcp @ git+https://github.com/justpenkit/justpen-knowledgebase-mcp.git@v0.1.0" \
-  python -B -m justpen_knowledgebase_mcp
+  python -m justpen_knowledgebase_mcp
 ```
 
 This starts the stdio server. For HTTP, append
@@ -44,10 +44,9 @@ This starts the stdio server. For HTTP, append
 `http://127.0.0.1:8934/mcp`. The HTTP listener has no built-in authentication;
 keep it on loopback or supply an authenticated access layer.
 
-MCP clients should start Python with `-B` and provide the workspace variable.
+Provide the workspace variable when configuring your MCP client.
 The [quickstart](docs/quickstart.md) also has locked source-checkout installation
-and client configuration examples. uv keeps its interpreter and package cache
-outside the workspace; the server keeps runtime files beneath the workspace.
+and client configuration examples.
 
 The server exposes 11 MCP tools for catalog discovery, graph writes and reads,
 evidence ingestion, search, traversal, deletion, jobs, reindexing, and status.
