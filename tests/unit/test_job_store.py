@@ -109,6 +109,7 @@ def test_failure_keeps_evidence_coverage(monkeypatch):
     [
         ("queued", "ingest", {}, 2),
         ("queued", "reindex", {"all": True}, 1),
+        ("queued", "reindex", {"ids": [NODE]}, 2),
         ("running", "ingest", {}, 1),
         ("completed", "ingest", {}, 0),
     ],
@@ -344,3 +345,38 @@ def test_rotating_claim_continues_past_isolated_row(monkeypatch):
     monkeypatch.setattr(jobs.JobStore, "_claim_selected", Mock(side_effect=[None, chosen]))
     db = database(cursor(rows=[(1, NODE, "queued", None), (2, OTHER, "queued", None)]))
     assert jobs.JobStore.claim_batch(db, "short", "ingest", 0, now=10) == (chosen, 2)
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"payload": "invalid"},
+        {"payload": "[]"},
+        {"payload": '{"all":"false"}'},
+        {"payload": '{"all":1}'},
+        {"progress": '{"bytes":true}'},
+        {"result": "null"},
+    ],
+)
+def test_cancel_invalid_metadata_precedes_all_writes(monkeypatch, patch):
+    row = job(state="queued", kind="reindex", **patch)
+    before = dict(row)
+    monkeypatch.setattr(jobs.JobStore, "get", Mock(return_value={"state": "queued"}))
+    monkeypatch.setattr(jobs, "job_row", Mock(return_value=row))
+    db = database()
+    with pytest.raises(ConflictError, match="JOB_METADATA_INVALID"):
+        jobs.JobStore.cancel(db, NODE)
+    db.execute.assert_not_called()
+    assert row == before
+
+
+@pytest.mark.parametrize(
+    ("patch", "reason"),
+    [({"kind": "delete", "purge_pending": 1}, "DELETE_ALREADY_COMMITTED"), ({"purge_pending": 1}, "JOB_PURGING")],
+)
+def test_cancel_protection_precedes_metadata_validation(monkeypatch, patch, reason):
+    monkeypatch.setattr(jobs, "job_row", Mock(return_value=job(payload="invalid", **patch)))
+    db = database()
+    with pytest.raises(ConflictError, match=reason):
+        jobs.JobStore.cancel(db, NODE)
+    db.execute.assert_not_called()

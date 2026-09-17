@@ -491,3 +491,4 @@ class RetentionStatus(ClosedModel):
     needs_attention: bool | None = None
     pending_prune_count: int | None = None
     pruned_total: int | None = None
+    last_error: str | None = None

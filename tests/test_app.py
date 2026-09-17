@@ -1,5 +1,7 @@
 """Factory and actual FastMCP service lifespan."""
 
+from importlib.metadata import version
+
 import pytest
 from fastmcp import Client, Context
 
@@ -21,6 +23,15 @@ async def test_lifespan_opens_workspace(tmp_path):
     async with Client(server) as client:
         assert len(await client.list_tools()) == 11
         assert (tmp_path / ".justpen/knowledgebase/graph.sqlite3").exists()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("mode", ["legacy", "auto"])
+async def test_initialize_reports_application_distribution_version(tmp_path, mode):
+    async with Client(app.create_app(ServerConfig(workspace_dir=tmp_path)), mode=mode) as client:
+        assert client.server_info is not None
+        assert client.server_info.name == "justpen-knowledgebase-mcp"
+        assert client.server_info.version == version("justpen-knowledgebase-mcp")
 
 
 @pytest.mark.integration

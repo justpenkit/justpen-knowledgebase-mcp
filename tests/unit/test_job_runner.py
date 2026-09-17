@@ -552,13 +552,15 @@ async def test_retention_loop_wakes_after_each_bounded_pass(runner, failure):
         return True
 
     runner.retention_pass = AsyncMock(side_effect=retention)
-    runner._failure_cache = Mock()
+    runner.last_error = "IO_ERROR: unexpected job failure"
     await runner._retention_loop()
     runner.retention_pass.assert_awaited_once()
     if isinstance(failure, StorageIOError):
-        runner._failure_cache.assert_called_once_with("IO_ERROR: job retention failed")
+        assert runner.retention_status()["last_error"] == "IO_ERROR: job retention failed"
+        assert runner.retention_status()["needs_attention"]
     else:
-        runner._failure_cache.assert_not_called()
+        assert runner.retention_status()["last_error"] is None
+    assert runner.last_error == "IO_ERROR: unexpected job failure"
 
 
 async def test_ingest_context_captured_before_worker_dispatch(runner, monkeypatch):
@@ -779,7 +781,8 @@ async def test_purge_fault_cooldown_keeps_other_cleanup_admitted(runner, monkeyp
     assert await runner._cleanup_category("purge")
     assert not await runner._cleanup_category("purge")
     assert runner._purge_step.await_count == 1
-    assert runner.last_error == "IO_ERROR: job retention purge needs attention"
+    assert runner.last_error is None
+    assert runner.retention_status()["last_error"] == "IO_ERROR: job retention purge needs attention"
     assert runner.retention_status()["needs_attention"]
     runner._orphans.append("stage")
     assert await runner._cleanup_category("orphan")
@@ -871,3 +874,129 @@ async def test_heartbeat_exception_still_releases_claim_owner(runner):
     with pytest.raises(AttributeError):
         await runner._run_claim(claim())
     assert not runner._claims
+
+
+@pytest.fixture
+def retention_scan(runner, monkeypatch):
+    counts = {"completed": 0, "failed_cancelled": 10001}
+    monkeypatch.setattr(jobs.JobRetention, "counts", Mock(return_value=counts))
+    batch = Mock(return_value={"cursor": (0.0, 0), "examined": 1, "marked": 0, "pruned": 0, "invalid": 1})
+    monkeypatch.setattr(jobs.JobRetention, "batch", batch)
+    monkeypatch.setattr(
+        jobs.JobRetention,
+        "snapshot",
+        lambda _c: {
+            "terminal_counts": dict(counts),
+            "protected_count": 0,
+            "needs_attention": False,
+            "pending_prune_count": 0,
+            "pruned_total": 0,
+        },
+    )
+    clock = Mock(return_value=100.0)
+    monkeypatch.setattr(jobs.time, "monotonic", clock)
+    return batch, clock
+
+
+async def test_unprunable_count_sweep_waits_despite_completion_notifications(runner, retention_scan):
+    batch, clock = retention_scan
+    await runner.retention_pass(force=True)
+    runner._ingest_step = AsyncMock()
+    for moment in (100.1, 115.0, 129.9):
+        clock.return_value = moment
+        await runner._run_claim(claim())
+        assert runner._retention_event.is_set()
+        await runner.retention_pass()
+    assert batch.call_count == 1
+    clock.return_value = 130.0
+    await runner.retention_pass()
+    assert batch.call_count == 2
+
+
+@pytest.mark.parametrize("trigger", ["force", "age"])
+async def test_retention_explicit_and_age_passes_bypass_count_delay(runner, retention_scan, trigger):
+    batch, _clock = retention_scan
+    await runner.retention_pass(force=True)
+    if trigger == "age":
+        runner._retention_due = 0.0
+    await runner.retention_pass(force=trigger == "force")
+    assert batch.call_count == 2
+
+
+async def test_retention_continuations_finish_before_count_delay(runner, retention_scan):
+    batch, clock = retention_scan
+    batch.side_effect = [
+        {"cursor": (1.0, 100), "examined": 100, "marked": 0, "pruned": 0, "invalid": 1},
+        {"cursor": (2.0, 200), "examined": 100, "marked": 0, "pruned": 0, "invalid": 0},
+        {"cursor": (0.0, 0), "examined": 1, "marked": 0, "pruned": 0, "invalid": 0},
+    ]
+    assert await runner.retention_pass(force=True)
+    clock.return_value = 120.0
+    assert await runner.retention_pass()
+    clock.return_value = 140.0
+    assert not await runner.retention_pass()
+    assert runner.retention_status()["needs_attention"]
+    clock.return_value = 169.9
+    assert not await runner.retention_pass()
+    assert batch.call_count == 3
+
+
+async def test_retention_diagnostic_preserves_job_error_until_clean_full_scan(runner, retention_scan):
+    batch, clock = retention_scan
+    runner._failure_cache("IO_ERROR: unexpected job failure")
+    await runner.retention_pass(force=True)
+    assert runner.last_error == "IO_ERROR: unexpected job failure"
+    status = runner.retention_status()
+    assert status["last_error"] == "IO_ERROR: retention ownership metadata needs attention"
+    assert status["needs_attention"]
+    await runner.retention_pass()
+    assert runner.retention_status()["last_error"] == status["last_error"]
+    batch.side_effect = [
+        {"cursor": (1.0, 100), "examined": 100, "marked": 0, "pruned": 0, "invalid": 0},
+        {"cursor": (0.0, 0), "examined": 1, "marked": 0, "pruned": 0, "invalid": 0},
+    ]
+    clock.return_value = 130.0
+    assert await runner.retention_pass()
+    assert runner.retention_status()["needs_attention"]
+    assert runner.retention_status()["last_error"] == status["last_error"]
+    assert not await runner.retention_pass()
+    assert runner.retention_status()["last_error"] is None
+    assert not runner.retention_status()["needs_attention"]
+    assert runner.last_error == "IO_ERROR: unexpected job failure"
+
+
+async def test_retention_cooldown_keeps_cancel_ingest_and_cleanup_admitted(runner, retention_scan, monkeypatch):
+    batch, _clock = retention_scan
+    await runner.retention_pass(force=True)
+    monkeypatch.setattr(jobs.JobStore, "cancel", Mock(return_value={"state": "cancelled", "lane": "short"}))
+    assert (await runner.control(jobs.JobsRequest(action="cancel", job_id=NODE), float("inf")))["state"] == "cancelled"
+    runner.store.source_stat.return_value = (1, 2, 300000, 3, 4)
+    runner.store.workspace.relative.return_value = Path("source.bin")
+    monkeypatch.setattr(jobs.JobStore, "insert", Mock())
+    monkeypatch.setattr(jobs.JobStore, "get", Mock(return_value={"state": "queued"}))
+    assert (await runner.ingest(IngestRequest(path="source.bin"), float("inf")))["status"] == "accepted"
+    runner._orphans.append("stage")
+    runner._orphan_step = AsyncMock()
+    assert await runner._cleanup_category("orphan")
+    runner._orphan_step.assert_awaited_once_with("stage")
+    await runner.retention_pass()
+    assert batch.call_count == 1
+
+
+async def test_clean_scan_with_pending_purge_keeps_diagnostic_until_verified(runner, retention_scan, monkeypatch):
+    batch, _clock = retention_scan
+    runner._retention_failure_cache("IO_ERROR: job retention purge needs attention")
+    batch.return_value = {"cursor": (0.0, 0), "examined": 1, "marked": 0, "pruned": 0, "invalid": 0}
+    snapshot = jobs.JobRetention.snapshot
+    pending = 1
+    monkeypatch.setattr(jobs.JobRetention, "snapshot", lambda c: {**snapshot(c), "pending_prune_count": pending})
+    await runner.retention_pass(force=True)
+    assert runner.retention_status()["last_error"] == "IO_ERROR: job retention purge needs attention"
+    pending = 0
+    runner._retention_dirty = True
+    await runner.retention_pass()
+    assert runner.retention_status()["needs_attention"]
+    assert runner.retention_status()["last_error"] == "IO_ERROR: job retention purge needs attention"
+    await runner.retention_pass(force=True)
+    assert not runner.retention_status()["needs_attention"]
+    assert runner.retention_status()["last_error"] is None

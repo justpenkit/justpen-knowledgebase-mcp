@@ -4,10 +4,12 @@ import asyncio
 import json
 import threading
 import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
+from justpen_knowledgebase_mcp import jobs
 from justpen_knowledgebase_mcp.config import ServerConfig, WorkspacePolicy
 from justpen_knowledgebase_mcp.errors import BusyError, ConflictError, NotFoundError
 from justpen_knowledgebase_mcp.models import GetRequest, WriteRequest
@@ -313,6 +315,8 @@ async def test_automatic_count_cleanup_progresses_while_bulk_copy_is_blocked(tmp
             return result
 
         monkeypatch.setattr(JobRetention, "snapshot", staticmethod(observe))
+        # Let the completed startup sweep's count cooldown expire before the wake.
+        kb.job_runner._retention_count_due = time.monotonic() - 1
         try:
             await kb.ingest_evidence({"base64": "AQ=="})
             await kb.ingest_evidence({"base64": "Ag=="})
@@ -422,3 +426,110 @@ async def test_healthy_history_does_not_scale_retention_snapshot_vm_work(kb):
         assert snapshot["terminal_counts"]["completed"] == size
         measurements.append(instructions)
     assert measurements[1] <= measurements[0] + 100, measurements
+
+
+@pytest.mark.parametrize("payload", ["invalid", "[]", '{"all":"false"}'])
+async def test_corrupt_cancel_preserves_row_counters_and_owned_file(kb, payload):
+    await kb.job_runner.close()
+    identifier, token = str(uuid4()), str(uuid4())
+    stage = kb.workspace.tmp / f"{identifier}.{token}.stage"
+    stage.write_bytes(b"retained")
+
+    def populate(connection, _token):
+        # The reindex expression index itself rejects syntactically invalid JSON.
+        kind = "ingest" if payload == "invalid" else "reindex"
+        JobStore.insert(connection, identifier, kind, "bulk", {})
+        connection.execute("UPDATE jobs SET payload=?,blob_sha256=? WHERE uuid=?", (payload, "a" * 64, identifier))
+
+    def snapshot(connection, _token):
+        return (
+            connection.execute("SELECT * FROM jobs WHERE uuid=?", (identifier,)).fetchone(),
+            JobRetention.counts(connection),
+        )
+
+    await kb.workers.control(populate)
+    before = await kb.workers.read(snapshot)
+    with pytest.raises(ConflictError, match="JOB_METADATA_INVALID"):
+        await kb.jobs({"action": "cancel", "job_id": identifier})
+    assert await kb.workers.read(snapshot) == before
+    assert stage.read_bytes() == b"retained"
+    assert (await kb.jobs({"action": "get", "job_id": identifier}))["needs_attention"]
+
+
+async def test_corrupt_retention_full_sweep_has_bounded_retries_and_preserves_owners(kb, monkeypatch):
+    await kb.job_runner.close()
+    policy = await kb.workers.control(lambda c, _t: persist_policy(c, failed_cancelled_retention_count=1))
+    kb.job_runner.store.policy = policy
+
+    def populate(connection, _token):
+        identifiers = [terminal(connection, "failed") for _ in range(101)]
+        connection.execute("UPDATE jobs SET progress='invalid',blob_sha256=?", ("a" * 64,))
+        return identifiers
+
+    identifiers = await kb.workers.control(populate)
+    stage = kb.workspace.tmp / f"{identifiers[0]}.{uuid4()}.stage"
+    stage.write_bytes(b"retained")
+    clock = SimpleNamespace(value=100.0)
+    monkeypatch.setattr(jobs, "time", SimpleNamespace(time=time.time, monotonic=lambda: clock.value))
+    batches = []
+    original = JobRetention.batch
+
+    def batch(connection, selected, cursor):
+        result = original(connection, selected, cursor)
+        batches.append(result)
+        return result
+
+    monkeypatch.setattr(JobRetention, "batch", batch)
+    runner = kb.job_runner
+    runner.last_error = "IO_ERROR: unexpected job failure"
+    assert await runner.retention_pass(force=True)
+    assert not await runner.retention_pass()
+    assert [item["examined"] for item in batches] == [100, 1]
+    for moment in (100.1, 115.0, 129.9):
+        clock.value = moment
+        runner._retention_event.set()
+        assert not await runner.retention_pass()
+    assert len(batches) == 2
+    clock.value = 130.0
+    assert await runner.retention_pass()
+    assert not await runner.retention_pass()
+    assert [item["examined"] for item in batches] == [100, 1, 100, 1]
+    assert runner.retention_status()["needs_attention"]
+    assert runner.retention_status()["last_error"] == "IO_ERROR: retention ownership metadata needs attention"
+    assert runner.last_error == "IO_ERROR: unexpected job failure"
+    assert await kb.workers.read(lambda c, _t: JobRetention.counts(c)) == {"completed": 0, "failed_cancelled": 101}
+    assert await kb.workers.read(
+        lambda c, _t: c.execute("SELECT DISTINCT progress,blob_sha256,purge_pending FROM jobs").fetchall()
+    ) == [("invalid", "a" * 64, 0)]
+    assert stage.read_bytes() == b"retained"
+
+
+async def test_retention_corruption_stays_visible_after_count_falls_below_target(kb):
+    await kb.job_runner.close()
+    policy = await kb.workers.control(lambda c, _t: persist_policy(c, failed_cancelled_retention_count=1))
+    kb.job_runner.store.policy = policy
+
+    def populate(connection, _token):
+        identifier = terminal(connection, "failed", time.time() - 2)
+        terminal(connection, "failed", time.time() - 1)
+        connection.execute("UPDATE jobs SET progress=? WHERE uuid=?", ('{"bytes":-1}', identifier))
+        return identifier
+
+    identifier = await kb.workers.control(populate)
+    await kb.job_runner.retention_pass(force=True)
+    await kb.job_runner.retention_pass(force=True)
+    status = kb.job_runner.retention_status()
+    assert status["terminal_counts"] == {"completed": 0, "failed_cancelled": 1}
+    assert status["needs_attention"]
+    assert status["last_error"] == "IO_ERROR: retention ownership metadata needs attention"
+    assert await kb.workers.read(
+        lambda c, _t: c.execute("SELECT progress,error_code,state FROM jobs WHERE uuid=?", (identifier,)).fetchone()
+    ) == ('{"bytes":-1}', "JOB_METADATA_INVALID", "failed")
+
+    # Simulate reviewed offline repair without introducing a production repair path.
+    await kb.workers.control(
+        lambda c, _t: c.execute("UPDATE jobs SET progress='{}',error_code=NULL WHERE uuid=?", (identifier,))
+    )
+    await kb.job_runner.retention_pass(force=True)
+    assert not kb.job_runner.retention_status()["needs_attention"]
+    assert kb.job_runner.retention_status()["last_error"] is None

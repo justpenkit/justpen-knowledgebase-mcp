@@ -341,7 +341,13 @@ class JobStore:
             raise ConflictError("DELETE_ALREADY_COMMITTED")
         if row["purge_pending"]:
             raise ConflictError("JOB_PURGING")
-        if row["state"] == "queued" and row["kind"] == "reindex" and json.loads(row["payload"]).get("all"):
+        try:
+            payload, _progress, _result = row_metadata(row)
+        except StorageIOError as exc:
+            raise ConflictError("JOB_METADATA_INVALID") from exc
+        if row["kind"] == "reindex" and "all" in payload and not isinstance(payload["all"], bool):
+            raise ConflictError("JOB_METADATA_INVALID")
+        if row["state"] == "queued" and row["kind"] == "reindex" and payload.get("all"):
             connection.execute("UPDATE jobs SET cancel_requested=1 WHERE uuid=?", (job_id,))
         elif row["state"] == "queued":
             connection.execute(

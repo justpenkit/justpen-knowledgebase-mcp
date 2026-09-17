@@ -11,6 +11,7 @@ import anyio
 import pytest
 
 from justpen_knowledgebase_mcp import stdio
+from justpen_knowledgebase_mcp.errors import ConfigurationError
 
 
 @pytest.fixture
@@ -67,6 +68,7 @@ def socket_endpoint(monkeypatch):
             fpathconf=Mock(return_value=512),
             read=Mock(return_value=b"line\n"),
             devnull="/dev/null",
+            isatty=Mock(return_value=True),
             write=lambda _fd, view: send(view),
             set_blocking=lambda _fd, value: change_flags(value),
             get_blocking=lambda _fd: endpoint.blocking,
@@ -273,6 +275,43 @@ async def test_null_device_read_cancellation_precedes_mocked_read(socket_endpoin
     assert await stream.readline() == ""
     read.assert_called_once_with(9, 65536)
     readiness.assert_not_called()
+
+
+def test_non_terminal_character_device_rejected_before_read(socket_endpoint, monkeypatch):
+    del socket_endpoint
+    read = Mock()
+    monkeypatch.setattr(stdio.os, "read", read)
+    monkeypatch.setattr(stdio.os, "fstat", Mock(return_value=SimpleNamespace(st_mode=stat.S_IFCHR, st_rdev=32)))
+    monkeypatch.setattr(stdio.os, "isatty", Mock(return_value=False))
+    monkeypatch.setattr(
+        stdio,
+        "Path",
+        Mock(return_value=SimpleNamespace(stat=lambda: SimpleNamespace(st_mode=stat.S_IFCHR, st_rdev=31))),
+    )
+    with pytest.raises(ConfigurationError, match="unsupported stdio character device"):
+        stdio._PipeFile(9)
+    read.assert_not_called()
+
+
+async def test_null_output_checkpoints_without_readiness(socket_endpoint, monkeypatch):
+    del socket_endpoint
+    monkeypatch.setattr(stdio.os, "fstat", Mock(return_value=SimpleNamespace(st_mode=stat.S_IFCHR, st_rdev=31)))
+    monkeypatch.setattr(
+        stdio,
+        "Path",
+        Mock(return_value=SimpleNamespace(stat=lambda: SimpleNamespace(st_mode=stat.S_IFCHR, st_rdev=31))),
+    )
+    write = Mock(side_effect=lambda _fd, data: len(data))
+    monkeypatch.setattr(stdio.os, "write", write)
+    monkeypatch.setattr(stdio.anyio, "wait_writable", AsyncMock(side_effect=AssertionError("null readiness")))
+    stream = stdio._PipeFile(9)
+    with anyio.CancelScope() as scope:
+        scope.cancel()
+        await stream.write("response")
+        pytest.fail("null write skipped cancellation checkpoint")
+    assert scope.cancelled_caught
+    write.assert_not_called()
+    assert await stream.write("response") == 8
 
 
 def test_restore_closes_duplicate_even_when_duplication_fails(monkeypatch):

@@ -89,6 +89,8 @@ checks Origin, and non-loopback binding still requires
 `JUSTPEN_KNOWLEDGEBASE_ALLOW_NON_LOOPBACK=true`.
 
 Startup configuration errors name the setting and expected rule without echoing
-values. Maintenance retries remain one second apart; identical failure-category
+values. Known startup failures report their application error code without a
+traceback: configuration/path errors exit with code 2, operational failures with
+code 1. Maintenance retries remain one second apart; identical failure-category
 logs are limited to one per 30 seconds. Category changes log immediately, and a
 fresh successful cycle logs one recovery summary with a bounded suppressed count.

@@ -157,6 +157,7 @@ class JobRetention:
                 tokens = _recorded_tokens(row)
                 digest = recorded_blob(row)
             except StorageIOError:
+                connection.execute("UPDATE jobs SET error_code='JOB_METADATA_INVALID' WHERE uuid=?", (job_id,))
                 invalid += 1
                 continue
             if tokens or digest is not None:
