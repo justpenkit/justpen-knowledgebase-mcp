@@ -1,3 +1,9 @@
+## v0.1.1 (2026-09-17)
+
+### Fix
+
+- harden job retention and startup diagnostics
+
 ## v0.1.0 (2026-09-17)
 
 ### Feat
