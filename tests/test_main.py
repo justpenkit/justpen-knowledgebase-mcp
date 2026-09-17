@@ -21,7 +21,7 @@ import pytest
 import justpen_knowledgebase_mcp.__main__ as main_mod
 import justpen_knowledgebase_mcp.service as service_mod
 import justpen_knowledgebase_mcp.shutdown as shutdown_mod
-from justpen_knowledgebase_mcp.errors import ConfigurationError
+from justpen_knowledgebase_mcp.errors import ConfigurationError, PathDeniedError, StorageIOError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -105,6 +105,39 @@ async def test_main_runs_to_completion_when_server_exits(monkeypatch: pytest.Mon
     monkeypatch.setattr(main_mod, "create_app", lambda config, **kwargs: SimpleNamespace(run_async=quick_exit))
     await main_mod.main()
     assert asyncio.all_tasks() == before
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "message"),
+    [
+        (PathDeniedError("PATH_DENIED: SYMLINK_COMPONENT"), 2, "PATH_DENIED: SYMLINK_COMPONENT"),
+        (StorageIOError("IO_ERROR: MANAGED_DIRECTORY_CHANGED"), 1, "IO_ERROR: MANAGED_DIRECTORY_CHANGED"),
+        (StorageIOError("managed storage failed"), 1, "IO_ERROR: managed storage failed"),
+    ],
+)
+def test_cli_formats_known_application_failures_without_causes(monkeypatch, capsys, error, code, message):
+    async def fail_startup(_config):
+        raise error from OSError("SECRET-MARKER")
+
+    monkeypatch.setattr(main_mod, "parse_config", lambda: main_mod.ServerConfig(workspace_dir=Path("/workspace")))
+    monkeypatch.setattr(main_mod, "main", fail_startup)
+    with pytest.raises(SystemExit) as raised:
+        main_mod.cli()
+    assert raised.value.code == code
+    assert raised.value.__suppress_context__
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == message + "\n"
+
+
+def test_cli_preserves_unexpected_failures(monkeypatch):
+    async def fail_startup(_config):
+        raise RuntimeError("unexpected failure")
+
+    monkeypatch.setattr(main_mod, "parse_config", lambda: main_mod.ServerConfig(workspace_dir=Path("/workspace")))
+    monkeypatch.setattr(main_mod, "main", fail_startup)
+    with pytest.raises(RuntimeError, match="unexpected failure"):
+        main_mod.cli()
 
 
 async def test_http_launch_wires_explicit_hosts_with_strict_guard(

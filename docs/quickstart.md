@@ -57,6 +57,9 @@ have the same cancellation guarantee. Embedders that set a global socket timeout
 also retain the one-byte descriptor path and must not race changes to that global
 setting with transport writes.
 
+Regular files, `/dev/null`, and terminals are also accepted; other character
+devices are rejected at startup with a configuration error.
+
 ## HTTP transport
 
 Start the same runtime with an explicit transport:

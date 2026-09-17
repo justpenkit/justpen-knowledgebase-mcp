@@ -14,7 +14,7 @@ import anyio
 
 from .cli import parse_config, temporary_environment
 from .config import ServerConfig
-from .errors import ConfigurationError
+from .errors import ConfigurationError, McpError, PathDeniedError
 from .shutdown import ShutdownObserver
 from .telemetry.config import TelemetryConfig, configure_sdk_environment, read_config
 
@@ -194,9 +194,10 @@ def cli() -> None:
     try:
         config = parse_config()
         asyncio.run(main(config))
-    except ConfigurationError as error:
-        sys.stderr.write(f"CONFIGURATION: {str(error).removeprefix('CONFIGURATION: ')}\n")
-        raise SystemExit(2) from None
+    except McpError as error:
+        prefix = f"{error.error_type}: "
+        sys.stderr.write(f"{prefix}{str(error).removeprefix(prefix)}\n")
+        raise SystemExit(2 if isinstance(error, (ConfigurationError, PathDeniedError)) else 1) from None
 
 
 if __name__ == "__main__":

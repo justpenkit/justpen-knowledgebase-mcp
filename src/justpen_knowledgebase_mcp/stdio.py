@@ -26,6 +26,8 @@ from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.stdio import stdio_server
 from typing_extensions import override
 
+from .errors import ConfigurationError
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -42,11 +44,19 @@ class _PipeFile(anyio.AsyncFile[str]):
         if stat.S_ISCHR(mode):
             null_stat = Path(os.devnull).stat()
             self._null_device = stat.S_ISCHR(null_stat.st_mode) and descriptor_stat.st_rdev == null_stat.st_rdev
+            if not self._null_device and not os.isatty(descriptor):
+                raise ConfigurationError(
+                    "unsupported stdio character device; use a pipe, stream socket, file, or terminal"
+                )
         else:
             self._null_device = False
         self._socket = stat.S_ISSOCK(mode)
         self._write_size = (
-            os.fpathconf(descriptor, "PC_PIPE_BUF") if stat.S_ISFIFO(mode) else 65536 if self._regular else 1
+            os.fpathconf(descriptor, "PC_PIPE_BUF")
+            if stat.S_ISFIFO(mode)
+            else 65536
+            if self._regular or self._null_device
+            else 1
         )
         self._buffer = bytearray()
 
@@ -81,7 +91,7 @@ class _PipeFile(anyio.AsyncFile[str]):
             await self._write_socket(remaining)
             return len(b)
         while remaining:
-            if not self._regular:
+            if not (self._regular or self._null_device):
                 await anyio.wait_writable(self._descriptor)
             else:
                 await anyio.lowlevel.checkpoint()

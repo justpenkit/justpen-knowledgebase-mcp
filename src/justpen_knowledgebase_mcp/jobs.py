@@ -133,6 +133,8 @@ class JobRunner:
         self._retention_event = asyncio.Event()
         self._retention_cursor = (0.0, 0)
         self._retention_due = 0.0
+        self._retention_count_due = 0.0
+        self._retention_scan_attention = False
         self._retention_sample_due = 0.0
         self._retention_dirty = False
         self._retention_attention = False
@@ -462,9 +464,7 @@ class JobRunner:
                     return True
             except (ConflictError, StorageIOError, OSError):
                 self._purge_next_attempt = time.monotonic() + 30
-                self._retention_attention = True
-                self._retention_cache["needs_attention"] = True
-                self._failure_cache("IO_ERROR: job retention purge needs attention")
+                self._retention_failure_cache("IO_ERROR: job retention purge needs attention")
                 return True
         return False
 
@@ -511,8 +511,7 @@ class JobRunner:
         except NotFoundError:
             pass
         except ConflictError:
-            self._retention_attention = True
-            self._retention_cache["needs_attention"] = True
+            self._retention_failure_cache("IO_ERROR: job retention purge needs attention")
             raise
         finally:
             os.close(bucket)
@@ -543,26 +542,24 @@ class JobRunner:
                 counts["completed"] > policy.completed_retention_count
                 or counts["failed_cancelled"] > policy.failed_cancelled_retention_count
             )
-            changed = False
-            if due or excess:
+            changed = completed = False
+            if due or (excess and time.monotonic() >= self._retention_count_due):
                 if self._retention_cursor == (0.0, 0):
-                    self._retention_attention = False
+                    self._retention_scan_attention = False
                 batch = await self.workers.control(lambda c, _t: JobRetention.batch(c, policy, self._retention_cursor))
                 self._retention_cursor = batch["cursor"]
                 changed = bool(batch["pruned"] or batch["marked"])
                 if batch["invalid"]:
-                    self._retention_attention = True
-                    self._failure_cache("IO_ERROR: retention ownership metadata needs attention")
+                    self._retention_scan_attention = True
+                    self._retention_failure_cache("IO_ERROR: retention ownership metadata needs attention")
                 if self._retention_cursor == (0.0, 0):
+                    completed = True
                     self._retention_due = time.time() + 3600
+                    self._retention_count_due = time.monotonic() + 30
                 if batch["marked"]:
                     self.wake("short")
-            if force or changed or self._retention_dirty or time.time() >= self._retention_sample_due:
-                snapshot = await self.workers.read(lambda c, _t: JobRetention.snapshot(c))
-                snapshot["needs_attention"] = snapshot["needs_attention"] or self._retention_attention
-                self._retention_cache.update(snapshot, available=True, stale=False, cached_at=time.time())
-                self._retention_sample_due = time.time() + 30
-                self._retention_dirty = False
+            if force or completed or changed or self._retention_dirty or time.time() >= self._retention_sample_due:
+                await self._sample_retention(completed=completed)
             else:
                 self._retention_cache["terminal_counts"] = counts
                 if self._retention_attention:
@@ -572,6 +569,17 @@ class JobRunner:
             raise
         else:
             return self._retention_cursor != (0.0, 0)
+
+    async def _sample_retention(self, *, completed: bool) -> None:
+        """Refresh cached counters, clearing diagnostics only after a verified sweep."""
+        snapshot = await self.workers.read(lambda c, _t: JobRetention.snapshot(c))
+        if completed and not self._retention_scan_attention and snapshot["pending_prune_count"] == 0:
+            self._retention_attention = False
+            self._retention_cache["last_error"] = None
+        snapshot["needs_attention"] = snapshot["needs_attention"] or self._retention_attention
+        self._retention_cache.update(snapshot, available=True, stale=False, cached_at=time.time())
+        self._retention_sample_due = time.time() + 30
+        self._retention_dirty = False
 
     async def _retention_loop(self) -> None:
         while not self._stopping:
@@ -583,7 +591,7 @@ class JobRunner:
             except (BusyError, LimitError):
                 pass
             except (McpError, OSError):
-                self._failure_cache("IO_ERROR: job retention failed")
+                self._retention_failure_cache("IO_ERROR: job retention failed")
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._retention_event.wait(), timeout=30)
 
@@ -821,6 +829,13 @@ class JobRunner:
             if not isinstance(outcome.error, Exception):
                 raise outcome.error
             self._failure_cache("IO_ERROR: job failure could not be committed")
+
+    def _retention_failure_cache(self, message: str) -> None:
+        if self._retention_cache["last_error"] != message:
+            sys.stderr.write(message + "\n")
+        self._retention_cache["last_error"] = message
+        self._retention_cache["needs_attention"] = True
+        self._retention_attention = True
 
     def _failure_cache(self, message: str) -> None:
         if self.last_error != message:

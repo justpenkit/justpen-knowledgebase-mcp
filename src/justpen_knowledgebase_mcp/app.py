@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractContextManager, asynccontextmanager
+from importlib.metadata import version
 
 from fastmcp import FastMCP
 
@@ -43,7 +44,12 @@ def create_app(
                 if telemetry is not None:
                     telemetry.events.lifecycle("mcp.server.stopping", {})
 
-    server = KnowledgeBaseMCP("justpen-knowledgebase-mcp", lifespan=lifespan, strict_input_validation=True)
+    server = KnowledgeBaseMCP(
+        "justpen-knowledgebase-mcp",
+        version=version("justpen-knowledgebase-mcp"),
+        lifespan=lifespan,
+        strict_input_validation=True,
+    )
     if telemetry is not None and telemetry.enabled:
         server.add_middleware(TelemetryMiddleware(events=telemetry.events, transport=config.transport))
     register_all(server)

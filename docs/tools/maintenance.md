@@ -48,9 +48,12 @@ unavailable sampled state normally remains successful structured data.
 
 `kb_status.background_error` contains the latest sanitized background-job
 failure, or `null` when no failure has been cached. It is an attention diagnostic,
-not a live database check or proof of current job state. Maintenance health is
-separate from WAL pressure: a fresh valid sample clears a transient error even
-when pressure remains. Permanent maintenance failure stays latched.
+not a live database check or proof of current job state. Retention diagnostics
+have their own `retention.last_error` and `needs_attention`; retention failures
+do not replace `background_error`. They remain visible until
+a complete successful scan finds no invalid metadata or pending purge work.
+Maintenance health is separate from WAL pressure: a fresh valid sample clears a
+transient error even when pressure remains. Permanent maintenance failure stays latched.
 
 ## `kb_delete`
 
@@ -75,8 +78,8 @@ fields.
 job record. A retry resumes eligible failed/cancelled work from its supported
 checkpoint; copied evidence restarts at byte 0.
 
-Cancelling an already terminal non-delete job is idempotent and returns its
-unchanged state. Delete intent and purge protection still reject cancellation.
+Cancelling an already terminal non-delete job with valid metadata is idempotent
+and returns its unchanged state. Delete intent and purge protection still reject cancellation.
 `attempts` counts durable claims/steps, including normal multi-step work,
 pressure deferrals and lease takeover; it is not a count of user retries.
 
@@ -89,8 +92,18 @@ blob cleanup while unrelated metadata and staging cleanup continue.
 Malformed job metadata is isolated as a failed job with `JOB_METADATA_INVALID`
 before workers acquire a new lease. Its raw metadata and trusted blob locator
 remain protected, and get/list report `needs_attention` and `retention_protected`.
-Retry rejects corrupt metadata without changing it; an operator must explicitly
-repair the metadata before retrying. Other jobs continue processing.
+Cancel and retry reject corrupt metadata with `CONFLICT: JOB_METADATA_INVALID`
+without changing it. Retention also marks discovered corruption with
+`JOB_METADATA_INVALID`, preserving raw metadata, terminal state, counters and
+file ownership. Repair requires reviewed offline correction of the metadata and
+its invalid marker before normal processing resumes. Other jobs continue processing.
+
+Retention counts are targets: protected or corrupt rows can leave the count above
+the configured target. Count-triggered scans wait at least 30 seconds after a
+complete sweep before retrying, even when other jobs complete; bounded continuation
+batches, startup/forced scans and age-triggered maintenance remain available.
+This cooldown and the diagnostic cache are process-local: each MCP process tracks
+its own scans. The delay does not block cancellation, new ingest or unrelated cleanup.
 
 **Errors:** `INVALID` for action/field combinations; `NOT_FOUND` after normal
 retention pruning; `CONFLICT` for ineligible cancellation/retry, including
