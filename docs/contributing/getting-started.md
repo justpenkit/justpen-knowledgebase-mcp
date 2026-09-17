@@ -52,6 +52,8 @@ A passing pre-push hook already supplies that verification.
 
 CI runs shared formatting, lint and the docs build once on Python 3.13. Its
 matrix checks typing and unit tests once per Python 3.11, 3.12 and 3.13.
+The full integration suite runs on Python 3.13. Consumer/runtime checks cover
+Linux x86-64, Linux ARM64 and macOS Apple Silicon on all three Python versions.
 It rejects a missing or stale committed lock before installing dependencies.
 Initial project setup may create a new lockfile.
 
