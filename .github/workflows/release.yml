@@ -24,7 +24,7 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@v10.1.0
       - name: Install Python
         run: uv python install 3.13
       - name: Validate release and extract its changelog section
