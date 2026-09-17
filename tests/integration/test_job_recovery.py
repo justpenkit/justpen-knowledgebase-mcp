@@ -99,18 +99,25 @@ async def test_kill_boundaries_recover_owned_evidence_and_delete(tmp_path, phase
         assert await kb.workers.read(lambda c, t: c.execute("pragma foreign_key_check").fetchall()) == []
 
 
-async def test_two_processes_same_blob_one_identity(tmp_path):
+@pytest.mark.parametrize("scenario", ["race", "race_peer"])
+async def test_two_processes_same_blob_one_identity(tmp_path, scenario):
     raw = b"\x00\xff" * 200000
     (tmp_path / "input.bin").write_bytes(raw)
-    with worker(tmp_path, "race") as first, worker(tmp_path, "race") as second:
+    with worker(tmp_path, scenario) as first, worker(tmp_path, scenario) as second:
         await asyncio.gather(asyncio.to_thread(await_barrier, first), asyncio.to_thread(await_barrier, second))
         os.write(first[2], b"1")
+        if scenario == "race_peer":
+            # First completes second's request while second still owns first's
+            # blocked copy. Completion must not shut that executor down early.
+            await asyncio.to_thread(await_barrier, second)
         os.write(second[2], b"1")
         outputs = await asyncio.gather(
             asyncio.to_thread(first[0].communicate, timeout=10), asyncio.to_thread(second[0].communicate, timeout=10)
         )
         results = [json.loads(stdout) for stdout, _stderr in outputs]
+        assert all(item[0].returncode == 0 for item in (first, second)), outputs
         assert all(not stderr for _stdout, stderr in outputs)
+        assert all(result["state"] == "completed" for result in results), results
         assert results[0]["evidence_id"] == results[1]["evidence_id"]
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         assert await kb.workers.read(lambda c, t: c.execute("select count(*) from evidence").get) == 1
