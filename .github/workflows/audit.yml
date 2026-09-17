@@ -17,7 +17,7 @@ jobs:
       UV_PYTHON: "3.13"
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
           cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
