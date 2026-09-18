@@ -1,0 +1,10 @@
+{
+  "source": "https://publicsuffix.org/list/public_suffix_list.dat",
+  "version": "2026-09-18_18-42-54_UTC",
+  "section": "ICANN DOMAINS only",
+  "source_sha256": "330c1c710ba29ecb125107b96d16b63878eaefd7afc0de6b4649d2d7e261d261",
+  "snapshot_sha256": "74f3dde19b8c20683b700d34dffe5407f79c6a79e221365c3fe729d9d6f0785a",
+  "rules": 6950,
+  "license": "Mozilla Public License 2.0 (https://mozilla.org/MPL/2.0/)",
+  "fetched_at": "2026-09-18"
+}
