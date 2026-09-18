@@ -39,6 +39,14 @@ SEED = 20260916
 Result = TypeVar("Result")
 
 
+REDIRECT_STATUSES = (301, 302, 303, 307, 308)
+
+
+def edge_properties(ordinal: int) -> dict[str, Any]:
+    """One canonical `redirects_to` property authority shared by generation and resume verification."""
+    return {"status": REDIRECT_STATUSES[ordinal % len(REDIRECT_STATUSES)], "context": f"seed{SEED}-edge{ordinal}"}
+
+
 def node_properties(index: int) -> dict[str, Any]:
     """One canonical node authority shared by generation and resume verification."""
     properties: dict[str, Any] = {
@@ -237,7 +245,7 @@ class Measurements:
                     "type": "redirects_to",
                     "source_ref": {"id": self.hub},
                     "target_ref": {"id": targets[index % len(targets)][0]},
-                    "properties": {"context": f"seed{SEED}-edge{first + index}"},
+                    "properties": edge_properties(first + index),
                 }
                 for index in range(min(100, self.edges - first))
             ]
