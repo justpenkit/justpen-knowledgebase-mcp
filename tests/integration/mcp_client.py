@@ -255,7 +255,7 @@ root=Path(os.environ["JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR"])
 original=Graph.write
 def write(connection, token, request):
     result=original(connection, token, request)
-    if request.nodes and request.nodes[0].properties.get("name")=="cancel.example":
+    if request.nodes and request.nodes[0].properties.get("value")=="cancel.example":
         mode=(root/"mode").read_text()
         def barrier():
             (root/"entered").write_text(token.state)

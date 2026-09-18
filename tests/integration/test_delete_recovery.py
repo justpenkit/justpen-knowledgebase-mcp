@@ -22,7 +22,7 @@ async def test_two_parent_jobs_lost_metadata_cancel_and_bounded_completion(kb):
     created = await kb.write(
         {
             "nodes": [
-                {"type": "endpoint", "properties": {"url": f"https://example.com/{name}", "method": "GET"}}
+                {"type": "domain", "properties": {"value": f"{name}.example"}}
                 for name in ["first", "second", "survivor"]
             ]
         }
@@ -33,14 +33,20 @@ async def test_two_parent_jobs_lost_metadata_cancel_and_bounded_completion(kb):
         ids = dict(connection.execute("select uuid,id from nodes"))
         for owner in [first, second]:
             connection.executemany(
-                "insert into relations(uuid,source_id,target_id,type,key,properties) values(?,?,?,'redirects_to',?,?)",
+                "insert into relations(uuid,source_id,target_id,type,key,properties) values(?,?,?,'has_srv_target',?,?)",
                 (
                     (
                         str(uuid4()),
                         ids[owner],
                         ids[survivor],
-                        identity_key("relations", "redirects_to", {"context": f"observation-{index}"}),
-                        json.dumps({"context": f"observation-{index}"}),
+                        identity_key(
+                            "relations",
+                            "has_srv_target",
+                            {"service": "_fixture", "protocol": "_tcp", "port": index, "priority": 0, "weight": 0},
+                        ),
+                        json.dumps(
+                            {"service": "_fixture", "protocol": "_tcp", "port": index, "priority": 0, "weight": 0}
+                        ),
                     )
                     for index in range(350)
                 ),

@@ -24,14 +24,18 @@ async def test_disjoint_writes_same_key_merges_and_readers(tmp_path, count):
                     "kb_write",
                     {
                         "nodes": [
-                            {"type": "hostname", "properties": {"name": "shared.example", f"writer{index}": index}}
+                            {
+                                "type": "subdomain",
+                                "properties": {"value": "shared.example.test", f"writer{index}": index},
+                            }
                         ]
                     },
                 )
             )["data"]["nodes"][0]["id"]
             own = envelope(
                 await client.call_tool(
-                    "kb_write", {"nodes": [{"type": "hostname", "properties": {"name": f"client{index}.example"}}]}
+                    "kb_write",
+                    {"nodes": [{"type": "subdomain", "properties": {"value": f"client{index}.example.test"}}]},
                 )
             )["data"]["nodes"][0]["id"]
             read = envelope(await client.call_tool("kb_get", {"kind": "nodes", "ids": [shared, own]}))["data"]
@@ -46,7 +50,10 @@ async def test_disjoint_writes_same_key_merges_and_readers(tmp_path, count):
         record = envelope(await clients[0].call_tool("kb_get", {"kind": "nodes", "ids": [results[0][0]]}))["data"][
             "records"
         ][0]
-        assert record["properties"] == {"name": "shared.example", **{f"writer{index}": index for index in range(count)}}
+        assert record["properties"] == {
+            "value": "shared.example.test",
+            **{f"writer{index}": index for index in range(count)},
+        }
         # Closing all but one stdio lifespan cannot shut down the shared database.
         if count > 1:
             await clients[-1].close()
