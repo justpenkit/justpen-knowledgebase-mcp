@@ -6,7 +6,6 @@ import ipaddress
 import json
 import time
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 from ..catalog import catalog_manifest, catalog_schema, validate_record
@@ -27,6 +26,15 @@ if TYPE_CHECKING:
 
 
 KINDS = frozenset(("nodes", "relations", "evidence"))
+
+
+def _proper_subnet(
+    source: ipaddress.IPv4Network | ipaddress.IPv6Network,
+    target: ipaddress.IPv4Network | ipaddress.IPv6Network,
+) -> bool:
+    if isinstance(source, ipaddress.IPv4Network):
+        return isinstance(target, ipaddress.IPv4Network) and target != source and target.subnet_of(source)
+    return isinstance(target, ipaddress.IPv6Network) and target != source and target.subnet_of(source)
 
 
 def row_by_id(connection: apsw.Connection, kind: str, identifier: str | int) -> dict[str, Any] | None:
@@ -87,26 +95,17 @@ def _validate_endpoints(type_name: str, source: dict[str, Any], target: dict[str
         raise InvalidParamsError("self edge is not allowed")
     first, second = json.loads(source["properties"]), json.loads(target["properties"])
     valid = True
-    if type_name == "name_in_domain":
-        valid = first["name"] == second["name"] or first["name"].endswith("." + second["name"])
-    elif type_name == "subdomain_of":
-        valid = first["name"].endswith("." + second["name"])
-    elif type_name == "offers_service":
-        valid = first.get("address", first.get("name")) == second["host"]
-    elif type_name == "member_of":
-        valid = second["kind"] == "group" and first["realm"] == second["realm"]
-    elif type_name == "serves_endpoint":
-        url = urlsplit(str(second["url"]))
-        try:
-            ipaddress.ip_address(first["host"])
-            host_matches = True
-        except ValueError:
-            host_matches = first["host"] == url.hostname
-        valid = (
-            first["transport"] == "tcp"
-            and host_matches
-            and first["port"] == (url.port or (443 if url.scheme == "https" else 80))
-        )
+    if type_name == "has_subdomain":
+        valid = second["value"].endswith("." + first["value"])
+    elif type_name == "contains_ip":
+        source_network = ipaddress.ip_network(first["value"], strict=True)
+        target_address = ipaddress.ip_address(second["value"])
+        valid = first["version"] == second["version"] and source_network.version == target_address.version
+        valid = valid and target_address in source_network
+    elif type_name == "contains_cidr":
+        source_network = ipaddress.ip_network(first["value"], strict=True)
+        target_network = ipaddress.ip_network(second["value"], strict=True)
+        valid = first["version"] == second["version"] and _proper_subnet(source_network, target_network)
     if not valid:
         raise InvalidParamsError("relation endpoint constraint failed")
 

@@ -12,11 +12,94 @@ from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, NotFoundError, RecordConflictError
 from justpen_knowledgebase_mcp.models import GetRequest, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
-from justpen_knowledgebase_mcp.storage.graph import graph_types
+from justpen_knowledgebase_mcp.storage.graph import _validate_endpoints, graph_types
 
-from .graph_fixtures import admit, evidence_fixture
+from .graph_fixtures import admit, evidence_fixture, graph_node
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize(
+    ("relation", "source", "target"),
+    [
+        (
+            "has_subdomain",
+            graph_node(1, "domain", {"value": "example.com"}),
+            graph_node(2, "subdomain", {"value": "api.dev.example.com"}),
+        ),
+        (
+            "has_subdomain",
+            graph_node(1, "subdomain", {"value": "dev.example.com"}),
+            graph_node(2, "subdomain", {"value": "api.dev.example.com"}),
+        ),
+        (
+            "contains_ip",
+            graph_node(1, "ip_cidr", {"value": "192.0.2.0/24", "version": 4}),
+            graph_node(2, "ip_address", {"value": "192.0.2.0", "version": 4}),
+        ),
+        (
+            "contains_ip",
+            graph_node(1, "ip_cidr", {"value": "192.0.2.0/24", "version": 4}),
+            graph_node(2, "ip_address", {"value": "192.0.2.255", "version": 4}),
+        ),
+        (
+            "contains_cidr",
+            graph_node(1, "ip_cidr", {"value": "10.0.0.0/8", "version": 4}),
+            graph_node(2, "ip_cidr", {"value": "10.2.3.0/24", "version": 4}),
+        ),
+    ],
+)
+def test_catalog_v2_structural_endpoints_accept_locked_relationships(
+    relation: str, source: dict[str, object], target: dict[str, object]
+) -> None:
+    _validate_endpoints(relation, source, target)
+
+
+@pytest.mark.parametrize(
+    ("relation", "source", "target"),
+    [
+        (
+            "has_subdomain",
+            graph_node(1, "domain", {"value": "example.com"}),
+            graph_node(2, "subdomain", {"value": "fakeexample.com"}),
+        ),
+        (
+            "has_subdomain",
+            graph_node(1, "subdomain", {"value": "api.example.com"}),
+            graph_node(2, "subdomain", {"value": "api.example.com"}),
+        ),
+        (
+            "contains_ip",
+            graph_node(1, "ip_cidr", {"value": "192.0.2.0/24", "version": 4}),
+            graph_node(2, "ip_address", {"value": "192.0.3.1", "version": 4}),
+        ),
+        (
+            "contains_ip",
+            graph_node(1, "ip_cidr", {"value": "192.0.2.0/24", "version": 4}),
+            graph_node(2, "ip_address", {"value": "2001:db8::1", "version": 6}),
+        ),
+        (
+            "contains_cidr",
+            graph_node(1, "ip_cidr", {"value": "10.0.0.0/8", "version": 4}),
+            graph_node(2, "ip_cidr", {"value": "10.0.0.0/8", "version": 4}),
+        ),
+        (
+            "contains_cidr",
+            graph_node(1, "ip_cidr", {"value": "10.0.0.0/8", "version": 4}),
+            graph_node(2, "ip_cidr", {"value": "2001:db8::/32", "version": 6}),
+        ),
+        (
+            "contains_cidr",
+            graph_node(1, "ip_cidr", {"value": "10.0.0.0/16", "version": 4}),
+            graph_node(2, "ip_cidr", {"value": "10.0.0.0/8", "version": 4}),
+        ),
+    ],
+)
+def test_catalog_v2_structural_endpoints_reject_invalid_relationships(
+    relation: str, source: dict[str, object], target: dict[str, object]
+) -> None:
+    with pytest.raises(InvalidParamsError, match="relation endpoint constraint failed"):
+        _validate_endpoints(relation, source, target)
 
 
 def write(value):

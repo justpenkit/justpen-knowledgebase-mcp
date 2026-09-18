@@ -1,569 +1,433 @@
-"""Frozen v1 catalog data; validation and discovery consume this single manifest."""
+"""Catalog v2 manifest, discovery schema, and strict record validators."""
+
+from __future__ import annotations
 
 import hashlib
 import ipaddress
 import json
 import re
-import unicodedata
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+
+from .errors import ExpectedValidationError
+from .mutations import validate_properties
+from .psl import classify_dns_name
+from .service_names import is_service_name, secure_required
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from .errors import ExpectedValidationError
-from .mutations import validate_properties
+CATALOG_VERSION = 2
 
-CATALOG_VERSION = 1
-# Canonical serialized contract stays immutable; callers receive a fresh tree.
-CATALOG_JSON = r"""
-{
-  "common": {
-    "additional_properties": true,
-    "coercion": false,
+_COMMON = {
+    "additional_properties": True,
+    "coercion": False,
     "depth": 16,
     "integers": "signed64",
     "numbers": "finite double",
     "properties_bytes": 65536,
-    "required_nonnull": true
-  },
-  "formats": {
-    "alpn_list": "`alpn_list` is an explicit empty string for no ALPN offer, or a comma-separated\nordered list of unique ASCII tokens, each matching `[A-Za-z0-9./_-]{1,255}`,\nwith no whitespace and at most 1024 bytes total. This is a bounded text subset\nof wire ALPN; unsupported opaque protocol bytes stay in evidence. The field\nrecords the offered list, not the negotiated result. A missing/unknown offer is\nnot silently treated as empty. Negotiated ALPN, version/cipher, status, banner,\nHTTP status, role permissions, authentication result evidence and per-context\nobservations belong in edge extras.",
-    "dns": "Lowercase ASCII LDH labels separated by dots, each 1\u201363 bytes with alphanumeric first/last character, total \u2264253 bytes; no trailing dot, wildcard, underscore, Unicode, empty label or all-numeric dotted address. Single-label hostnames allowed. ASCII A-label spellings fit this grammar; no IDNA conversion or Unicode-equivalence claim.",
-    "dns_or_explicit_empty": "dns policy or explicit empty string; IP literals rejected",
-    "host": "Either `dns` or `ip`; an IPv6 host property is unbracketed.",
-    "http_url": "`http_url` is an ASCII string of 1\u20138192 bytes consisting of absolute `http://` or\n`https://`, a lowercase `host`, optional decimal port, slash-starting path, and\noptional nonempty query. IPv6 authority uses brackets around the canonical `ip`.\nReject userinfo, fragments, whitespace/control characters, backslashes, Unicode,\ninvalid percent escapes, an empty host, and an empty query marker (`...?`).\nExplicit port has no leading zero, is 1\u201365535, and must not equal the scheme's\ndefault (80/443); omit those defaults. Path is mandatory (`https://x/`, not\n`https://x`). Non-percent ASCII characters in path must belong to RFC3986 pchar\nplus `/`; query additionally allows `?`. Percent escapes require uppercase hex.\nReject complete path segments `.` and `..`; escaped dot segments are retained,\nnot decoded. No IRI acceptance is implied. A permissive URL parser alone is not\nvalidation: inspect authority, path/query and original spelling explicitly.\n\nPath/query case, repeated slashes, parameter order, `+`, escaped unreserved\ncharacters and percent-encoded byte sequences are preserved. `/a` and `/%61`\nmay be distinct; no claim of semantic URL dedup. Nondefault port spelling and\nscheme/host case have one accepted representation. URL ports occur in a string\nby definition; standalone `port` properties still require strict JSON integers.\n",
-    "ip": "IPv4 dotted decimal, four octets 0\u2013255, no leading zeros except `0`; IPv6 compressed lowercase hexadecimal canonical spelling equivalent to `IPv6Address.compressed`, longest zero run/first tie, never compress a single zero group. No zone ID, bracket, CIDR or dotted IPv4 tail. This selects one RFC5952-style KB policy including hex-form IPv4-mapped addresses. Compare parsed representation to input; never replace input.",
-    "location": "text(4096), complete source/affected location meaningful independently of graph links; qualified URL, realm-qualified network target, or artifact digest plus internal path/symbol. Not a graph UUID or bare local label like `login` when multiple targets exist. Format syntax alone cannot prove adequate qualification.",
-    "method": "1\u201332 ASCII characters matching `[A-Z][A-Z0-9!#$%&'*+.^_\\x60\\u007c~-]*`; supports case-sensitive uppercase extension methods, rejects lowercase.",
-    "port": "JSON integer 1\u201365535, never boolean, float or digit string.",
-    "realm": "text(1024), a literal authority identifier supported by evidence, e.g. `https://id.example.com/`, `EXAMPLE`, or `com.example.bank`. It is not a node UUID, generated graph scope or session identifier. Exact case preserved; no inferred cross-realm equivalence.",
-    "selector": "Same as text(1024), or explicit empty string to mean the whole named resource.",
-    "sha256": "Exactly 64 lowercase ASCII hexadecimal characters; digest of the specified bytes.",
-    "text(N)": "JSON string, 1\u2013N UTF-8 bytes, no Unicode Cc control characters, no leading/trailing Unicode whitespace; internal spaces and case preserved."
-  },
-  "nodes": {
-    "application": {
-      "identity": [
-        "sha256"
-      ],
-      "required": {
-        "platform": [
-          "android",
-          "ios",
-          "windows",
-          "macos",
-          "linux",
-          "multi"
-        ],
-        "sha256": "sha256"
-      }
-    },
+    "required_nonnull": True,
+}
+
+_FORMATS = {
+    "alpn_tokens": (
+        "An array of zero or more ASCII tokens matching `[A-Za-z0-9./_-]{1,255}`; order is not identity-significant "
+        "and duplicates are preserved."
+    ),
+    "asn": "A strict JSON integer from 0 through 4294967295.",
+    "caa_parameters": (
+        "An array of objects with name and value strings. Names start alphanumeric and continue alphanumeric or "
+        "hyphen. Values are empty or use ASCII 0x21-0x3A and 0x3C-0x7E."
+    ),
+    "cidr": "Canonical strict IPv4 or IPv6 network with an explicit prefix length.",
+    "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
+    "dns_name": (
+        "A lowercase ASCII domain or subdomain spelling classified by the bundled ICANN PSL; at least two labels, "
+        "labels at most 63 bytes, total at most 253 bytes, and no trailing dot."
+    ),
+    "dns_or_explicit_empty": "dns_name or the explicit empty string for no SNI offer; IP literals are rejected.",
+    "http_url": (
+        "Canonical absolute ASCII http/https URL with lowercase host, mandatory path, no userinfo, fragment, "
+        "whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase percent escape."
+    ),
+    "ip": "Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.",
+    "ip_version": "A strict JSON integer equal to 4 or 6.",
+    "method": "One to 32 characters matching an uppercase HTTP method token.",
+    "printable_text_200": "A string of 1-200 printable Unicode characters.",
+    "redirect_status": "A strict JSON integer in 301, 302, 303, 307, or 308.",
+    "service_name": "A member of the bundled versioned service name whitelist.",
+    "sha256": "Exactly 64 lowercase ASCII hexadecimal characters.",
+    "spf": "Printable ASCII beginning with `v=spf1` followed by a normal space or end of text.",
+    "srv_label": "A 2-63 byte lowercase ASCII SRV label beginning with underscore.",
+    "uint8": "A strict JSON integer from 0 through 255.",
+    "uint16": "A strict JSON integer from 0 through 65535.",
+}
+
+
+def _identity(
+    properties: list[str],
+    *,
+    scope: dict[str, str] | None = None,
+    order_independent: dict[str, object] | None = None,
+) -> dict[str, object]:
+    result: dict[str, object] = {"properties": properties}
+    if scope is not None:
+        result["scope"] = scope
+    if order_independent is not None:
+        result["order_independent"] = order_independent
+    return result
+
+
+def _relation(
+    sources: list[str],
+    targets: list[str],
+    *,
+    required: dict[str, str | list[str]] | None = None,
+    identity: dict[str, object] | None = None,
+    self_edge: bool = False,
+) -> dict[str, object]:
+    return {
+        "identity": identity if identity is not None else _identity([]),
+        "required": required if required is not None else {},
+        "self_edge": self_edge,
+        "sources": sources,
+        "targets": targets,
+    }
+
+
+_SCOPE_OPEN_PORT = {"relation": "has_open_port", "endpoint": "source"}
+_SCOPE_SERVICE = {"relation": "has_service", "endpoint": "source"}
+_SCOPE_FINDING = {"relation": "has_finding", "endpoint": "source"}
+_CAA_ORDER: dict[str, object] = {
+    "property": "parameters",
+    "algorithm": "sha256",
+    "projection": ["name", "value"],
+    "sort": ["name", "value"],
+    "preserve_duplicates": True,
+}
+_ALPN_ORDER: dict[str, object] = {
+    "property": "alpn_offered",
+    "algorithm": "sha256",
+    "sort": "value",
+    "preserve_duplicates": True,
+}
+
+_NODES = {
+    "asn": {"identity": _identity(["value"]), "required": {"value": "asn"}},
     "certificate": {
-      "identity": [
-        "der_sha256"
-      ],
-      "required": {
-        "der_sha256": "sha256"
-      }
+        "identity": _identity(["der_sha256"]),
+        "required": {"der_sha256": "sha256"},
     },
-    "credential_hint": {
-      "identity": [
-        "realm",
-        "subject",
-        "kind",
-        "location",
-        "selector"
-      ],
-      "required": {
-        "kind": [
-          "password",
-          "token",
-          "api_key",
-          "private_key",
-          "session",
-          "candidate_username"
-        ],
-        "location": "location",
-        "realm": "realm",
-        "selector": "selector",
-        "subject": "text(512)"
-      }
-    },
-    "domain": {
-      "identity": [
-        "name"
-      ],
-      "required": {
-        "name": "dns"
-      }
-    },
+    "cve": {"identity": _identity(["value"]), "required": {"value": "cve"}},
+    "domain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}},
     "endpoint": {
-      "identity": [
-        "url",
-        "method"
-      ],
-      "required": {
-        "method": "method",
-        "url": "http_url"
-      }
+        "identity": _identity(["url", "method"]),
+        "required": {"url": "http_url", "method": "method"},
     },
     "finding": {
-      "identity": [
-        "rule_namespace",
-        "rule_id",
-        "location",
-        "selector"
-      ],
-      "required": {
-        "location": "location",
-        "rule_id": "text(256)",
-        "rule_namespace": "text(256)",
-        "selector": "selector",
-        "severity": [
-          "info",
-          "low",
-          "medium",
-          "high",
-          "critical",
-          "unknown"
-        ],
-        "title": "text(512)"
-      }
+        "identity": _identity(["title"], scope=_SCOPE_FINDING),
+        "required": {
+            "title": "printable_text_200",
+            "severity": ["info", "low", "medium", "high", "critical"],
+        },
     },
-    "hostname": {
-      "identity": [
-        "name"
-      ],
-      "required": {
-        "name": "dns"
-      }
+    "ip_address": {
+        "identity": _identity(["value"]),
+        "required": {"value": "ip", "version": "ip_version"},
     },
-    "ip": {
-      "identity": [
-        "address"
-      ],
-      "required": {
-        "address": "ip"
-      }
+    "ip_cidr": {
+        "identity": _identity(["value"]),
+        "required": {"value": "cidr", "version": "ip_version"},
     },
-    "principal": {
-      "identity": [
-        "realm",
-        "name",
-        "kind"
-      ],
-      "required": {
-        "kind": [
-          "user",
-          "service",
-          "group"
-        ],
-        "name": "text(512)",
-        "realm": "realm"
-      }
+    "port": {
+        "identity": _identity(["transport", "number"], scope=_SCOPE_OPEN_PORT),
+        "required": {"number": "uint16", "transport": ["tcp", "udp", "sctp"]},
     },
     "service": {
-      "identity": [
-        "host",
-        "transport",
-        "port"
-      ],
-      "required": {
-        "host": "host",
-        "port": "port",
-        "transport": [
-          "tcp",
-          "udp"
-        ]
-      }
-    }
-  },
-  "relations": {
-    "affects": {
-      "identity": [
-        "context"
-      ],
-      "required": {
-        "context": "text(1024)"
-      },
-      "rule": "",
-      "self_edge": false,
-      "sources": [
-        "finding"
-      ],
-      "targets": [
-        "ip",
-        "hostname",
-        "domain",
-        "service",
-        "endpoint",
-        "certificate",
-        "application",
-        "principal",
-        "credential_hint"
-      ]
+        "identity": _identity(["name"], scope=_SCOPE_SERVICE),
+        "required": {"name": "service_name"},
     },
-    "aliases": {
-      "identity": [
-        "vantage"
-      ],
-      "required": {
-        "vantage": "text(512)"
-      },
-      "rule": "",
-      "self_edge": false,
-      "sources": [
-        "hostname"
-      ],
-      "targets": [
-        "hostname"
-      ]
-    },
-    "authenticates_as": {
-      "identity": [
-        "context"
-      ],
-      "required": {
-        "context": "text(1024)",
-        "result": [
-          "candidate",
-          "valid",
-          "invalid"
-        ]
-      },
-      "rule": "",
-      "self_edge": false,
-      "sources": [
-        "credential_hint"
-      ],
-      "targets": [
-        "principal"
-      ]
-    },
-    "contacts": {
-      "identity": [
-        "context",
-        "basis"
-      ],
-      "required": {
-        "basis": [
-          "static",
-          "dynamic"
-        ],
-        "context": "text(1024)"
-      },
-      "rule": "",
-      "self_edge": false,
-      "sources": [
-        "application"
-      ],
-      "targets": [
-        "endpoint",
-        "service"
-      ]
-    },
-    "exposes_credential": {
-      "identity": [
-        "context"
-      ],
-      "required": {
-        "context": "text(1024)"
-      },
-      "rule": "",
-      "self_edge": false,
-      "sources": [
-        "application",
-        "endpoint",
-        "service"
-      ],
-      "targets": [
-        "credential_hint"
-      ]
-    },
-    "has_role": {
-      "identity": [
-        "context",
-        "role"
-      ],
-      "required": {
-        "context": "text(1024)",
-        "role": "text(256)"
-      },
-      "rule": "",
-      "self_edge": false,
-      "sources": [
-        "principal"
-      ],
-      "targets": [
-        "application",
-        "endpoint",
-        "service"
-      ]
-    },
-    "member_of": {
-      "identity": [
-        "context"
-      ],
-      "required": {
-        "context": "text(1024)"
-      },
-      "rule": "target kind group and equal realms",
-      "self_edge": false,
-      "sources": [
-        "principal"
-      ],
-      "targets": [
-        "principal"
-      ]
-    },
-    "name_in_domain": {
-      "identity": [],
-      "required": {},
-      "rule": "hostname equals domain or ends with dot plus domain",
-      "self_edge": false,
-      "sources": [
-        "hostname"
-      ],
-      "targets": [
-        "domain"
-      ]
-    },
-    "offers_service": {
-      "identity": [
-        "vantage"
-      ],
-      "required": {
-        "vantage": "text(512)"
-      },
-      "rule": "source address/name equals service.host",
-      "self_edge": false,
-      "sources": [
-        "ip",
-        "hostname"
-      ],
-      "targets": [
-        "service"
-      ]
-    },
-    "presents_certificate": {
-      "identity": [
-        "vantage",
-        "server_name",
-        "mode",
-        "alpn_offered"
-      ],
-      "required": {
-        "alpn_offered": "alpn_list",
-        "mode": [
-          "tls",
-          "dtls",
-          "starttls"
-        ],
-        "server_name": "dns_or_explicit_empty",
-        "vantage": "text(512)"
-      },
-      "rule": "",
-      "self_edge": false,
-      "sources": [
-        "service"
-      ],
-      "targets": [
-        "certificate"
-      ]
-    },
-    "redirects_to": {
-      "identity": [
-        "context"
-      ],
-      "required": {
-        "context": "text(1024)"
-      },
-      "rule": "",
-      "self_edge": false,
-      "sources": [
-        "endpoint"
-      ],
-      "targets": [
-        "endpoint"
-      ]
-    },
-    "resolves_to": {
-      "identity": [
-        "vantage"
-      ],
-      "required": {
-        "vantage": "text(512)"
-      },
-      "rule": "",
-      "self_edge": false,
-      "sources": [
-        "hostname",
-        "domain"
-      ],
-      "targets": [
-        "ip"
-      ]
-    },
-    "serves_endpoint": {
-      "identity": [
-        "vantage",
-        "context"
-      ],
-      "required": {
-        "context": "text(1024)",
-        "vantage": "text(512)"
-      },
-      "rule": "tcp; effective URL port equals service.port; DNS service.host equals URL host; IP virtual hosting allowed",
-      "self_edge": false,
-      "sources": [
-        "service"
-      ],
-      "targets": [
-        "endpoint"
-      ]
-    },
-    "signed_by": {
-      "identity": [],
-      "required": {},
-      "rule": "",
-      "self_edge": false,
-      "sources": [
-        "application"
-      ],
-      "targets": [
-        "certificate"
-      ]
-    },
-    "subdomain_of": {
-      "identity": [],
-      "required": {},
-      "rule": "proper DNS suffix on label boundary",
-      "self_edge": false,
-      "sources": [
-        "domain"
-      ],
-      "targets": [
-        "domain"
-      ]
-    }
-  },
-  "version": 1
+    "spf_record": {"identity": _identity(["value"]), "required": {"value": "spf"}},
+    "subdomain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}},
 }
-"""
-CATALOG_FINGERPRINT = hashlib.sha256(
-    json.dumps(json.loads(CATALOG_JSON), sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-).hexdigest()
+
+_D = ["domain", "subdomain"]
+_RELATIONS = {
+    "affected_by": _relation(["service", "finding"], ["cve"]),
+    "announced_by": _relation(["ip_cidr"], ["asn"]),
+    "caa_issue": _relation(
+        _D,
+        _D,
+        required={"flags": "uint8", "parameters": "caa_parameters"},
+        identity=_identity(["flags", "parameters"], order_independent=_CAA_ORDER),
+        self_edge=True,
+    ),
+    "caa_issuewild": _relation(
+        _D,
+        _D,
+        required={"flags": "uint8", "parameters": "caa_parameters"},
+        identity=_identity(["flags", "parameters"], order_independent=_CAA_ORDER),
+        self_edge=True,
+    ),
+    "cname_to": _relation(_D, _D, self_edge=True),
+    "contains_cidr": _relation(["ip_cidr"], ["ip_cidr"]),
+    "contains_ip": _relation(["ip_cidr"], ["ip_address"]),
+    "dname_to": _relation(_D, _D, self_edge=True),
+    "has_finding": _relation(
+        ["port", "domain", "subdomain", "ip_address", "ip_cidr", "service", "endpoint"],
+        ["finding"],
+    ),
+    "has_mail_exchange": _relation(
+        _D,
+        _D,
+        required={"preference": "uint16"},
+        identity=_identity(["preference"]),
+        self_edge=True,
+    ),
+    "has_nameserver": _relation(_D, _D, self_edge=True),
+    "has_open_port": _relation(["ip_address"], ["port"]),
+    "has_service": _relation(["port"], ["service"]),
+    "has_soa_primary": _relation(_D, _D, self_edge=True),
+    "has_spf": _relation(_D, ["spf_record"]),
+    "has_srv_target": _relation(
+        _D,
+        _D,
+        required={
+            "service": "srv_label",
+            "protocol": "srv_label",
+            "port": "uint16",
+            "priority": "uint16",
+            "weight": "uint16",
+        },
+        identity=_identity(["service", "protocol", "port", "priority", "weight"]),
+        self_edge=True,
+    ),
+    "has_subdomain": _relation(_D, ["subdomain"]),
+    "presents_certificate": _relation(
+        ["service"],
+        ["certificate"],
+        required={
+            "mode": ["tls", "dtls", "starttls"],
+            "server_name": "dns_or_explicit_empty",
+            "alpn_offered": "alpn_tokens",
+        },
+        identity=_identity(["mode", "server_name", "alpn_offered"], order_independent=_ALPN_ORDER),
+    ),
+    "redirects_to": _relation(
+        ["endpoint"],
+        ["endpoint"],
+        required={"status": "redirect_status"},
+        identity=_identity(["status"]),
+        self_edge=True,
+    ),
+    "resolves_to": _relation(_D, ["ip_address"]),
+    "reverse_resolves_to": _relation(["ip_address"], _D),
+    "serves_endpoint": _relation(["service"], ["endpoint"]),
+}
+
+_CATALOG = {
+    "common": _COMMON,
+    "formats": _FORMATS,
+    "nodes": _NODES,
+    "relations": _RELATIONS,
+    "version": CATALOG_VERSION,
+}
+
+# The canonical serialized contract is immutable; callers receive a fresh tree.
+CATALOG_JSON = json.dumps(_CATALOG, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _ensure_data_loaded() -> None:
+    """Load and verify bundled registries while the catalog module imports."""
+    classify_dns_name("example.com")
+    if not is_service_name("unknown"):
+        raise RuntimeError("bundled service name registry is missing required sentinel")
+
+
+def _catalog_fingerprint() -> str:
+    _ensure_data_loaded()
+    return hashlib.sha256(CATALOG_JSON.encode("utf-8")).hexdigest()
+
+
+CATALOG_FINGERPRINT = _catalog_fingerprint()
 
 
 def catalog_manifest() -> dict[str, Any]:
     """Return an isolated copy of the fixed executable catalog contract."""
-    return json.loads(CATALOG_JSON)
+    return cast("dict[str, Any]", json.loads(CATALOG_JSON))
 
 
 def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
-    """Enforce the canonical manifest's required properties without coercion."""
+    """Enforce catalog-required properties and cross-field rules without coercion."""
     validate_properties(properties)
-    definitions = catalog_manifest().get(kind, {})
+    manifest = catalog_manifest()
+    if kind not in ("nodes", "relations"):
+        raise ExpectedValidationError("unknown catalog type")
+    definitions = cast("dict[str, dict[str, Any]]", manifest[kind])
     if type_name not in definitions:
         raise ExpectedValidationError("unknown catalog type")
-    for field, rule in definitions[type_name]["required"].items():
+    required = cast("dict[str, str | list[str]]", definitions[type_name]["required"])
+    for field, rule in required.items():
         if field not in properties or not _valid_field(properties[field], rule):
             raise ExpectedValidationError(f"/properties/{field}: expected {rule}")
+    _validate_cross_fields(kind, type_name, properties)
+
+
+def _validate_cross_fields(kind: str, type_name: str, properties: dict[str, Any]) -> None:
+    if kind != "nodes":
+        return
+    if type_name in ("domain", "subdomain"):
+        value = properties["value"]
+        if type(value) is not str or _dns_kind(value) != type_name:
+            raise ExpectedValidationError("/properties/value: DNS name type mismatch")
+    elif type_name == "ip_address":
+        value = properties["value"]
+        address = _parse_ip(value) if type(value) is str else None
+        if address is None or address.version != properties["version"]:
+            raise ExpectedValidationError("IP address version mismatch")
+    elif type_name == "ip_cidr":
+        value = properties["value"]
+        network = _parse_cidr(value) if type(value) is str else None
+        if network is None or network.version != properties["version"]:
+            raise ExpectedValidationError("IP network version mismatch")
+    elif type_name == "service":
+        name = cast("str", properties["name"])
+        if secure_required(name) and ("secure" not in properties or type(properties["secure"]) is not bool):
+            raise ExpectedValidationError("/properties/secure: expected boolean")
 
 
 def _valid_field(value: object, rule: str | list[str]) -> bool:
     if isinstance(rule, list):
         return type(value) is str and value in rule
-    if rule == "port":
-        return type(value) is int and 1 <= value <= 65535
+    integer_validators: dict[str, Callable[[int], bool]] = {
+        "asn": lambda item: 0 <= item <= 4294967295,
+        "ip_version": lambda item: item in (4, 6),
+        "redirect_status": lambda item: item in (301, 302, 303, 307, 308),
+        "uint8": lambda item: 0 <= item <= 255,
+        "uint16": lambda item: 0 <= item <= 65535,
+    }
+    if rule in integer_validators:
+        return type(value) is int and integer_validators[rule](value)
+    if rule == "alpn_tokens":
+        return _valid_alpn_tokens(value)
+    if rule == "caa_parameters":
+        return _valid_caa_parameters(value)
     if type(value) is not str:
         return False
     validators: dict[str, Callable[[str], bool]] = {
-        "ip": _valid_ip,
-        "dns": _valid_dns,
+        "cidr": lambda text: _parse_cidr(text) is not None,
+        "cve": lambda text: re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", text) is not None,
+        "dns_name": lambda text: _dns_kind(text) is not None,
+        "dns_or_explicit_empty": lambda text: text == "" or _dns_kind(text) is not None,
         "http_url": _valid_url,
-        "host": lambda text: _valid_ip(text) or _valid_dns(text),
-        "dns_or_explicit_empty": lambda text: text == "" or _valid_dns(text),
-        "sha256": lambda text: re.fullmatch(r"[0-9a-f]{64}", text) is not None,
+        "ip": lambda text: _parse_ip(text) is not None,
         "method": lambda text: re.fullmatch(r"[A-Z][A-Z0-9!#$%&'*+.^_`|~-]{0,31}", text) is not None,
-        "alpn_list": _valid_alpn,
+        "printable_text_200": lambda text: 1 <= len(text) <= 200 and text.isprintable(),
+        "service_name": is_service_name,
+        "sha256": lambda text: re.fullmatch(r"[0-9a-f]{64}", text) is not None,
+        "spf": _valid_spf,
+        "srv_label": lambda text: re.fullmatch(r"_[a-z0-9](?:[a-z0-9-]{0,60}[a-z0-9])?", text) is not None,
     }
-    if rule in validators:
-        return validators[rule](value)
-    return _valid_text(value, rule)
+    validator = validators.get(rule)
+    return validator is not None and validator(value)
 
 
-def _valid_alpn(value: str) -> bool:
-    tokens = value.split(",")
-    return value == "" or (
-        len(value.encode("utf-8")) <= 1024
-        and len(tokens) == len(set(tokens))
-        and all(re.fullmatch(r"[A-Za-z0-9./_-]{1,255}", token) is not None for token in tokens)
-    )
+def _valid_spf(value: str) -> bool:
+    return (value == "v=spf1" or value.startswith("v=spf1 ")) and all(0x20 <= ord(char) <= 0x7E for char in value)
 
 
-def _valid_text(value: str, rule: str) -> bool:
-    if rule == "selector" and value == "":
-        return True
-    maximum = {"selector": 1024, "realm": 1024, "location": 4096}.get(rule)
-    if maximum is None and rule.startswith("text("):
-        maximum = int(rule[5:-1])
-    return (
-        maximum is not None
-        and 1 <= len(value.encode("utf-8")) <= maximum
-        and value == value.strip()
-        and not any(unicodedata.category(char) == "Cc" for char in value)
-    )
-
-
-def _valid_ip(value: str) -> bool:
-
+def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    if "%" in value:
+        return None
     try:
-        if "%" in value or (":" in value and "." in value):
-            return False
         address = ipaddress.ip_address(value)
-        if isinstance(address, ipaddress.IPv6Address):
-            groups = [
-                format(int.from_bytes(address.packed[index : index + 2], "big"), "x") for index in range(0, 16, 2)
-            ]
-            best_start, best_length = -1, 1
-            for start in range(8):
-                end = start
-                while end < 8 and groups[end] == "0":
-                    end += 1
-                if end - start > best_length:
-                    best_start, best_length = start, end - start
-            if best_start >= 0:
-                expected = ":".join(groups[:best_start]) + "::" + ":".join(groups[best_start + best_length :])
-            else:
-                expected = ":".join(groups)
-            return expected == value
-        return str(address) == value
     except ValueError:
+        return None
+    return address if address.compressed == value else None
+
+
+def _parse_cidr(value: str) -> ipaddress.IPv4Network | ipaddress.IPv6Network | None:
+    if "/" not in value or "%" in value:
+        return None
+    try:
+        network = ipaddress.ip_network(value, strict=True)
+    except ValueError:
+        return None
+    return network if network.with_prefixlen == value else None
+
+
+def _valid_normal_dns_label(label: str) -> bool:
+    if re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None:
         return False
+    if label.startswith("xn--"):
+        try:
+            decoded = label.encode("ascii").decode("idna")
+            return decoded.encode("idna").decode("ascii") == label
+        except UnicodeError:
+            return False
+    return True
 
 
-def _valid_dns(value: str) -> bool:
-
-    return (
-        len(value) <= 253
-        and not ("." in value and re.fullmatch(r"[0-9.]+", value) is not None)
-        and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is not None for label in value.split("."))
+def _valid_subdomain_label(label: str) -> bool:
+    if label.startswith("xn--"):
+        return _valid_normal_dns_label(label)
+    return re.fullmatch(r"[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?", label) is not None and any(
+        character.isalnum() for character in label
     )
+
+
+def _domain_label_start(labels: list[str]) -> int | None:
+    for index in range(1, len(labels)):
+        try:
+            if classify_dns_name(".".join(labels[index:])) == "domain":
+                return index
+        except ExpectedValidationError:
+            continue
+    return None
+
+
+def _dns_kind(value: str) -> str | None:
+    if not value.isascii() or not 1 <= len(value.encode("ascii")) <= 253 or value.endswith("."):
+        return None
+    if re.fullmatch(r"[0-9.]+", value) is not None:
+        return None
+    labels = value.split(".")
+    if len(labels) < 2 or any(not label or len(label.encode("ascii")) > 63 for label in labels):
+        return None
+    try:
+        kind = classify_dns_name(value)
+    except ExpectedValidationError:
+        return None
+    if kind == "domain":
+        return kind if all(_valid_normal_dns_label(label) for label in labels) else None
+    domain_start = _domain_label_start(labels)
+    if domain_start is None:
+        return None
+    if not all(_valid_subdomain_label(label) for label in labels[:domain_start]):
+        return None
+    return kind if all(_valid_normal_dns_label(label) for label in labels[domain_start:]) else None
+
+
+def _valid_hostname(value: str) -> bool:
+    if not value.isascii() or not 1 <= len(value) <= 253 or value.endswith("."):
+        return False
+    if "." in value and re.fullmatch(r"[0-9.]+", value) is not None:
+        return False
+    labels = value.split(".")
+    return all(_valid_normal_dns_label(label) for label in labels)
 
 
 def _valid_url(value: str) -> bool:
-
-    if not value.isascii() or len(value) > 8192:
+    if not value.isascii() or not 1 <= len(value) <= 8192:
         return False
     match = re.fullmatch(r"(https?)://(\[[^\]]+\]|[^/:?#]+)(?::([0-9]+))?(/[^?#]*)(?:\?([^#]+))?", value)
     if match is None:
         return False
     scheme, host, port, path, query = match.groups()
     if host.startswith("["):
-        if ":" not in host or not _valid_ip(host[1:-1]):
+        address = _parse_ip(host[1:-1])
+        if address is None or address.version != 6:
             return False
-    elif not (_valid_dns(host) or (_valid_ip(host) and ":" not in host)):
+    elif _parse_ip(host) is None and not _valid_hostname(host):
         return False
     if port is not None and (
         port.startswith("0") or not 1 <= int(port) <= 65535 or int(port) == (443 if scheme == "https" else 80)
@@ -577,25 +441,72 @@ def _valid_url(value: str) -> bool:
     )
 
 
+def _valid_alpn_tokens(value: object) -> bool:
+    if type(value) is not list:
+        return False
+    tokens = cast("list[object]", value)
+    return all(type(token) is str and re.fullmatch(r"[A-Za-z0-9./_-]{1,255}", token) is not None for token in tokens)
+
+
+def _valid_caa_parameters(value: object) -> bool:
+    if type(value) is not list:
+        return False
+    for item in cast("list[object]", value):
+        if type(item) is not dict:
+            return False
+        parameter = cast("dict[object, object]", item)
+        name = parameter.get("name")
+        content = parameter.get("value")
+        if type(name) is not str or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", name) is None:
+            return False
+        if type(content) is not str or not all(
+            0x21 <= ord(char) <= 0x3A or 0x3C <= ord(char) <= 0x7E for char in content
+        ):
+            return False
+    return True
+
+
+def _schema_for_rule(rule: str | list[str]) -> dict[str, Any]:
+    if isinstance(rule, list):
+        return {"type": "string", "enum": rule}
+    integer_rules: dict[str, dict[str, Any]] = {
+        "asn": {"type": "integer", "minimum": 0, "maximum": 4294967295, "format": rule},
+        "ip_version": {"type": "integer", "enum": [4, 6], "format": rule},
+        "redirect_status": {"type": "integer", "enum": [301, 302, 303, 307, 308], "format": rule},
+        "uint8": {"type": "integer", "minimum": 0, "maximum": 255, "format": rule},
+        "uint16": {"type": "integer", "minimum": 0, "maximum": 65535, "format": rule},
+    }
+    if rule in integer_rules:
+        return integer_rules[rule]
+    if rule == "alpn_tokens":
+        return {"type": "array", "items": {"type": "string"}, "format": rule}
+    if rule == "caa_parameters":
+        return {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["name", "value"],
+                "properties": {"name": {"type": "string"}, "value": {"type": "string"}},
+                "additionalProperties": True,
+            },
+            "format": rule,
+        }
+    return {"type": "string", "format": rule}
+
+
 def catalog_schema(kind: str, type_name: str) -> dict[str, Any]:
-    """Expose JSON types and exact format references from the sole manifest."""
+    """Expose JSON types, exact formats, limits, and identity metadata."""
     manifest = catalog_manifest()
     if kind not in ("nodes", "relations") or type_name not in manifest[kind]:
         raise ExpectedValidationError("unknown catalog type")
-    definition = manifest[kind][type_name]
-    properties: dict[str, Any] = {}
-    for name, rule in definition["required"].items():
-        if isinstance(rule, list):
-            properties[name] = {"type": "string", "enum": rule}
-        elif rule == "port":
-            properties[name] = {"type": "integer", "minimum": 1, "maximum": 65535, "format": rule}
-        else:
-            properties[name] = {"type": "string", "format": rule}
+    definition = cast("dict[str, Any]", manifest[kind][type_name])
+    required = cast("dict[str, str | list[str]]", definition["required"])
     return {
         "type": "object",
-        "required": list(definition["required"]),
-        "properties": properties,
+        "required": list(required),
+        "properties": {name: _schema_for_rule(rule) for name, rule in required.items()},
         "additionalProperties": True,
+        "x-identity": definition["identity"],
         "x-maxUtf8Bytes": manifest["common"]["properties_bytes"],
         "x-maxDepth": manifest["common"]["depth"],
     }

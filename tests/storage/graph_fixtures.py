@@ -1,10 +1,16 @@
 """Integration-only evidence and durable-job fixture admission."""
 
 import hashlib
+import json
 from uuid import uuid4
 
 from justpen_knowledgebase_mcp.models import DeleteRequest
 from justpen_knowledgebase_mcp.storage.deletions import GraphDeletion
+
+
+def graph_node(identifier: int, type_name: str, properties: dict[str, object]) -> dict[str, object]:
+    """Build the endpoint row shape consumed by graph structural validation."""
+    return {"id": identifier, "type": type_name, "properties": json.dumps(properties)}
 
 
 async def evidence_fixture(kb, count):
