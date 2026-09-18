@@ -91,7 +91,7 @@ class Mutation(ClosedModel):
 
 
 class NodeWrite(Mutation):
-    """Node upsert or ID patch with optional label presence."""
+    """Node upsert or ID patch; new scoped nodes require their catalog scope relation in the same batch."""
 
     label: str | None = None
 
@@ -119,7 +119,7 @@ class RelationWrite(Mutation):
 
 
 class WriteRequest(ClosedModel):
-    """One atomic batch with independent record and link budgets."""
+    """One atomic batch with independent budgets and parent-scoped node references resolved by node_index."""
 
     nodes: list[NodeWrite] = Field(default_factory=list[NodeWrite], max_length=100)
     relations: list[RelationWrite] = Field(default_factory=list[RelationWrite], max_length=100)

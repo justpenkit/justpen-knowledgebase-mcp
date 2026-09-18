@@ -40,27 +40,48 @@ def test_pending_relation_precedence_and_missing_endpoint(monkeypatch):
 @pytest.mark.parametrize(
     ("relation", "source_type", "source", "target_type", "target", "valid"),
     [
-        ("name_in_domain", "hostname", {"name": "a.example.com"}, "domain", {"name": "example.com"}, True),
-        ("subdomain_of", "domain", {"name": "example.com"}, "domain", {"name": "example.com"}, False),
-        ("offers_service", "ip", {"address": "127.0.0.1"}, "service", {"host": "127.0.0.1"}, True),
-        ("offers_service", "hostname", {"name": "a.example.com"}, "service", {"host": "other.com"}, False),
         (
-            "serves_endpoint",
-            "service",
-            {"host": "127.0.0.1", "transport": "tcp", "port": 443},
-            "endpoint",
-            {"url": "https://example.com/"},
+            "has_subdomain",
+            "domain",
+            {"value": "example.com"},
+            "subdomain",
+            {"value": "a.example.com"},
             True,
         ),
         (
-            "serves_endpoint",
-            "service",
-            {"host": "wrong.com", "transport": "tcp", "port": 80},
-            "endpoint",
-            {"url": "http://example.com/"},
+            "has_subdomain",
+            "subdomain",
+            {"value": "a.example.com"},
+            "subdomain",
+            {"value": "a.example.com"},
             False,
         ),
-        ("member_of", "principal", {"realm": "a"}, "principal", {"realm": "a", "kind": "group"}, True),
+        (
+            "contains_ip",
+            "ip_cidr",
+            {"value": "192.0.2.0/24", "version": 4},
+            "ip_address",
+            {"value": "192.0.2.1", "version": 4},
+            True,
+        ),
+        (
+            "contains_ip",
+            "domain",
+            {"value": "example.com"},
+            "ip_address",
+            {"value": "192.0.2.1", "version": 4},
+            False,
+        ),
+        (
+            "serves_endpoint",
+            "service",
+            {"name": "unknown"},
+            "endpoint",
+            {"url": "https://example.com/", "method": "GET"},
+            True,
+        ),
+        ("has_open_port", "ip_address", {}, "port", {}, True),
+        ("has_service", "ip_address", {}, "service", {}, False),
     ],
 )
 def test_endpoint_constraints(relation, source_type, source, target_type, target, valid):
@@ -75,19 +96,19 @@ def test_endpoint_constraints(relation, source_type, source, target_type, target
 
 def test_upsert_merge_identity_and_duplicate_boundaries(monkeypatch):
     db = database(cursor(value=None))
-    persisted = Mock(return_value=(owner(properties='{"name":"example.com","extra":2}'), True))
+    persisted = Mock(return_value=(owner(properties='{"value":"example.com","extra":2}'), True))
     monkeypatch.setattr(graph, "_persist", persisted)
     row, created = graph._upsert(
-        db, "nodes", NodeWrite(type="domain", properties={"name": "example.com", "extra": 2}), [], set()
+        db, "nodes", NodeWrite(type="domain", properties={"value": "example.com", "extra": 2}), [], set()
     )
     assert created
     assert row["id"] == 1
-    assert persisted.call_args.args[4] == {"name": "example.com", "extra": 2}
-    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner()))
+    assert persisted.call_args.args[4] == {"value": "example.com", "extra": 2}
+    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner(properties='{"value":"example.com"}')))
     with pytest.raises(ConflictError, match="identity"):
-        graph._upsert(db, "nodes", NodeWrite(id=NODE, properties={"name": "other.com"}), [], set())
+        graph._upsert(db, "nodes", NodeWrite(id=NODE, properties={"value": "other.com"}), [], set())
     with pytest.raises(ConflictError, match="type"):
-        graph._upsert(db, "nodes", NodeWrite(id=NODE, type="hostname", properties={}), [], set())
+        graph._upsert(db, "nodes", NodeWrite(id=NODE, type="subdomain", properties={}), [], set())
     persisted.reset_mock()
     with pytest.raises(InvalidParamsError, match="duplicate"):
         graph._upsert(db, "nodes", NodeWrite(id=NODE, properties={}), [], {("nodes", 1)})
@@ -98,7 +119,7 @@ def test_upsert_merge_identity_and_duplicate_boundaries(monkeypatch):
 
 
 def test_write_value_error_does_not_expose_validation_payload(monkeypatch):
-    monkeypatch.setattr(graph, "_upsert", Mock(side_effect=ValueError("secret payload " * 1000)))
+    monkeypatch.setattr(graph, "_preflight", Mock(side_effect=ValueError("secret payload " * 1000)))
     with pytest.raises(InvalidParamsError, match=r"^invalid graph mutation$"):
         graph.Graph.write(database(), Mock(), WriteRequest(nodes=[NodeWrite(id=NODE)]))
 
@@ -113,7 +134,7 @@ def test_persist_preserves_metadata_presence_and_refreshes_indexes(monkeypatch, 
     monkeypatch.setattr(graph, "refresh_properties", properties)
     monkeypatch.setattr(graph.fulltext, "refresh_record_text", text)
     previous = owner(metadata='{"label":"old","source":"original"}') if existing else None
-    mutation = NodeWrite(type="domain", properties={"name": "example.com"}, label=None)
+    mutation = NodeWrite(type="domain", properties={"value": "example.com"}, label=None)
     result, created = graph._persist(db, "nodes", mutation, previous, mutation.properties, (None, None))
     assert result is readback
     assert created != existing
@@ -137,13 +158,22 @@ def test_links_counts_actual_changes_and_rejects_missing(monkeypatch):
 
 
 def test_write_materializes_results_and_maps_validation(monkeypatch):
-    monkeypatch.setattr(graph, "_upsert", Mock(return_value=(owner(), True)))
+    mutation = NodeWrite(type="domain", properties={"value": "example.com"})
+    plan = graph._PreparedMutation(
+        mutation,
+        "domain",
+        None,
+        owner(properties='{"value":"example.com"}'),
+        mutation.properties,
+    )
+    monkeypatch.setattr(graph, "_preflight", Mock(return_value=([plan], [])))
+    monkeypatch.setattr(graph, "_persist", Mock(return_value=(owner(properties='{"value":"example.com"}'), True)))
     monkeypatch.setattr(graph, "_links", Mock(return_value=(2, 0)))
-    request = WriteRequest(nodes=[NodeWrite(type="domain", properties={"name": "example.com"})])
+    request = WriteRequest(nodes=[mutation])
     result = graph.Graph.write(database(), Mock(), request)
     assert result["nodes"][0]["links_added"] == 2
     assert result["nodes"][0]["created"] is True
-    monkeypatch.setattr(graph, "_upsert", Mock(side_effect=ValueError("invalid property")))
+    monkeypatch.setattr(graph, "_preflight", Mock(side_effect=ValueError("invalid property")))
     with pytest.raises(InvalidParamsError):
         graph.Graph.write(database(), Mock(), request)
 
@@ -205,24 +235,35 @@ def test_types_defer_counts_without_losing_schema(deadline):
     assert result["counts_deferred"] == (deadline == 0)
 
 
+def test_types_exposes_scoped_identity_in_manifest_and_schema():
+    db = database(cursor(value=(NODE, 1)), cursor(value=0))
+    result = graph.graph_types(db, Mock(deadline=float("inf")), TypesRequest(kind="nodes", type="port"))
+    identity = {
+        "properties": ["transport", "number"],
+        "scope": {"relation": "has_open_port", "endpoint": "source"},
+    }
+    assert result["types"][0]["identity"] == identity
+    assert result["types"][0]["properties_schema"]["x-identity"] == identity
+
+
 def test_relation_references_batch_and_existing_endpoints_are_immutable(monkeypatch):
 
-    source = owner(type="hostname", properties='{"name":"a.example.com"}')
-    target = owner(id=2, uuid=OTHER)
+    source = owner(type="domain", properties='{"value":"example.com"}')
+    target = owner(id=2, uuid=OTHER, type="ip_address", properties='{"value":"192.0.2.1","version":4}')
     assert graph._ref(database(), NodeRef(node_index=0), [source]) is source
     with pytest.raises(InvalidParamsError, match="outside batch"):
         graph._ref(database(), NodeRef(node_index=1), [source])
     lookup = Mock(return_value=target)
     monkeypatch.setattr(graph, "row_by_id", lookup)
     relation = RelationWrite(
-        type="name_in_domain", properties={}, source_ref=NodeRef(node_index=0), target_ref=NodeRef(id=OTHER)
+        type="resolves_to", properties={}, source_ref=NodeRef(node_index=0), target_ref=NodeRef(id=OTHER)
     )
-    assert graph._endpoints(database(), relation, [source], None, "name_in_domain") == (source, target)
+    assert graph._endpoints(database(), relation, [source], None, "resolves_to") == (source, target)
     with pytest.raises(ConflictError, match="immutable"):
-        graph._endpoints(database(), relation, [source], owner(source_id=3, target_id=2), "name_in_domain")
+        graph._endpoints(database(), relation, [source], owner(source_id=3, target_id=2), "resolves_to")
     lookup.side_effect = [source, target]
     patch = RelationWrite(id=NODE)
-    assert graph._endpoints(database(), patch, [], owner(source_id=1, target_id=2), "name_in_domain") == (
+    assert graph._endpoints(database(), patch, [], owner(source_id=1, target_id=2), "resolves_to") == (
         source,
         target,
     )
@@ -232,11 +273,13 @@ def test_relation_references_batch_and_existing_endpoints_are_immutable(monkeypa
 
 
 def test_dedup_uses_canonical_identity_to_reject_hash_collision(monkeypatch):
-    mutation = NodeWrite(type="domain", properties={"name": "example.com"})
-    lookup = Mock(return_value=owner())
+    mutation = NodeWrite(type="domain", properties={"value": "example.com"})
+    lookup = Mock(return_value=owner(properties='{"value":"example.com"}'))
     monkeypatch.setattr(graph, "row_by_id", lookup)
-    assert graph._deduplicate(database(cursor(value=1)), "nodes", mutation, None, "domain", (None, None)) == owner()
-    lookup.return_value = owner(properties='{"name":"different.com"}')
+    assert graph._deduplicate(database(cursor(value=1)), "nodes", mutation, None, "domain", (None, None)) == owner(
+        properties='{"value":"example.com"}'
+    )
+    lookup.return_value = owner(properties='{"value":"different.com"}')
     with pytest.raises(ConflictError, match="collision"):
         graph._deduplicate(database(cursor(value=1)), "nodes", mutation, None, "domain", (None, None))
     lookup.return_value = None
@@ -248,20 +291,20 @@ def test_relation_persistence_binds_endpoint_ids_and_observation(monkeypatch):
 
     source, target = owner(), owner(id=2)
     mutation = RelationWrite(
-        type="subdomain_of",
+        type="resolves_to",
         properties={},
         source_ref=NodeRef(id=NODE),
         target_ref=NodeRef(id=OTHER),
         observed_at="2026-01-01T00:00:00Z",
     )
-    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner(type="subdomain_of")))
+    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner(type="resolves_to")))
     monkeypatch.setattr(graph, "refresh_properties", Mock())
     monkeypatch.setattr(graph.fulltext, "refresh_record_text", Mock())
     db = database()
     _row, created = graph._persist(db, "relations", mutation, None, {}, (source, target))
     assert created
     values = db.execute.call_args.args[1]
-    assert values[1:4] == (1, "subdomain_of", 2)
+    assert values[1:4] == (1, "resolves_to", 2)
     assert values[-1] == graph.parse_timestamp("2026-01-01T00:00:00Z")
 
 
@@ -322,13 +365,13 @@ def test_evidence_record_projects_current_bounded_coverage(state, incomplete):
 
 
 def test_catalog_validation_preserves_authored_field_rule():
-    request = WriteRequest(nodes=[NodeWrite(type="domain", properties={"name": "SECRET-MARKER"})])
-    with pytest.raises(InvalidParamsError, match="/properties/name: expected dns"):
+    request = WriteRequest(nodes=[NodeWrite(type="domain", properties={"value": "SECRET-MARKER"})])
+    with pytest.raises(InvalidParamsError, match="/properties/value: expected dns_name"):
         graph.Graph.write(database(cursor(value=None)), Mock(), request)
 
 
 def test_mutation_validation_preserves_authored_conflict(monkeypatch):
-    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner(properties='{"name":"example.com","a":{}}')))
+    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner(properties='{"value":"example.com","a":{}}')))
     request = WriteRequest(nodes=[NodeWrite(id=NODE, properties={"a": {}}, remove_properties=["/a"])])
     with pytest.raises(InvalidParamsError, match="remove and set paths conflict"):
         graph.Graph.write(database(), Mock(), request)

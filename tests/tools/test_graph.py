@@ -15,9 +15,9 @@ pytestmark = pytest.mark.integration
 
 async def test_nested_omitted_null_and_property_values(tmp_path):
     async with Client(create_app(ServerConfig(workspace_dir=tmp_path))) as client:
-        props = {"name": "exact.example", "nested": {"null": None, "float": 1.5, "array": [True, 2, "Ä"]}}
+        props = {"value": "exact.example", "nested": {"null": None, "float": 1.5, "array": [True, 2, "Ä"]}}
         created = await client.call_tool(
-            "kb_write", {"nodes": [{"type": "hostname", "properties": props, "label": "keep", "source": "source"}]}
+            "kb_write", {"nodes": [{"type": "domain", "properties": props, "label": "keep", "source": "source"}]}
         )
         identifier = envelope(created)["data"]["nodes"][0]["id"]
         await client.call_tool("kb_write", {"nodes": [{"id": identifier}]})
@@ -53,14 +53,19 @@ async def test_nested_omitted_null_and_property_values(tmp_path):
         assert record["lifecycle"] == "ready"
         deleted = await client.call_tool("kb_delete", {"kind": "nodes", "ids": [identifier]})
         assert envelope(deleted)["data"]["status"] in {"accepted", "completed"}
-        types = await client.call_tool("kb_types", {"kind": "nodes", "type": "hostname"})
+        types = await client.call_tool("kb_types", {"kind": "nodes", "type": "domain"})
         assert envelope(types)["data"]["types"][0]["count"] == 0
+        port_types = envelope(await client.call_tool("kb_types", {"kind": "nodes", "type": "port"}))["data"]
+        identity = port_types["types"][0]["identity"]
+        assert identity == {
+            "properties": ["transport", "number"],
+            "scope": {"relation": "has_open_port", "endpoint": "source"},
+        }
+        assert port_types["types"][0]["properties_schema"]["x-identity"] == identity
 
 
 async def test_direct_facade_preserves_raw_mapping_fields(kb):
-    result = await kb.write(
-        {"nodes": [{"type": "hostname", "properties": {"name": "direct.example"}, "label": "keep"}]}
-    )
+    result = await kb.write({"nodes": [{"type": "domain", "properties": {"value": "direct.example"}, "label": "keep"}]})
     identifier = result["nodes"][0]["id"]
     await kb.write({"nodes": [{"id": identifier}]})
     record = (await kb.get({"kind": "nodes", "ids": [identifier]}))["records"][0]

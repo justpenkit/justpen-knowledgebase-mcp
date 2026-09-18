@@ -14,7 +14,7 @@ from justpen_knowledgebase_mcp.models import GetRequest, TypesRequest, WriteRequ
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.graph import _validate_endpoints, graph_types
 
-from .graph_fixtures import admit, evidence_fixture, graph_node
+from .graph_fixtures import admit, evidence_fixture, graph_node, scoped_stack
 
 pytestmark = pytest.mark.integration
 
@@ -106,6 +106,95 @@ def write(value):
     return WriteRequest.model_validate(value)
 
 
+async def test_scoped_batch_order_independent_and_same_parent_deduplicates(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        first = await kb.write(write(scoped_stack()))
+        first_ids = {
+            name: result["id"] for name, result in zip(("ip_address", "port", "service"), first["nodes"], strict=True)
+        }
+        second_order = ("service", "port", "ip_address")
+        second = await kb.write(write(scoped_stack(second_order, reverse_relations=True)))
+        second_ids = {name: result["id"] for name, result in zip(second_order, second["nodes"], strict=True)}
+        assert second_ids == first_ids
+        assert await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get) == 3
+        assert await kb.workers.read(lambda c, t: c.execute("select count(*) from relations").get) == 2
+
+
+@pytest.mark.parametrize("scope_count", [0, 2])
+async def test_new_scoped_node_requires_exactly_one_scope_relation(tmp_path, scope_count):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        relations = [
+            {
+                "type": "has_open_port",
+                "source_ref": {"node_index": source},
+                "target_ref": {"node_index": 2},
+                "properties": {},
+            }
+            for source in range(scope_count)
+        ]
+        nodes = [
+            {"type": "ip_address", "properties": {"value": "192.0.2.10", "version": 4}},
+            {"type": "ip_address", "properties": {"value": "192.0.2.11", "version": 4}},
+            {"type": "port", "properties": {"transport": "tcp", "number": 443}},
+        ]
+        with pytest.raises(InvalidParamsError, match="exactly one has_open_port"):
+            await kb.write(write({"nodes": nodes, "relations": relations}))
+        assert await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get) == 0
+
+
+async def test_scoped_write_failure_has_zero_partial_rows(tmp_path):
+    request = scoped_stack()
+    request["relations"].append(
+        {
+            "type": "contains_ip",
+            "source_ref": {"node_index": 0},
+            "target_ref": {"node_index": 0},
+            "properties": {},
+        }
+    )
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        with pytest.raises(InvalidParamsError, match="endpoint types"):
+            await kb.write(write(request))
+        assert await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get) == 0
+        assert await kb.workers.read(lambda c, t: c.execute("select count(*) from relations").get) == 0
+
+
+async def test_existing_scoped_node_cannot_be_reparented_and_patch_needs_no_scope_relation(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        created = await kb.write(write(scoped_stack(("ip_address", "port"))))
+        first_parent, port = [item["id"] for item in created["nodes"]]
+        second_parent = (
+            await kb.write(
+                write({"nodes": [{"type": "ip_address", "properties": {"value": "192.0.2.11", "version": 4}}]})
+            )
+        )["nodes"][0]["id"]
+        await kb.write(write({"nodes": [{"id": port, "properties": {"banner": "updated"}}]}))
+        with pytest.raises(InvalidParamsError, match="different parent"):
+            await kb.write(
+                write(
+                    {
+                        "relations": [
+                            {
+                                "type": "has_open_port",
+                                "source_ref": {"id": second_parent},
+                                "target_ref": {"id": port},
+                                "properties": {},
+                            }
+                        ]
+                    }
+                )
+            )
+        record = (await kb.get(GetRequest(kind="nodes", ids=[port])))["records"][0]
+        assert record["properties"]["banner"] == "updated"
+        relation = await kb.types(TypesRequest(kind="nodes", type="port"))
+        assert relation["types"][0]["identity"] == {
+            "properties": ["transport", "number"],
+            "scope": {"relation": "has_open_port", "endpoint": "source"},
+        }
+        assert relation["types"][0]["properties_schema"]["x-identity"] == relation["types"][0]["identity"]
+        assert first_parent != second_parent
+
+
 async def test_identity_upsert_atomic_batch_and_metadata_presence(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
@@ -113,8 +202,8 @@ async def test_identity_upsert_atomic_batch_and_metadata_presence(tmp_path):
                 {
                     "nodes": [
                         {
-                            "type": "application",
-                            "properties": {"sha256": "a" * 64, "platform": "android", "nested": {"a": 1}},
+                            "type": "certificate",
+                            "properties": {"der_sha256": "a" * 64, "platform": "android", "nested": {"a": 1}},
                             "label": "App",
                         }
                     ]
@@ -127,8 +216,8 @@ async def test_identity_upsert_atomic_batch_and_metadata_presence(tmp_path):
                 {
                     "nodes": [
                         {
-                            "type": "application",
-                            "properties": {"sha256": "a" * 64, "platform": "linux", "nested": {"b": 2}},
+                            "type": "certificate",
+                            "properties": {"der_sha256": "a" * 64, "platform": "linux", "nested": {"b": 2}},
                         }
                     ]
                 }
@@ -158,7 +247,7 @@ async def test_identity_upsert_atomic_batch_and_metadata_presence(tmp_path):
                 write(
                     {
                         "nodes": [
-                            {"type": "ip", "properties": {"address": "192.0.2.1"}},
+                            {"type": "ip_address", "properties": {"value": "192.0.2.1", "version": 4}},
                             {"type": "bad", "properties": {}},
                         ]
                     }
@@ -166,7 +255,7 @@ async def test_identity_upsert_atomic_batch_and_metadata_presence(tmp_path):
             )
         assert await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get) == 1
         with pytest.raises(ConflictError):
-            await kb.write(write({"nodes": [{"id": identifier, "properties": {"sha256": "b" * 64}}]}))
+            await kb.write(write({"nodes": [{"id": identifier, "properties": {"der_sha256": "b" * 64}}]}))
         with pytest.raises(NotFoundError):
             await kb.write(write({"nodes": [{"id": str(uuid4())}]}))
 
@@ -177,31 +266,31 @@ async def test_shared_node_relations_and_duplicate_alias_rejection(tmp_path):
             write(
                 {
                     "nodes": [
-                        {"type": "application", "properties": {"sha256": "a" * 64, "platform": "android"}},
-                        {"type": "application", "properties": {"sha256": "b" * 64, "platform": "linux"}},
-                        {"type": "endpoint", "properties": {"url": "https://x/", "method": "GET"}},
+                        {"type": "domain", "properties": {"value": "example.com"}},
+                        {"type": "domain", "properties": {"value": "example.net"}},
+                        {"type": "ip_address", "properties": {"value": "192.0.2.1", "version": 4}},
                     ],
                     "relations": [
                         {
-                            "type": "contacts",
+                            "type": "resolves_to",
                             "source_ref": {"node_index": i},
                             "target_ref": {"node_index": 2},
-                            "properties": {"context": "production", "basis": "static"},
+                            "properties": {"vantage": "public"},
                         }
                         for i in (0, 1)
                     ],
                 }
             )
         )
-        endpoint = result["nodes"][2]["id"]
+        shared_ip = result["nodes"][2]["id"]
         assert len(result["relations"]) == 2
         with pytest.raises(InvalidParamsError):
             await kb.write(
                 write(
                     {
                         "nodes": [
-                            {"id": endpoint},
-                            {"type": "endpoint", "properties": {"url": "https://x/", "method": "GET"}},
+                            {"id": shared_ip},
+                            {"type": "ip_address", "properties": {"value": "192.0.2.1", "version": 4}},
                         ]
                     }
                 )
@@ -217,7 +306,11 @@ async def test_get_budgets_keep_whole_records_and_missing_ids(tmp_path):
             write(
                 {
                     "nodes": [
-                        {"type": "hostname", "properties": {"name": f"h{i}", "extra": "x" * 60000}} for i in range(5)
+                        {
+                            "type": "subdomain",
+                            "properties": {"value": f"h{i}.example.com", "extra": "x" * 60000},
+                        }
+                        for i in range(5)
                     ]
                 }
             )
@@ -236,7 +329,17 @@ async def test_unlimited_lifetime_links_and_owner_bound_pagination(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         evidence = await evidence_fixture(kb, 150)
         result = await kb.write(
-            write({"nodes": [{"type": "ip", "properties": {"address": "192.0.2.1"}, "evidence_add": evidence[:100]}]})
+            write(
+                {
+                    "nodes": [
+                        {
+                            "type": "ip_address",
+                            "properties": {"value": "192.0.2.1", "version": 4},
+                            "evidence_add": evidence[:100],
+                        }
+                    ]
+                }
+            )
         )
         identifier = result["nodes"][0]["id"]
         await kb.write(write({"nodes": [{"id": identifier, "evidence_add": evidence[100:]}]}))
@@ -267,8 +370,8 @@ async def test_unlimited_lifetime_links_and_owner_bound_pagination(tmp_path):
         assert len(source_page["sources"]) == 20
         assert source_page["next_cursor"]
         types = await kb.types(TypesRequest(kind="nodes"))
-        assert len(types["types"]) == 10
-        assert {item["type"]: item["count"] for item in types["types"]}["ip"] == 1
+        assert len(types["types"]) == 12
+        assert {item["type"]: item["count"] for item in types["types"]}["ip_address"] == 1
         assert {item["type"]: item["count"] for item in types["types"]}["endpoint"] == 0
 
 
@@ -279,8 +382,8 @@ async def test_evidence_link_cursor_preserves_colliding_association_ids(tmp_path
             write(
                 {
                     "nodes": [
-                        {"type": "hostname", "properties": {"name": "x"}, "evidence_add": [evidence]},
-                        {"type": "ip", "properties": {"address": "192.0.2.1"}},
+                        {"type": "domain", "properties": {"value": "example.com"}, "evidence_add": [evidence]},
+                        {"type": "ip_address", "properties": {"value": "192.0.2.1", "version": 4}},
                     ],
                     "relations": [
                         {
@@ -319,7 +422,7 @@ async def run():
 asyncio.run(run())
 """
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
-        created = await kb.write(write({"nodes": [{"type": "hostname", "properties": {"name": "x"}}]}))
+        created = await kb.write(write({"nodes": [{"type": "domain", "properties": {"value": "example.com"}}]}))
         identifier = created["nodes"][0]["id"]
         children = [
             await asyncio.create_subprocess_exec(
@@ -346,15 +449,15 @@ asyncio.run(run())
                 payloads = [
                     {
                         "nodes": [
-                            {"type": "application", "properties": {"sha256": digit * 64, "platform": "linux"}},
-                            {"type": "endpoint", "properties": {"url": "https://x/", "method": "GET"}},
+                            {"type": "subdomain", "properties": {"value": f"a{digit}.example.com"}},
+                            {"type": "ip_address", "properties": {"value": "192.0.2.1", "version": 4}},
                         ],
                         "relations": [
                             {
-                                "type": "contacts",
+                                "type": "resolves_to",
                                 "source_ref": {"node_index": 0},
                                 "target_ref": {"node_index": 1},
-                                "properties": {"context": "production", "basis": "static"},
+                                "properties": {"vantage": "public"},
                             }
                         ],
                     }
@@ -387,13 +490,13 @@ asyncio.run(run())
                 await asyncio.wait_for(child.wait(), 5)
         record = (await kb.get(GetRequest(kind="nodes", ids=[identifier])))["records"][0]
         if mode == "disjoint":
-            assert record["properties"] == {"name": "x", "left": 1, "right": 2}
+            assert record["properties"] == {"value": "example.com", "left": 1, "right": 2}
         elif mode == "same":
             assert record["properties"]["same"] == 2
             assert record["observed_at"] == "2001-01-01T00:00:00.000000Z"
         else:
             assert (
-                await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes where type='endpoint'").get)
+                await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes where type='ip_address'").get)
                 == 1
             )
             assert await kb.workers.read(lambda c, t: c.execute("select count(*) from relations").get) == 2
@@ -423,8 +526,8 @@ async def test_ready_only_counts_pending_evidence_and_deferred_counts(tmp_path):
             write(
                 {
                     "nodes": [
-                        {"type": "hostname", "properties": {"name": "x"}},
-                        {"type": "ip", "properties": {"address": "192.0.2.1"}},
+                        {"type": "domain", "properties": {"value": "example.com"}},
+                        {"type": "ip_address", "properties": {"value": "192.0.2.1", "version": 4}},
                     ],
                     "relations": [
                         {
@@ -462,8 +565,8 @@ async def test_metadata_is_integer_and_association_ids_are_not_reused(tmp_path):
                 {
                     "nodes": [
                         {
-                            "type": "ip",
-                            "properties": {"address": "192.0.2.1"},
+                            "type": "ip_address",
+                            "properties": {"value": "192.0.2.1", "version": 4},
                             "observed_at": "1970-01-01T00:00:00.000001Z",
                             "evidence_add": [evidence],
                         }
@@ -487,8 +590,8 @@ async def test_identity_relation_pending_prefers_own_intent_before_endpoint(tmp_
             write(
                 {
                     "nodes": [
-                        {"type": "hostname", "properties": {"name": "x"}},
-                        {"type": "ip", "properties": {"address": "192.0.2.1"}},
+                        {"type": "domain", "properties": {"value": "example.com"}},
+                        {"type": "ip_address", "properties": {"value": "192.0.2.1", "version": 4}},
                     ],
                     "relations": [
                         {
@@ -526,44 +629,42 @@ async def test_identity_relation_pending_prefers_own_intent_before_endpoint(tmp_
 
 async def test_upsert_missing_remove_and_required_identity_rules(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
-        request = write({"nodes": [{"type": "hostname", "properties": {"name": "x"}, "remove_properties": ["/old"]}]})
+        request = write(
+            {"nodes": [{"type": "domain", "properties": {"value": "example.com"}, "remove_properties": ["/old"]}]}
+        )
         first = await kb.write(request)
         second = await kb.write(request)
         identifier = first["nodes"][0]["id"]
         assert second["nodes"][0]["id"] == identifier
         with pytest.raises(InvalidParamsError):
-            await kb.write(write({"nodes": [{"id": identifier, "remove_properties": ["/name"]}]}))
+            await kb.write(write({"nodes": [{"id": identifier, "remove_properties": ["/value"]}]}))
         with pytest.raises(InvalidParamsError):
             await kb.write(write({"nodes": [{"id": identifier, "properties": {"a": 1}, "remove_properties": ["/a"]}]}))
-        assert (await kb.get(GetRequest(kind="nodes", ids=[identifier])))["records"][0]["properties"] == {"name": "x"}
+        assert (await kb.get(GetRequest(kind="nodes", ids=[identifier])))["records"][0]["properties"] == {
+            "value": "example.com"
+        }
 
 
 @pytest.mark.parametrize(
     ("relation", "source", "target", "properties"),
     [
         (
-            "name_in_domain",
-            {"type": "hostname", "properties": {"name": "api.other"}},
-            {"type": "domain", "properties": {"name": "example"}},
+            "has_subdomain",
+            {"type": "domain", "properties": {"value": "example.com"}},
+            {"type": "subdomain", "properties": {"value": "api.other.com"}},
             {},
         ),
         (
-            "offers_service",
-            {"type": "ip", "properties": {"address": "192.0.2.1"}},
-            {"type": "service", "properties": {"host": "192.0.2.2", "transport": "tcp", "port": 443}},
-            {"vantage": "public"},
+            "contains_ip",
+            {"type": "ip_cidr", "properties": {"value": "192.0.2.0/24", "version": 4}},
+            {"type": "ip_address", "properties": {"value": "192.0.3.1", "version": 4}},
+            {},
         ),
         (
-            "member_of",
-            {"type": "principal", "properties": {"realm": "A", "name": "alice", "kind": "user"}},
-            {"type": "principal", "properties": {"realm": "B", "name": "group", "kind": "group"}},
-            {"context": "test"},
-        ),
-        (
-            "serves_endpoint",
-            {"type": "service", "properties": {"host": "x", "transport": "udp", "port": 443}},
-            {"type": "endpoint", "properties": {"url": "https://x/", "method": "GET"}},
-            {"vantage": "public", "context": "test"},
+            "contains_cidr",
+            {"type": "ip_cidr", "properties": {"value": "192.0.2.0/24", "version": 4}},
+            {"type": "ip_cidr", "properties": {"value": "192.0.0.0/16", "version": 4}},
+            {},
         ),
     ],
 )
@@ -588,18 +689,20 @@ async def test_endpoint_cross_field_constraints_rollback_batch(tmp_path, relatio
         assert await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get) == 0
 
 
-async def test_cycles_and_multiple_parents_are_allowed_but_self_edge_is_not(tmp_path):
+async def test_cname_cycles_and_self_edges_are_preserved(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
             write(
                 {
-                    "nodes": [{"type": "hostname", "properties": {"name": name}} for name in ("a", "b")],
+                    "nodes": [
+                        {"type": "domain", "properties": {"value": name}} for name in ("example.com", "example.net")
+                    ],
                     "relations": [
                         {
-                            "type": "aliases",
+                            "type": "cname_to",
                             "source_ref": {"node_index": source},
                             "target_ref": {"node_index": target},
-                            "properties": {"vantage": "public"},
+                            "properties": {},
                         }
                         for source, target in ((0, 1), (1, 0))
                     ],
@@ -607,18 +710,18 @@ async def test_cycles_and_multiple_parents_are_allowed_but_self_edge_is_not(tmp_
             )
         )
         assert len(result["relations"]) == 2
-        with pytest.raises(InvalidParamsError):
-            await kb.write(
-                write(
-                    {
-                        "relations": [
-                            {
-                                "type": "aliases",
-                                "source_ref": {"id": result["nodes"][0]["id"]},
-                                "target_ref": {"id": result["nodes"][0]["id"]},
-                                "properties": {"vantage": "public"},
-                            }
-                        ]
-                    }
-                )
+        self_edge = await kb.write(
+            write(
+                {
+                    "relations": [
+                        {
+                            "type": "cname_to",
+                            "source_ref": {"id": result["nodes"][0]["id"]},
+                            "target_ref": {"id": result["nodes"][0]["id"]},
+                            "properties": {},
+                        }
+                    ]
+                }
             )
+        )
+        assert self_edge["relations"][0]["created"]

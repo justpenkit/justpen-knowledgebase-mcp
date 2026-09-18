@@ -20,12 +20,12 @@ async def graph(kb):
         WriteRequest.model_validate(
             {
                 "nodes": [
-                    {"type": "domain", "properties": {"name": "a.example"}},
-                    {"type": "domain", "properties": {"name": "example"}},
+                    {"type": "domain", "properties": {"value": "example.com"}},
+                    {"type": "subdomain", "properties": {"value": "a.example.com"}},
                 ],
                 "relations": [
                     {
-                        "type": "subdomain_of",
+                        "type": "has_subdomain",
                         "source_ref": {"node_index": 0},
                         "target_ref": {"node_index": 1},
                         "properties": {},
@@ -34,6 +34,104 @@ async def graph(kb):
             }
         )
     )
+
+
+async def scoped_graph(kb, relation_type):
+    definitions = {
+        "has_open_port": (
+            [
+                {"type": "ip_address", "properties": {"value": "192.0.2.10", "version": 4}},
+                {"type": "port", "properties": {"transport": "tcp", "number": 443}},
+            ],
+            [
+                {
+                    "type": "has_open_port",
+                    "source_ref": {"node_index": 0},
+                    "target_ref": {"node_index": 1},
+                    "properties": {},
+                }
+            ],
+            0,
+            1,
+            0,
+        ),
+        "has_service": (
+            [
+                {"type": "ip_address", "properties": {"value": "192.0.2.10", "version": 4}},
+                {"type": "port", "properties": {"transport": "tcp", "number": 443}},
+                {"type": "service", "properties": {"name": "unknown"}},
+            ],
+            [
+                {
+                    "type": "has_open_port",
+                    "source_ref": {"node_index": 0},
+                    "target_ref": {"node_index": 1},
+                    "properties": {},
+                },
+                {
+                    "type": "has_service",
+                    "source_ref": {"node_index": 1},
+                    "target_ref": {"node_index": 2},
+                    "properties": {},
+                },
+            ],
+            1,
+            2,
+            1,
+        ),
+        "has_finding": (
+            [
+                {"type": "domain", "properties": {"value": "example.com"}},
+                {"type": "finding", "properties": {"title": "Exposed admin", "severity": "high"}},
+            ],
+            [
+                {
+                    "type": "has_finding",
+                    "source_ref": {"node_index": 0},
+                    "target_ref": {"node_index": 1},
+                    "properties": {},
+                }
+            ],
+            0,
+            1,
+            0,
+        ),
+    }
+    nodes, relations, parent_index, child_index, relation_index = definitions[relation_type]
+    result = await kb.write(WriteRequest.model_validate({"nodes": nodes, "relations": relations}))
+    return (
+        result["nodes"][parent_index]["id"],
+        result["nodes"][child_index]["id"],
+        result["relations"][relation_index]["id"],
+    )
+
+
+async def finish_delete(kb, intent):
+    while True:
+        step = await kb.workers.write(lambda connection, token: GraphDeletion.step(connection, intent))
+        if step.done:
+            return
+
+
+@pytest.mark.parametrize("relation_type", ["has_open_port", "has_service", "has_finding"])
+async def test_scope_relation_rejected_while_child_exists_and_removed_with_child(tmp_path, relation_type):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        parent, child, relation = await scoped_graph(kb, relation_type)
+        with pytest.raises(ConflictError, match="child must be deleted first"):
+            await admit(kb, "relations", [relation])
+        child_intent = (await admit(kb, "nodes", [child]))[0]
+        await finish_delete(kb, child_intent)
+        assert (await kb.get(GetRequest(kind="relations", ids=[relation])))["missing_ids"] == [relation]
+        parent_intent = (await admit(kb, "nodes", [parent]))[0]
+        await finish_delete(kb, parent_intent)
+
+
+@pytest.mark.parametrize("relation_type", ["has_open_port", "has_service", "has_finding"])
+async def test_parent_node_delete_rejected_while_scoped_child_exists(tmp_path, relation_type):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        parent, _child, _relation = await scoped_graph(kb, relation_type)
+        with pytest.raises(ConflictError, match="child must be deleted first"):
+            await admit(kb, "nodes", [parent])
 
 
 async def test_atomic_missing_pending_and_dependency_admission(tmp_path):
@@ -92,7 +190,7 @@ async def test_hub_admission_and_step_do_not_expand_one_hundred_thousand_edges(t
         def hub(connection, token):
             source, target = connection.execute("select source_id,target_id from relations").get
             connection.executemany(
-                "insert into relations(uuid,source_id,type,target_id,key,properties) values (?,?, 'subdomain_of',?,?,'{}')",
+                "insert into relations(uuid,source_id,type,target_id,key,properties) values (?,?, 'has_subdomain',?,?,'{}')",
                 ((str(uuid4()), source, target, str(i)) for i in range(100000)),
             )
 
@@ -198,7 +296,7 @@ async def test_hundred_target_pending_batch_has_no_partial_admission(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "hostname", "properties": {"name": f"h{i}"}} for i in range(100)]}
+                {"nodes": [{"type": "subdomain", "properties": {"value": f"h{i}.example.com"}} for i in range(100)]}
             )
         )
         identifiers = [row["id"] for row in result["nodes"]]
