@@ -5,10 +5,12 @@
 **Input:** `kind` is `nodes` or `relations`; optional `type`; `limit` defaults to
 20 (1–100); optional cursor.
 
-**Output:** catalog entries with required property schemas, identity fields,
+**Output:** catalog entries with required property schemas,
 formats/enums/cross-field rules, and ready-only counts, plus common formats,
-`counts_deferred`, and `next_cursor`. A pending high-degree delete can defer
-counts rather than block discovery.
+`counts_deferred`, and `next_cursor`. Each entry has an `identity` object with a
+`properties` array. Parent-scoped node types also include `scope`, for example
+`{"relation":"has_open_port","endpoint":"source"}` for `port`. A pending
+high-degree delete can defer counts rather than block discovery.
 
 **Errors:** `INVALID` for a bad kind/type/page/cursor; `LIMIT` or `BUSY` for
 bounded admission. Listing types is discovery and does not replace `kb_status`.
@@ -25,11 +27,21 @@ flags, link counts, and property-index coverage.
 
 **Errors:** `INVALID` for strict catalog, merge, pointer, endpoint, or batch-rule
 failure; `NOT_FOUND` for an atomic missing reference/evidence set;
-`CONFLICT`/`RECORD_DELETING` for pending records; `BUSY`, `LIMIT`, or storage
-errors. No partial batch commits.
+`CONFLICT`/`RECORD_DELETING` for immutable or pending records; `BUSY`, `LIMIT`,
+or storage errors. No partial batch commits.
 
 `CONFLICT` also reports attempts to change an existing record's type, required
-identity fields, or relation endpoints, which are immutable.
+identity fields, or relation endpoints, which are immutable. It also reports an
+identity hash collision or inconsistent stored scope, including multiple or
+incomplete parent relations. Re-parenting a scoped child is invalid. Creating a
+new `port`, `service`, or `finding` without exactly one same-request scope
+relation is also invalid.
+
+`service.properties.name` must be a member of the bundled, versioned
+Nmap-derived service-name registry; the server does not normalize an arbitrary
+Nmap label during `kb_write`. Names whose registry entry is TLS-capable, such as
+`http`, require a strict boolean `secure` property. For other service names,
+`secure` is an optional additional property.
 
 Object patches merge recursively, arrays replace whole values, and `{}` leaves
 existing object children. Required identity cannot change. Explicit `null`
@@ -40,6 +52,11 @@ Removing `/a` while setting `{"a": {}}` conflicts because the set recreates the
 removed object. Removing `/a/x` while setting `{"a": {"y": 1}}` is valid: it
 removes one child and merges a different child. Known catalog and mutation
 errors identify the field and rule without returning submitted values.
+
+Deleting `has_open_port`, `has_service`, or `has_finding`, or deleting its
+parent node, returns `CONFLICT` while the scoped child still exists. Delete the
+child first with `cascade: true`; the cascade removes its incident scope
+relation.
 
 ## `kb_get`
 

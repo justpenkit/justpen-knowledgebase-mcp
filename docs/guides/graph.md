@@ -8,38 +8,78 @@ Call `kb_types` rather than inventing node or relation names:
 {"kind":"nodes","type":"endpoint"}
 ```
 
-The type entry describes required properties, the identity subset, formats,
-enums, limits, and a ready-only count. Additional JSON properties are allowed,
-but required fields are strictly typed and validated without coercion. The MCP
-computes the read-only key; callers never submit a key. A successful type listing
-does not prove database health, and counts can be deferred while a pending hub
-delete is too expensive to count safely.
+The type entry describes required properties, formats, enums, limits, a
+ready-only count, and an `identity` object. `identity.properties` lists the
+properties used in the identity. Parent-scoped types also expose
+`identity.scope`, which names the relation and endpoint that choose the parent.
+Additional JSON properties are allowed, but required fields are strictly typed
+and validated without coercion. The MCP computes the read-only key; callers
+never submit a key. A successful type listing does not prove database health,
+and counts can be deferred while a pending hub delete is too expensive to count
+safely.
 
 ## Attach scanner evidence to structured facts
 
 Suppose `kb_ingest_evidence` stored a scanner result and returned an
-`evidence_id`. One atomic `kb_write` can upsert the natural identities and join
-them with a same-call `node_index` reference:
+`evidence_id`. One atomic `kb_write` can create a DNS-to-service path and attach
+the evidence. The scope relations for the new port and service are part of the
+same request:
 
 ```json
 {
   "nodes": [
     {
       "type": "domain",
-      "properties": {"name": "example.com", "scanner": "subfinder"},
+      "properties": {"value": "example.com", "scanner": "subfinder"},
       "evidence_add": ["e_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
     },
     {
-      "type": "hostname",
-      "properties": {"name": "api.example.com", "status": "observed"},
+      "type": "subdomain",
+      "properties": {"value": "api.example.com", "status": "observed"},
+      "evidence_add": ["e_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    },
+    {
+      "type": "ip_address",
+      "properties": {"value": "203.0.113.10", "version": 4},
+      "evidence_add": ["e_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    },
+    {
+      "type": "port",
+      "properties": {"number": 443, "transport": "tcp"},
+      "evidence_add": ["e_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    },
+    {
+      "type": "service",
+      "properties": {"name": "http", "secure": true},
       "evidence_add": ["e_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
     }
   ],
   "relations": [
     {
-      "type": "name_in_domain",
+      "type": "has_subdomain",
+      "source_ref": {"node_index": 0},
+      "target_ref": {"node_index": 1},
+      "properties": {},
+      "evidence_add": ["e_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    },
+    {
+      "type": "resolves_to",
       "source_ref": {"node_index": 1},
-      "target_ref": {"node_index": 0},
+      "target_ref": {"node_index": 2},
+      "properties": {},
+      "evidence_add": ["e_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    },
+    {
+      "type": "has_open_port",
+      "source_ref": {"node_index": 2},
+      "target_ref": {"node_index": 3},
+      "properties": {},
+      "evidence_add": ["e_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    },
+    {
+      "type": "has_service",
+      "source_ref": {"node_index": 3},
+      "target_ref": {"node_index": 4},
       "properties": {},
       "evidence_add": ["e_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
     }
@@ -50,17 +90,31 @@ them with a same-call `node_index` reference:
 Use the real returned evidence ID; the value above only illustrates its format.
 Graph and job IDs are UUIDs, while evidence IDs are content hashes.
 
-## Shared nodes and multiple parents
+## Identity and parent scope
 
-Identity comes only from the catalog-selected required properties. Writing the
-same endpoint identity later returns its existing UUID, and separate application
-or service nodes can both relate to it. Do not copy a parent UUID or session ID
-into endpoint properties to force duplication. Use `{ "id": "..." }` for an
-existing endpoint or `{ "node_index": 2 }` for a node created in the same call.
+Unscoped identity comes from the catalog-selected identity properties. Writing
+the same endpoint identity later returns its existing UUID, and multiple graph
+records can relate to that shared node. Do not copy a parent UUID or session ID
+into unscoped properties to force duplication. Use `{ "id": "..." }` for an
+existing node or `{ "node_index": 2 }` for a node in the same call.
 
-For example, two applications can each create a `contacts` relation to one
-endpoint node. Each relation carries its own required `context` and `basis`, so
-static and dynamic observations do not overwrite shared endpoint facts.
+`port`, `service`, and `finding` are parent-scoped. Their identity includes the
+parent node UUID selected through `has_open_port`, `has_service`, or
+`has_finding`, respectively. A new scoped child must arrive with exactly one of
+its scope relations in the same `kb_write`; the complete batch is validated and
+committed atomically. An existing scoped child can be patched by ID without
+repeating its relation, but it cannot be attached to a different parent.
+
+Delete a scoped child with `cascade: true` before deleting its scope relation or
+parent node. The cascade removes the child's incident scope relation. The server
+rejects deletion of that relation or parent while the child exists, preventing
+orphan ports, services, and findings.
+
+## Catalog v1 workspaces
+
+Catalog v2 is a clean cut. A workspace created with catalog v1 is rejected at
+startup; it is not migrated or opened read-only. Create a new workspace for this
+version.
 
 ## Mutable records
 
