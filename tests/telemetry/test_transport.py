@@ -215,7 +215,7 @@ async def test_kb_payload_and_native_structural_errors_never_export_content(tmp_
     async with WireServer(tmp_path, collector, transport=transport) as server:
         written = await server.call(
             "kb_write",
-            {"nodes": [{"type": "domain", "properties": {"name": "private.example", "credential": private}}]},
+            {"nodes": [{"type": "domain", "properties": {"value": "private.example", "credential": private}}]},
             meta={"traceparent": PARENT},
         )
         assert written["result"]["structuredContent"]["status"] == "ok"

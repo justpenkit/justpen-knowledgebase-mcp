@@ -22,8 +22,9 @@ def test_schema_initialized_and_reopened(tmp_path):
     with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
         identity = None
         with closing(runtime.connect()) as connection:
-            assert connection.execute("select schema_version from settings").get == 1
+            assert connection.execute("select schema_version from settings").get == 2
             assert connection.execute("select count(*) from nodes").get == 0
+            assert "identity_scope_id" not in {row[1] for row in connection.execute("pragma table_info(nodes)")}
             identity = connection.execute("select workspace_id from settings").get
         with closing(runtime.connect()) as connection:
             assert connection.execute("select workspace_id from settings").get == identity
@@ -33,9 +34,21 @@ def test_newer_schema_is_rejected(tmp_path):
     config = ServerConfig(workspace_dir=tmp_path)
     with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
         connection = runtime.connect()
-        connection.execute("update settings set schema_version=2")
+        connection.execute("update settings set schema_version=3")
         connection.close()
         with pytest.raises(ConfigurationError):
+            runtime.connect()
+
+
+def test_v1_catalog_workspace_fails_closed(tmp_path):
+    config = ServerConfig(workspace_dir=tmp_path)
+    with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
+        with closing(runtime.connect()) as connection:
+            connection.execute(
+                "update settings set schema_version=1,catalog_version=1,catalog_fingerprint=?",
+                ("v1-catalog-fingerprint",),
+            )
+        with pytest.raises(ConfigurationError, match="database contract"):
             runtime.connect()
 
 
@@ -62,9 +75,9 @@ def test_unique_identity_and_foreign_keys(tmp_path):
     with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
         connection = runtime.connect()
         try:
-            connection.execute("insert into nodes(uuid,type,key,properties) values ('one','ip','a','{}')")
+            connection.execute("insert into nodes(uuid,type,key,properties) values ('one','ip_address','a','{}')")
             with pytest.raises(apsw.ConstraintError):
-                connection.execute("insert into nodes(uuid,type,key,properties) values ('two','ip','a','{}')")
+                connection.execute("insert into nodes(uuid,type,key,properties) values ('two','ip_address','a','{}')")
             with pytest.raises(apsw.ConstraintError):
                 connection.execute(
                     "insert into relations(uuid,source_id,type,target_id,key,properties) values ('r',1,'resolves_to',99,'','{}')"
@@ -109,7 +122,7 @@ async def test_owner_intent_constraints_and_sparse_recovery_indexes(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
 
         def verify(connection, token):
-            connection.execute("insert into nodes(uuid,type,key,properties) values ('one','ip','a','{}')")
+            connection.execute("insert into nodes(uuid,type,key,properties) values ('one','ip_address','a','{}')")
             assert connection.execute("select lifecycle from nodes").get == "ready"
             with pytest.raises(apsw.ConstraintError):
                 connection.execute("update nodes set lifecycle='delete_pending'")
@@ -140,7 +153,7 @@ async def test_pending_intent_requires_each_field_and_integer_time(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
 
         def verify(connection, token):
-            connection.execute("insert into nodes(uuid,type,key,properties) values ('one','ip','a','{}')")
+            connection.execute("insert into nodes(uuid,type,key,properties) values ('one','ip_address','a','{}')")
             for cascade, timestamp in [(None, 1), (1, None), (1, 1.5)]:
                 with pytest.raises(apsw.ConstraintError):
                     connection.execute(

@@ -26,12 +26,20 @@ def test_node_ref_exactly_one(value):
 @pytest.mark.parametrize("field", ["key", "identity", "lifecycle"])
 def test_server_fields_closed(field):
     with pytest.raises(ValidationError):
-        NodeWrite.model_validate({"type": "ip", "properties": {"address": "192.0.2.1"}, field: "x"})
+        NodeWrite.model_validate({"type": "ip_address", "properties": {"value": "192.0.2.1", "version": 4}, field: "x"})
 
 
 def test_nested_presence_and_null_survive():
     model = WriteRequest.model_validate(
-        {"nodes": [{"type": "ip", "properties": {"address": "192.0.2.1", "extra": None}, "label": None}]}
+        {
+            "nodes": [
+                {
+                    "type": "ip_address",
+                    "properties": {"value": "192.0.2.1", "version": 4, "extra": None},
+                    "label": None,
+                }
+            ]
+        }
     )
     assert "label" in model.nodes[0].model_fields_set
     assert "source" not in model.nodes[0].model_fields_set

@@ -14,6 +14,7 @@ from .helpers import EVIDENCE, NODE, OTHER, cursor, database, owner
 def test_prepare_checks_entire_batch_before_any_mutation(monkeypatch):
     lookup = Mock(side_effect=[owner(), None])
     monkeypatch.setattr(deletions, "row_by_id", lookup)
+    monkeypatch.setattr(deletions, "_reject_scope_orphan", Mock())
     db = database()
     with pytest.raises(MissingRecordsError):
         deletions.GraphDeletion.prepare(db, DeleteRequest(kind="nodes", ids=[NODE, OTHER], cascade=True), NODE)
@@ -30,6 +31,23 @@ def test_prepare_checks_entire_batch_before_any_mutation(monkeypatch):
     assert [intent.uuid for intent in intents] == [NODE, OTHER]
     assert intents[0].requested_at == intents[1].requested_at
     assert db.execute.call_count == 2
+
+
+@pytest.mark.parametrize("relation_type", ["has_open_port", "has_service", "has_finding"])
+def test_scope_relation_delete_requires_child_first(monkeypatch, relation_type):
+    child = owner(
+        id=2, type={"has_open_port": "port", "has_service": "service", "has_finding": "finding"}[relation_type]
+    )
+    monkeypatch.setattr(deletions, "row_by_id", Mock(return_value=child))
+    relation = owner(type=relation_type, target_id=2)
+    with pytest.raises(ConflictError, match="child must be deleted first"):
+        deletions._reject_scope_orphan(database(), "relations", relation)
+
+
+def test_parent_delete_requires_scoped_child_first():
+    with pytest.raises(ConflictError, match="child must be deleted first"):
+        deletions._reject_scope_orphan(database(cursor(value=3)), "nodes", owner())
+    deletions._reject_scope_orphan(database(cursor(value=None)), "nodes", owner())
 
 
 @pytest.mark.parametrize("kind", ["nodes", "relations", "evidence"])

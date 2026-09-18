@@ -22,6 +22,7 @@ from justpen_knowledgebase_mcp.errors import (
     StorageIOError,
 )
 from justpen_knowledgebase_mcp.evidence import IngestRequest
+from justpen_knowledgebase_mcp.identity import identity_key
 from justpen_knowledgebase_mcp.models import DeleteRequest, GetRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage import jobs
@@ -78,7 +79,7 @@ async def test_binary_ingest_read_dedup_sources_and_delete(kb):
 async def test_delete_atomic_admission_cancel_boundary_and_recovery(kb):
     await kb.job_runner.close()
     output = await kb.write(
-        WriteRequest.model_validate({"nodes": [{"type": "hostname", "properties": {"name": "pending"}}]})
+        WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "pending.example"}}]})
     )
     identifier = output["nodes"][0]["id"]
     job = str(uuid4())
@@ -326,7 +327,15 @@ async def test_pending_evidence_rejects_new_read_import_link_and_delete(kb, monk
     with pytest.raises(RecordConflictError, match="RECORD_DELETING"):
         await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "hostname", "properties": {"name": "blocked"}, "evidence_add": [identifier]}]}
+                {
+                    "nodes": [
+                        {
+                            "type": "domain",
+                            "properties": {"value": "blocked.example"},
+                            "evidence_add": [identifier],
+                        }
+                    ]
+                }
             )
         )
     with pytest.raises(RecordConflictError, match="RECORD_DELETING"):
@@ -353,87 +362,116 @@ async def test_bulk_barrier_allows_short_ingest_and_batched_cleanup_fairness(kb,
     large = await kb.ingest_evidence({"path": "large.bin"})
     assert large["status"] == "accepted"
     assert await asyncio.to_thread(entered.wait, 2)
-    evidence_result = await kb.ingest_evidence({"base64": "AA=="})
-    small = await kb.ingest_evidence({"path": "small.bin", "media_type": "text/plain"})
-    assert small["index_state"] == "ready"
-    assert small["state"] == "completed"
-    graph = await kb.write(
-        WriteRequest.model_validate(
-            {
-                "nodes": [
-                    {"type": "hostname", "properties": {"name": "hub"}},
-                    {"type": "hostname", "properties": {"name": "leaf"}},
-                ]
-            }
-        )
-    )
-    hub, leaf = [entry["id"] for entry in graph["nodes"]]
-
-    def populate(c, _t):
-        hub_id = c.execute("select id from nodes where uuid=?", (hub,)).get
-        leaf_id = c.execute("select id from nodes where uuid=?", (leaf,)).get
-        evidence_id = c.execute("select id from evidence where uuid=?", (evidence_result["evidence_id"],)).get
-        for index in range(250):
-            identifier = str(uuid4())
-            if kind == "nodes":
-                c.execute(
-                    "insert into relations(uuid,source_id,target_id,type,key,properties) values(?,?,?,'resolves_to',?,'{}')",
-                    (identifier, hub_id, leaf_id, str(index)),
-                )
-                owner = c.last_insert_rowid()
-                c.execute("insert into relation_evidence(relation_id,evidence_id) values(?,?)", (owner, evidence_id))
-            else:
-                c.execute(
-                    "insert into nodes(uuid,type,key,properties) values(?,'hostname',?,'{}')", (identifier, identifier)
-                )
-                c.execute(
-                    "insert into node_evidence(node_id,evidence_id) values(?,?)", (c.last_insert_rowid(), evidence_id)
-                )
-
-    await kb.workers.write(populate)
     first_step, release_step = asyncio.Event(), asyncio.Event()
-    original_delete = kb.job_runner._delete_step
-    step_count = 0
-    order = []
-    original_ingest = kb.job_runner._ingest_step
+    pending_tasks = []
+    try:
+        evidence_result = await kb.ingest_evidence({"base64": "AA=="})
+        small = await kb.ingest_evidence({"path": "small.bin", "media_type": "text/plain"})
+        assert small["index_state"] == "ready"
+        assert small["state"] == "completed"
+        async with asyncio.timeout(5):
+            graph = await kb.write(
+                WriteRequest.model_validate(
+                    {
+                        "nodes": [
+                            {"type": "domain", "properties": {"value": "hub.example"}},
+                            {"type": "domain", "properties": {"value": "leaf.example"}},
+                        ]
+                    }
+                )
+            )
+        hub, leaf = [entry["id"] for entry in graph["nodes"]]
 
-    async def ingest_step(claim):
-        order.append("ingest")
-        await original_ingest(claim)
+        def populate(c, _t):
+            hub_id = c.execute("select id from nodes where uuid=?", (hub,)).get
+            leaf_id = c.execute("select id from nodes where uuid=?", (leaf,)).get
+            evidence_id = c.execute("select id from evidence where uuid=?", (evidence_result["evidence_id"],)).get
+            for index in range(250):
+                identifier = str(uuid4())
+                if kind == "nodes":
+                    properties = {
+                        "service": "_fixture",
+                        "protocol": "_tcp",
+                        "port": index,
+                        "priority": 0,
+                        "weight": 0,
+                    }
+                    c.execute(
+                        "insert into relations(uuid,source_id,target_id,type,key,properties) "
+                        "values(?,?,?,'has_srv_target',?,?)",
+                        (
+                            identifier,
+                            hub_id,
+                            leaf_id,
+                            identity_key("relations", "has_srv_target", properties),
+                            json.dumps(properties),
+                        ),
+                    )
+                    owner = c.last_insert_rowid()
+                    c.execute(
+                        "insert into relation_evidence(relation_id,evidence_id) values(?,?)", (owner, evidence_id)
+                    )
+                else:
+                    properties = {"value": f"fixture-{index}.example"}
+                    c.execute(
+                        "insert into nodes(uuid,type,key,properties) values(?,'domain',?,?)",
+                        (identifier, identity_key("nodes", "domain", properties), json.dumps(properties)),
+                    )
+                    c.execute(
+                        "insert into node_evidence(node_id,evidence_id) values(?,?)",
+                        (c.last_insert_rowid(), evidence_id),
+                    )
 
-    monkeypatch.setattr(kb.job_runner, "_ingest_step", ingest_step)
+        async with asyncio.timeout(5):
+            await kb.workers.write(populate)
+        original_delete = kb.job_runner._delete_step
+        step_count = 0
+        order = []
+        original_ingest = kb.job_runner._ingest_step
 
-    async def delete_step(claim):
-        nonlocal step_count
-        order.append("delete")
-        await original_delete(claim)
-        step_count += 1
-        if step_count == 1:
-            first_step.set()
-            await release_step.wait()
+        async def ingest_step(claim):
+            order.append("ingest")
+            await original_ingest(claim)
 
-    monkeypatch.setattr(kb.job_runner, "_delete_step", delete_step)
-    identifier = hub if kind == "nodes" else evidence_result["evidence_id"]
-    deletion = asyncio.create_task(kb.delete(DeleteRequest(kind=kind, ids=[identifier], cascade=True)))
-    await asyncio.wait_for(first_step.wait(), 2)
-    queued = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    original_insert = jobs.JobStore.insert
+        monkeypatch.setattr(kb.job_runner, "_ingest_step", ingest_step)
 
-    def accepted(*args):
-        original_insert(*args)
-        loop.call_soon_threadsafe(queued.set)
+        async def delete_step(claim):
+            nonlocal step_count
+            order.append("delete")
+            await original_delete(claim)
+            step_count += 1
+            if step_count == 1:
+                first_step.set()
+                await release_step.wait()
 
-    monkeypatch.setattr(jobs.JobStore, "insert", staticmethod(accepted))
-    inline = asyncio.create_task(kb.ingest_evidence({"base64": "AQ=="}))
-    await asyncio.wait_for(queued.wait(), 2)
-    release_step.set()
-    assert (await asyncio.wait_for(inline, 2))["state"] == "completed"
-    assert (await asyncio.wait_for(deletion, 2))["state"] == "completed"
-    assert order[:3] == ["delete", "ingest", "delete"]
-    assert step_count >= 3
-    assert not release_bulk.is_set()
-    release_bulk.set()
+        monkeypatch.setattr(kb.job_runner, "_delete_step", delete_step)
+        identifier = hub if kind == "nodes" else evidence_result["evidence_id"]
+        deletion = asyncio.create_task(kb.delete(DeleteRequest(kind=kind, ids=[identifier], cascade=True)))
+        pending_tasks.append(deletion)
+        await asyncio.wait_for(first_step.wait(), 2)
+        queued = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        original_insert = jobs.JobStore.insert
+
+        def accepted(*args):
+            original_insert(*args)
+            loop.call_soon_threadsafe(queued.set)
+
+        monkeypatch.setattr(jobs.JobStore, "insert", staticmethod(accepted))
+        inline = asyncio.create_task(kb.ingest_evidence({"base64": "AQ=="}))
+        pending_tasks.append(inline)
+        await asyncio.wait_for(queued.wait(), 2)
+        release_step.set()
+        assert (await asyncio.wait_for(inline, 2))["state"] == "completed"
+        assert (await asyncio.wait_for(deletion, 2))["state"] == "completed"
+        assert order[:3] == ["delete", "ingest", "delete"]
+        assert step_count >= 3
+        assert not release_bulk.is_set()
+    finally:
+        release_step.set()
+        release_bulk.set()
+        async with asyncio.timeout(2):
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
     assert (await kb.job_runner.wait(large["job_id"], time.monotonic() + 3))["state"] == "completed"
 
 
@@ -601,7 +639,7 @@ async def test_failed_delete_retains_intent_requires_attention_and_retries(kb, m
 
 async def test_delete_request_cancel_before_admission_commit_rolls_back_every_owner(kb, monkeypatch):
     output = await kb.write(
-        WriteRequest.model_validate({"nodes": [{"type": "hostname", "properties": {"name": "atomic"}}]})
+        WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "atomic.example"}}]})
     )
     identifier = output["nodes"][0]["id"]
     entered, release = threading.Event(), threading.Event()

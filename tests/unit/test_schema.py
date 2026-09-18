@@ -42,6 +42,13 @@ def test_guard_rejects_every_contract_dimension(field):
         value.check(database(cursor(rows=[(0, "blob_sha256")]), cursor(value=tuple(mismatch))))
 
 
+def test_guard_rejects_v1_catalog_contract():
+    value = guard()
+    v1 = (1, 1, "v1-catalog-fingerprint", schema.INDEX_FORMAT_VERSION, value.paths)
+    with pytest.raises(ConfigurationError, match="database contract"):
+        value.check(database(cursor(rows=[(0, "blob_sha256")]), cursor(value=v1)))
+
+
 @pytest.mark.parametrize("raw", ["{}", "[]", "null", "invalid", '{"wal_low_bytes":true}'])
 def test_policy_requires_complete_strict_persisted_schema(raw):
     with pytest.raises(ConfigurationError):

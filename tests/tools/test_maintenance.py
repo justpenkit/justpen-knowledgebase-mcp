@@ -29,7 +29,7 @@ async def test_status_reports_effective_http_hosts(tmp_path):
 async def test_status_is_sql_free_and_keeps_stale_snapshot(kb, monkeypatch):
     first = await kb.status()
     assert first["database"]["available"] is True
-    assert first["database"]["sample"]["schema_version"] == 1
+    assert first["database"]["sample"]["schema_version"] == 2
     assert first["database"]["sample"]["index_coverage"]["ready"] == 0
 
     async def unavailable(*_args, **_kwargs):
@@ -110,8 +110,8 @@ async def test_status_samples_aggregate_coverage_and_property_fallback(kb):
         {
             "nodes": [
                 {
-                    "type": "hostname",
-                    "properties": {"name": "wide.example", **{f"key{index}": index for index in range(600)}},
+                    "type": "domain",
+                    "properties": {"value": "wide.example", **{f"key{index}": index for index in range(600)}},
                 }
             ]
         }

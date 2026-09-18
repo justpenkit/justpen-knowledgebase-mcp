@@ -6,12 +6,14 @@ import json
 import os
 import stat
 from unittest.mock import Mock
+from uuid import uuid4
 
 import apsw
 import pytest
 
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import LimitError
+from justpen_knowledgebase_mcp.identity import identity_key
 from justpen_knowledgebase_mcp.models import NeighborsRequest, SearchRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.evidence_records import EvidenceRecords
@@ -88,7 +90,11 @@ async def test_traversal_streams_each_selective_adjacency_once(tmp_path):
             WriteRequest.model_validate(
                 {
                     "nodes": [
-                        {"type": "domain", "properties": {"name": ("example" if i == 0 else f"h{i}.example")}}
+                        (
+                            {"type": "domain", "properties": {"value": "example.com"}}
+                            if i == 0
+                            else {"type": "subdomain", "properties": {"value": f"h{i}.example.com"}}
+                        )
                         for i in range(11)
                     ]
                 }
@@ -100,9 +106,9 @@ async def test_traversal_streams_each_selective_adjacency_once(tmp_path):
                 {
                     "relations": [
                         {
-                            "type": "subdomain_of",
-                            "source_ref": {"id": identifier},
-                            "target_ref": {"id": ids[0]},
+                            "type": "has_subdomain",
+                            "source_ref": {"id": ids[0]},
+                            "target_ref": {"id": identifier},
                             "properties": {},
                         }
                         for identifier in ids[1:]
@@ -123,7 +129,7 @@ async def test_traversal_streams_each_selective_adjacency_once(tmp_path):
             connection.set_exec_trace(trace)
             try:
                 request = NeighborsRequest(
-                    seed_ids=[ids[0]], relation_types=["subdomain_of", "aliases", "resolves_to"] * 2
+                    seed_ids=[ids[0]], relation_types=["has_subdomain", "cname_to", "resolves_to"] * 2
                 )
                 result = neighbors(connection, token, request)
             finally:
@@ -146,14 +152,24 @@ async def test_status_fallback_uses_sparse_indexes(tmp_path):
         def prepare(connection, _token):
             for index in range(50):
                 metadata = json.dumps({"property_index": {"complete": index >= 2}})
+                type_name = "domain" if index == 0 else "subdomain"
+                properties = {
+                    "value": "root.example" if index == 0 else f"n{index}.root.example",
+                }
                 connection.execute(
-                    "INSERT INTO nodes(uuid,type,key,properties,metadata) VALUES(?,'domain',?,'{}',?)",
-                    (str(index), str(index), metadata),
+                    "INSERT INTO nodes(uuid,type,key,properties,metadata) VALUES(?,?,?,?,?)",
+                    (
+                        str(uuid4()),
+                        type_name,
+                        identity_key("nodes", type_name, properties),
+                        json.dumps(properties),
+                        metadata,
+                    ),
                 )
                 if index:
                     connection.execute(
-                        "INSERT INTO relations(uuid,type,key,source_id,target_id,properties,metadata) VALUES(?,'subdomain_of',?,1,?,'{}',?)",
-                        (str(index), str(index), index + 1, metadata),
+                        "INSERT INTO relations(uuid,type,key,source_id,target_id,properties,metadata) VALUES(?,'has_subdomain',?,1,?,'{}',?)",
+                        (str(uuid4()), identity_key("relations", "has_subdomain", {}), index + 1, metadata),
                     )
 
         await kb.workers.write(prepare)
@@ -281,7 +297,11 @@ async def test_dbstat_stream_selects_one_object_and_checks_each_page(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
 
         def prepare(connection, _token):
-            connection.execute("INSERT INTO nodes(uuid,type,key,properties) VALUES('fixture','domain','fixture','{}')")
+            properties = {"value": "fixture.example"}
+            connection.execute(
+                "INSERT INTO nodes(uuid,type,key,properties) VALUES(?,'domain',?,?)",
+                (str(uuid4()), identity_key("nodes", "domain", properties), json.dumps(properties)),
+            )
             connection.execute("INSERT INTO search_documents(node_id,text) VALUES(1,?)", ("bounded " * 20000,))
 
         await kb.workers.write(prepare)

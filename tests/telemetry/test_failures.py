@@ -79,7 +79,14 @@ async def test_unreachable_collector_does_not_fail_http_or_delay_exit(tmp_path, 
     ) as server:
         response = await server.call(
             "kb_write",
-            {"nodes": [{"type": "domain", "properties": {"name": "durable.example", "credential": "sentinel-secret"}}]},
+            {
+                "nodes": [
+                    {
+                        "type": "domain",
+                        "properties": {"value": "durable.example", "credential": "sentinel-secret"},
+                    }
+                ]
+            },
         )
         assert response["result"]["structuredContent"]["status"] == "ok"
         identifier = response["result"]["structuredContent"]["data"]["nodes"][0]["id"]

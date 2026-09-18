@@ -80,7 +80,7 @@ def test_relevance_best_bounded_results_and_unverified_candidate(monkeypatch):
 def test_builtin_filters_parameterize_all_user_values():
     request = SearchRequest(
         kind="relations",
-        type="subdomain_of",
+        type="has_subdomain",
         key="unsafe'",
         source="unsafe'",
         source_id=NODE,
@@ -133,15 +133,15 @@ def test_words_candidate_expressions_are_bound_for_each_match_unit(kind, include
 )
 def test_adjacency_returns_lowest_id_across_direction_and_types(direction, outgoing, incoming, expected):
     def row(identifier):
-        return None if identifier is None else (identifier, OTHER, "subdomain_of", 1, 2)
+        return None if identifier is None else (identifier, OTHER, "has_subdomain", 1, 2)
 
     values = [outgoing, incoming] if direction == "both" else [outgoing if direction == "out" else incoming]
     db = database(*(cursor(rows=[] if identifier is None else [row(identifier)]) for identifier in values))
-    request = NeighborsRequest(seed_ids=[NODE], relation_types=["subdomain_of"], direction=direction)
+    request = NeighborsRequest(seed_ids=[NODE], relation_types=["has_subdomain"], direction=direction)
     edge = next(traversal._edges(db, 1, request), None)
     assert (edge[0] if edge else None) == expected
     assert db.execute.call_count == len(values)
-    assert db.execute.call_args.args[1] == (1, 0, "subdomain_of")
+    assert db.execute.call_args.args[1] == (1, 0, "has_subdomain")
 
 
 @pytest.mark.parametrize(("max_nodes", "max_edges", "reason"), [(1, 5, "max_nodes"), (5, 1, "max_edges"), (5, 5, None)])
@@ -153,8 +153,8 @@ def test_traversal_cycles_limits_and_frontier(monkeypatch, max_nodes, max_edges,
         "_edges",
         Mock(
             side_effect=[
-                (edge for edge in [(1, NODE, "subdomain_of", 1, 2), (2, OTHER, "subdomain_of", 2, 1)]),
-                (edge for edge in [(1, NODE, "subdomain_of", 1, 2)]),
+                (edge for edge in [(1, NODE, "has_subdomain", 1, 2), (2, OTHER, "has_subdomain", 2, 1)]),
+                (edge for edge in [(1, NODE, "has_subdomain", 1, 2)]),
             ]
         ),
     )

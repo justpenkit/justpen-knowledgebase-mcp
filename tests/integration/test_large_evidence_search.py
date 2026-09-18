@@ -28,7 +28,7 @@ async def test_words_common_first_rare_second_narrows_verified_candidates(tmp_pa
                         {
                             "type": "domain",
                             "properties": {
-                                "name": f"item-{index}.example",
+                                "value": f"item-{index}.example",
                                 "body": "common obscureneedle" if index == 79 else "common ordinary",
                             },
                         }
@@ -60,18 +60,21 @@ async def test_words_search_keeps_record_and_evidence_match_units(tmp_path, monk
             WriteRequest.model_validate(
                 {
                     "nodes": [
-                        {"type": "domain", "properties": {"name": "direct.example", "body": "common obscureneedle"}},
+                        {
+                            "type": "domain",
+                            "properties": {"value": "direct.example", "body": "common obscureneedle"},
+                        },
                         {
                             "type": "domain",
                             "properties": {
-                                "name": "leaves.example",
+                                "value": "leaves.example",
                                 "first": "common",
                                 "second": "obscureneedle",
                                 "status": 403,
                             },
                         },
-                        {"type": "domain", "properties": {"name": "separate.example"}},
-                        {"type": "domain", "properties": {"name": "linked.example", "status": 403}},
+                        {"type": "domain", "properties": {"value": "separate.example"}},
+                        {"type": "domain", "properties": {"value": "linked.example", "status": 403}},
                     ]
                 }
             )
@@ -225,8 +228,8 @@ async def test_chunk_boundary_graph_filter_and_words_units(tmp_path):
                 WriteRequest.model_validate(
                     {
                         "nodes": [
-                            {"type": "domain", "properties": {"name": "a.example", "status": 403, "a": "access"}},
-                            {"type": "domain", "properties": {"name": "b.example", "status": 200}},
+                            {"type": "domain", "properties": {"value": "a.example", "status": 403, "a": "access"}},
+                            {"type": "domain", "properties": {"value": "b.example", "status": 200}},
                         ]
                     }
                 )
@@ -305,7 +308,14 @@ async def test_words_snippet_detects_omitted_other_leaf(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "domain", "properties": {"name": "a.example", "a": "omega " * 32, "b": "alpha"}}]}
+                {
+                    "nodes": [
+                        {
+                            "type": "domain",
+                            "properties": {"value": "a.example", "a": "omega " * 32, "b": "alpha"},
+                        }
+                    ]
+                }
             )
         )
         item = (await kb.search(SearchRequest(kind="nodes", query="omega alpha", query_mode="words")))["items"][0]

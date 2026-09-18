@@ -77,6 +77,16 @@ def _reject_dependency(connection: apsw.Connection, kind: str, row: dict[str, An
     raise RecordConflictError("DEPENDENCIES_EXIST", BlockerDetails.model_validate(details))
 
 
+def _reject_scope_orphan(connection: apsw.Connection, kind: str, row: dict[str, Any]) -> None:
+    """Keep every scoped child attached until deletion of the child removes its edge."""
+    if kind == "relations":
+        if row["type"] in sql.SCOPE_RELATION_TYPES and row_by_id(connection, "nodes", row["target_id"]) is not None:
+            raise ConflictError("scoped child must be deleted first")
+        return
+    if kind == "nodes" and connection.execute(sql.SCOPED_CHILD_BY_PARENT, (row["id"],)).get is not None:
+        raise ConflictError("scoped child must be deleted first")
+
+
 def _delete_children(connection: apsw.Connection, kind: str, owner_id: int, budget: int) -> int:
     tables = (
         [("node_evidence", "node_id"), ("node_property_index", "owner_id"), ("search_documents", "node_id")]
@@ -98,7 +108,7 @@ def _delete_children(connection: apsw.Connection, kind: str, owner_id: int, budg
     for table, column in tables:
         if deleted >= budget:
             break
-        # Property tables have a compound PK; rowid remains available in v1.
+        # Property tables have a compound PK; rowid remains available in v2.
         connection.execute(
             sql.CHILD_DELETE[table, column],
             (owner_id, budget - deleted),
@@ -146,6 +156,24 @@ def _delete_incident(connection: apsw.Connection, owner_id: int, row_budget: int
     return deleted
 
 
+def _validated_delete_rows(connection: apsw.Connection, request: DeleteRequest) -> list[dict[str, Any]]:
+    """Resolve and validate every deletion target before any intent is stored."""
+    rows = [row_by_id(connection, request.kind, identifier) for identifier in request.ids]
+    missing = [identifier for identifier, row in zip(request.ids, rows, strict=True) if row is None]
+    if missing:
+        raise MissingRecordsError(MissingDetails.model_validate({"missing_ids": missing}))
+    validated: list[dict[str, Any]] = []
+    for row in rows:
+        if row is None:
+            raise ConflictError("owner disappeared")
+        require_ready(connection, request.kind, row)
+        _reject_scope_orphan(connection, request.kind, row)
+        if not request.cascade:
+            _reject_dependency(connection, request.kind, row)
+        validated.append(row)
+    return validated
+
+
 class GraphDeletion:
     """Primitives require the caller's existing guarded BEGIN IMMEDIATE snapshot."""
 
@@ -154,24 +182,10 @@ class GraphDeletion:
         """Validate the entire batch before persisting immutable owner intents."""
         if len(set(request.ids)) != len(request.ids):
             raise InvalidParamsError("duplicate delete ids")
-        rows = [row_by_id(connection, request.kind, identifier) for identifier in request.ids]
-        missing = [identifier for identifier, row in zip(request.ids, rows, strict=True) if row is None]
-        if missing:
-            raise MissingRecordsError(MissingDetails.model_validate({"missing_ids": missing}))
-        for row in rows:
-            if row is None:
-                raise ConflictError("owner disappeared")
-            require_ready(connection, request.kind, row)
-        if not request.cascade:
-            for row in rows:
-                if row is None:
-                    raise ConflictError("owner disappeared")
-                _reject_dependency(connection, request.kind, row)
+        rows = _validated_delete_rows(connection, request)
         requested_at = time.time_ns() // 1000
         intents: list[DeleteIntent] = []
         for row in rows:
-            if row is None:
-                raise ConflictError("owner disappeared")
             connection.execute(
                 sql.OWNER_PENDING[request.kind],
                 (job_id, int(request.cascade), requested_at, row["id"]),
