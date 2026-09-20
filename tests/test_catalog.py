@@ -15,6 +15,7 @@ from justpen_knowledgebase_mcp.catalog import (
     validate_record,
 )
 from justpen_knowledgebase_mcp.errors import ExpectedValidationError
+from justpen_knowledgebase_mcp.identity import identity_key
 
 CPE_NGINX = "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*"
 
@@ -88,7 +89,7 @@ def test_manifest_has_only_catalog_v2_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 2
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "39a27a4bbc7a1b9f32c142d2f8e55d6d36efd5f98ff994601de0c2618fdef675"
+    assert CATALOG_FINGERPRINT == "f3c8017d5f0e482f48b0298dedc51879d48aa375f37569b2e69d90de47b01fa0"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -169,6 +170,7 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("finding", {"title": "x" * 200, "severity": "critical"}),
         ("certificate", {"der_sha256": "a" * 64}),
         ("endpoint", {"url": "https://api.example.com/a%2Fb?q=X", "method": "PROPFIND"}),
+        ("endpoint", {"url": "https://example.com/?", "method": "GET"}),
         ("endpoint", {"url": "https://[2001:db8::1]:8443/", "method": "GET"}),
         ("endpoint", {"url": "http://x/", "method": "M" * 32}),
         ("cve", {"value": "CVE-2026-1234"}),
@@ -268,7 +270,6 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("endpoint", {"url": "https://example.com:443/", "method": "GET"}),
         ("endpoint", {"url": "https://example.com", "method": "GET"}),
         ("endpoint", {"url": "https://example.com/%2f", "method": "GET"}),
-        ("endpoint", {"url": "https://example.com/?", "method": "GET"}),
         ("endpoint", {"url": "https://user@example.com/", "method": "GET"}),
         ("endpoint", {"url": "https://example.com/#a", "method": "GET"}),
         ("endpoint", {"url": "https://example.com/../a", "method": "GET"}),
@@ -339,6 +340,32 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
 )
 def test_invalid_node_types_bounds_and_noncanonical_spellings(type_name: str, properties: dict[str, object]) -> None:
     _invalid("nodes", type_name, properties)
+
+
+def test_endpoint_url_drops_its_query_string_before_identity_and_storage() -> None:
+    """One path is one endpoint: parameter values must not mint a node each."""
+    keys = set()
+    for url in (
+        "https://api.example.com/search?q=1",
+        "https://api.example.com/search?q=2&page=3",
+        "https://api.example.com/search",
+    ):
+        properties: dict[str, object] = {"url": url, "method": "GET"}
+        keys.add(identity_key("nodes", "endpoint", properties))
+        assert properties["url"] == "https://api.example.com/search"
+    assert len(keys) == 1
+    trailing: dict[str, object] = {"url": "https://api.example.com/?", "method": "GET"}
+    validate_record("nodes", "endpoint", trailing)
+    assert trailing["url"] == "https://api.example.com/"
+
+
+def test_canonicalization_leaves_every_other_type_and_property_untouched() -> None:
+    properties: dict[str, object] = {"url": "https://api.example.com/a?b=1", "method": "GET", "title": "Search?x"}
+    validate_record("nodes", "endpoint", properties)
+    assert properties["title"] == "Search?x"
+    untouched: dict[str, object] = {"value": "google-site-verification=a?b"}
+    validate_record("nodes", "txt_record", untouched)
+    assert untouched["value"] == "google-site-verification=a?b"
 
 
 def test_extras_survive_and_properties_size_bound_is_retained() -> None:

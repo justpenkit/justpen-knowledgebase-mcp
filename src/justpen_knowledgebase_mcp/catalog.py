@@ -63,7 +63,9 @@ _FORMATS = {
     "dns_or_explicit_empty": "dns_name or the explicit empty string for no SNI offer; IP literals are rejected.",
     "http_url": (
         "Canonical absolute ASCII http/https URL with lowercase host, mandatory path, no userinfo, fragment, "
-        "whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase percent escape."
+        "whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase percent escape. "
+        "A submitted query string is validated and then removed before identity and storage, so one endpoint "
+        "holds one path; parameter names belong to parameter nodes."
     ),
     "ip": "Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.",
     "ip_version": "A strict JSON integer equal to 4 or 6.",
@@ -327,8 +329,23 @@ def catalog_manifest() -> dict[str, Any]:
     return cast("dict[str, Any]", json.loads(CATALOG_JSON))
 
 
+def canonicalize_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
+    """Rewrite the declared non-canonical spellings in place before identity and storage.
+
+    Only `endpoint.url` is rewritten: its query string is dropped so one path is one node rather
+    than one node per observed parameter value. Parameter names live on `parameter` nodes. This is
+    value canonicalization, not the JSON type coercion `_COMMON["coercion"]` refuses.
+    """
+    if kind != "nodes" or type_name != "endpoint":
+        return
+    url = properties.get("url")
+    if type(url) is str and "?" in url:
+        properties["url"] = url.split("?", 1)[0]
+
+
 def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
-    """Enforce catalog-required properties and cross-field rules without coercion."""
+    """Canonicalize declared spellings, then enforce required properties and cross-field rules."""
+    canonicalize_record(kind, type_name, properties)
     validate_properties(properties)
     manifest = catalog_manifest()
     if kind not in ("nodes", "relations"):

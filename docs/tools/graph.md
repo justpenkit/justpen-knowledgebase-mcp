@@ -83,10 +83,17 @@ Record it as a `txt_record` and report the defect as a `finding`. Never write ep
 issuance rotates the nonce, so recording them accumulates one node per renewal
 with no supersession.
 
-Attach a `parameter` to a canonical base endpoint — query string stripped or
-normalized — not to each crawled URL variant. `endpoint` identity includes the
-query string, so unscoped attachment mints one `id` parameter node per observed
-URL instead of one per real parameter.
+A submitted `endpoint` URL may carry a query string, but the server validates
+it and then removes it: `https://example.com/search?q=1` is stored as
+`https://example.com/search`, and identity is computed from the stored
+spelling. A crawler that observes `?q=1` and `?q=2` therefore writes one
+endpoint, not one per value. Record the parameter names themselves as
+`parameter` nodes attached with `has_parameter`; a value seen during a scan is
+sample data and belongs in evidence or an attribute, not in an identity.
+
+This is the one place the server rewrites a submitted value. Everything else is
+stored as submitted or rejected, and `coercion` stays false: no JSON type is
+converted, only this declared spelling is canonicalized.
 
 No required map references the `cpe23_or_empty` rule, so a stored `cpe` is
 never validated against it. Produce the spelling the rule describes and
