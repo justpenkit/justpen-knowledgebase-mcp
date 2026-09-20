@@ -16,6 +16,8 @@ from justpen_knowledgebase_mcp.catalog import (
 )
 from justpen_knowledgebase_mcp.errors import ExpectedValidationError
 
+CPE_NGINX = "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*"
+
 NODE_TYPES = {
     "domain",
     "subdomain",
@@ -29,6 +31,10 @@ NODE_TYPES = {
     "certificate",
     "endpoint",
     "cve",
+    "technology",
+    "dmarc_record",
+    "txt_record",
+    "tls_cipher_suite",
 }
 RELATION_TYPES = {
     "resolves_to",
@@ -53,6 +59,12 @@ RELATION_TYPES = {
     "serves_endpoint",
     "redirects_to",
     "affected_by",
+    "runs_technology",
+    "protected_by",
+    "has_dmarc",
+    "has_txt_record",
+    "supports_tls_cipher",
+    "covers_name",
 }
 
 
@@ -72,7 +84,7 @@ def test_manifest_has_only_catalog_v2_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 2
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "fead1c3aff620643fd88e197a768a52fbadf3bfff91f6916f283a86eaab8d30c"
+    assert CATALOG_FINGERPRINT == "6b22ba316c6605f1052cde19284b8d8fd513df69aa5d99ff87315f2f20dbcd51"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,6 +169,23 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("endpoint", {"url": "http://x/", "method": "M" * 32}),
         ("cve", {"value": "CVE-2026-1234"}),
         ("cve", {"value": "CVE-1999-1234567"}),
+        ("technology", {"name": "nginx"}),
+        ("technology", {"name": "a"}),
+        ("technology", {"name": "a" * 63}),
+        ("technology", {"name": "php_7.4+x", "cpe": CPE_NGINX, "categories": ["web-server"]}),
+        ("dmarc_record", {"value": "v=DMARC1"}),
+        ("dmarc_record", {"value": "v=DMARC1; p=reject; rua=mailto:dmarc@example.com"}),
+        ("dmarc_record", {"value": "v=DMARC1 p=none"}),
+        ("dmarc_record", {"value": "v=DMARC1;" + "x" * 4087}),
+        ("txt_record", {"value": "google-site-verification=abc"}),
+        ("txt_record", {"value": "x"}),
+        ("txt_record", {"value": "x" * 4096}),
+        ("txt_record", {"value": "V=SPF1 -all"}),
+        ("txt_record", {"value": "V=DMARC1; p=none"}),
+        ("tls_cipher_suite", {"version": "tls13", "name": "TLS_AES_128_GCM_SHA256"}),
+        ("tls_cipher_suite", {"version": "tls12", "name": "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"}),
+        ("tls_cipher_suite", {"version": "ssl30", "name": "TLS_RSA_WITH_3DES_EDE_CBC_SHA"}),
+        ("tls_cipher_suite", {"version": "dtls13", "name": "TLS_NULL_WITH_NULL_NULL"}),
     ],
 )
 def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, object]) -> None:
@@ -240,6 +269,40 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("cve", {"value": "CVE-26-1234"}),
         ("cve", {"value": "CVE-2026-123"}),
         ("cve", {"value": 20261234}),
+        ("technology", {"name": "Nginx"}),
+        ("technology", {"name": "NGINX"}),
+        ("technology", {"name": ""}),
+        ("technology", {"name": "-nginx"}),
+        ("technology", {"name": "nginx-"}),
+        ("technology", {"name": "a" * 64}),
+        ("technology", {"name": "ngin x"}),
+        ("technology", {"name": 1}),
+        ("dmarc_record", {"value": "v=DMARC10"}),
+        ("dmarc_record", {"value": "V=DMARC1; p=none"}),
+        ("dmarc_record", {"value": "v=dmarc1; p=none"}),
+        ("dmarc_record", {"value": " v=DMARC1"}),
+        ("dmarc_record", {"value": "v=DMARC1;\tp=none"}),
+        ("dmarc_record", {"value": "v=DMARC1; p=none é"}),
+        ("dmarc_record", {"value": "v=DMARC1;" + "x" * 4088}),
+        ("dmarc_record", {"value": ""}),
+        ("dmarc_record", {"value": 1}),
+        ("txt_record", {"value": ""}),
+        ("txt_record", {"value": "x" * 4097}),
+        ("txt_record", {"value": "line\nbreak"}),
+        ("txt_record", {"value": "café"}),
+        ("txt_record", {"value": 1}),
+        ("txt_record", {"value": "v=spf1 -all"}),
+        ("txt_record", {"value": "v=DMARC1; p=none"}),
+        ("txt_record", {"value": "v=DKIM1; k=rsa; p=MIGf"}),
+        ("tls_cipher_suite", {"version": "ssl20", "name": "TLS_RSA_WITH_3DES_EDE_CBC_SHA"}),
+        ("tls_cipher_suite", {"version": "TLS13", "name": "TLS_AES_128_GCM_SHA256"}),
+        ("tls_cipher_suite", {"version": "tls12", "name": "ECDHE-RSA-AES128-GCM-SHA256"}),
+        ("tls_cipher_suite", {"version": "tls12", "name": "SSL_CK_RC4_128_WITH_MD5"}),
+        ("tls_cipher_suite", {"version": "tls13", "name": "tls_aes_128_gcm_sha256"}),
+        ("tls_cipher_suite", {"version": "tls13", "name": "TLS_"}),
+        ("tls_cipher_suite", {"version": "tls13", "name": "TLS_AES__128_GCM_SHA256"}),
+        ("tls_cipher_suite", {"version": "tls13", "name": "TLS_A" + "_A" * 100}),
+        ("tls_cipher_suite", {"version": "tls13", "name": 1}),
     ],
 )
 def test_invalid_node_types_bounds_and_noncanonical_spellings(type_name: str, properties: dict[str, object]) -> None:
@@ -279,13 +342,19 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "has_open_port": (["ip_address"], ["port"]),
         "has_service": (["port"], ["service"]),
         "has_finding": (
-            ["port", "domain", "subdomain", "ip_address", "ip_cidr", "service", "endpoint"],
+            ["port", "domain", "subdomain", "ip_address", "ip_cidr", "service", "endpoint", "certificate"],
             ["finding"],
         ),
         "presents_certificate": (["service"], ["certificate"]),
         "serves_endpoint": (["service"], ["endpoint"]),
         "redirects_to": (["endpoint"], ["endpoint"]),
         "affected_by": (["service", "finding"], ["cve"]),
+        "runs_technology": (["service", "endpoint"], ["technology"]),
+        "protected_by": (["service", "endpoint"], ["technology"]),
+        "has_dmarc": (d, ["dmarc_record"]),
+        "has_txt_record": (d, ["txt_record"]),
+        "supports_tls_cipher": (["service"], ["tls_cipher_suite"]),
+        "covers_name": (["certificate"], d),
     }
     relations = catalog_manifest()["relations"]
 
@@ -329,6 +398,14 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         ("redirects_to", {"status": 301}),
         ("redirects_to", {"status": 308}),
         ("affected_by", {}),
+        ("runs_technology", {}),
+        ("runs_technology", {"version": "1.18.0", "cpe": CPE_NGINX}),
+        ("protected_by", {"kind": "waf"}),
+        ("protected_by", {"kind": "load_balancer"}),
+        ("has_dmarc", {}),
+        ("has_txt_record", {}),
+        ("supports_tls_cipher", {"preferred": True, "curve": "x25519"}),
+        ("covers_name", {}),
     ],
 )
 def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[str, object]) -> None:
@@ -378,10 +455,59 @@ def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[s
         ("redirects_to", {"status": 300}),
         ("redirects_to", {"status": True}),
         ("redirects_to", {"status": "301"}),
+        ("protected_by", {}),
+        ("protected_by", {"kind": "WAF"}),
+        ("protected_by", {"kind": "ids"}),
+        ("protected_by", {"kind": 1}),
     ],
 )
 def test_invalid_relation_types_bounds_and_grammars(type_name: str, properties: dict[str, object]) -> None:
     _invalid("relations", type_name, properties)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        CPE_NGINX,
+        "cpe:2.3:a:apache:http_server:2.4.41:*:*:*:*:*:*:*",
+        "cpe:2.3:a:vendor:product:8.???:*:*:*:*:*:*:*",
+        "cpe:2.3:a:vendor:pro\\:duct:*:*:*:*:*:*:*:*",
+        "cpe:2.3:o:-:-:-:-:-:-:-:-:-:-",
+    ],
+)
+def test_cpe23_rule_accepts_the_formatted_string_binding(value: str) -> None:
+    assert catalog_module._valid_field(value, "cpe23_or_empty")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "cpe:/a:apache:http_server:2.4.41",
+        "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*",
+        "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*:*",
+        "cpe:2.3:x:f5:nginx:1.18.0:*:*:*:*:*:*:*",
+        "CPE:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*",
+        "cpe:2.3:a:f5:NGINX:1.18.0:*:*:*:*:*:*:*",
+        "cpe:2.3:a:f5:" + "n" * 512 + ":*:*:*:*:*:*:*:*",
+    ],
+)
+def test_cpe23_rule_rejects_legacy_uri_and_malformed_bindings(value: str) -> None:
+    assert not catalog_module._valid_field(value, "cpe23_or_empty")
+
+
+def test_cpe23_rule_is_published_without_a_consuming_required_map() -> None:
+    manifest = catalog_manifest()
+    referenced = {
+        rule
+        for kind in ("nodes", "relations")
+        for definition in manifest[kind].values()
+        for rule in definition["required"].values()
+        if isinstance(rule, str)
+    }
+
+    assert "cpe23_or_empty" in manifest["formats"]
+    assert "cpe23_or_empty" not in referenced
 
 
 def test_caa_and_alpn_identity_declarations_are_order_independent() -> None:
@@ -425,6 +551,9 @@ def test_discovery_schema_exposes_json_types_identity_and_limits() -> None:
     assert certificate_schema["properties"]["alpn_offered"]["type"] == "array"
     assert port_schema["x-maxUtf8Bytes"] == 65536
     assert port_schema["x-maxDepth"] == 16
+    technology_schema = catalog_schema("nodes", "technology")
+    assert technology_schema["properties"]["name"] == {"type": "string", "format": "tech_token"}
+    assert technology_schema["x-identity"] == {"properties": ["name"]}
 
 
 def test_catalog_returns_isolated_manifest_and_rejects_unknown_types() -> None:

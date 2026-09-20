@@ -39,7 +39,16 @@ _FORMATS = {
         "hyphen. Values are empty or use ASCII 0x21-0x3A and 0x3C-0x7E."
     ),
     "cidr": "Canonical strict IPv4 or IPv6 network with an explicit prefix length.",
+    "cpe23_or_empty": (
+        "The empty string, or a lowercase CPE 2.3 formatted string (NIST IR 7695): 'cpe:2.3:' followed by the "
+        "part and ten colon-separated components, each '*', '-', or an escaped attribute value optionally "
+        "anchored by '*' or a run of '?', at most 512 characters. The legacy 'cpe:/' URI binding is rejected."
+    ),
     "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
+    "dmarc": (
+        "Printable ASCII of at most 4096 characters beginning with 'v=DMARC1' followed by a semicolon, a normal "
+        "space, or end of text."
+    ),
     "dns_name": (
         "A lowercase ASCII domain or subdomain spelling classified by the bundled ICANN PSL; at least two labels, "
         "labels at most 63 bytes, total at most 253 bytes, and no trailing dot."
@@ -58,6 +67,17 @@ _FORMATS = {
     "sha256": "Exactly 64 lowercase ASCII hexadecimal characters.",
     "spf": "Printable ASCII beginning with `v=spf1` followed by a normal space or end of text.",
     "srv_label": "A 2-63 byte lowercase ASCII SRV label beginning with underscore.",
+    "tech_token": (
+        "A 1-63 character lowercase ASCII technology slug that starts and ends alphanumeric and may contain "
+        "interior dot, underscore, plus, or hyphen."
+    ),
+    "tls_cipher_name": (
+        "An IANA TLS cipher suite name: 5 to 128 uppercase ASCII characters beginning 'TLS_', with "
+        "underscore-separated alphanumeric components."
+    ),
+    "txt_value": (
+        "1 to 4096 printable ASCII characters, the concatenated and unquoted character-strings of one TXT RRset."
+    ),
     "uint8": "A strict JSON integer from 0 through 255.",
     "uint16": "A strict JSON integer from 0 through 65535.",
 }
@@ -118,6 +138,7 @@ _NODES = {
         "required": {"der_sha256": "sha256"},
     },
     "cve": {"identity": _identity(["value"]), "required": {"value": "cve"}},
+    "dmarc_record": {"identity": _identity(["value"]), "required": {"value": "dmarc"}},
     "domain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}},
     "endpoint": {
         "identity": _identity(["url", "method"]),
@@ -148,6 +169,18 @@ _NODES = {
     },
     "spf_record": {"identity": _identity(["value"]), "required": {"value": "spf"}},
     "subdomain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}},
+    "technology": {
+        "identity": _identity(["name"]),
+        "required": {"name": "tech_token"},
+    },
+    "tls_cipher_suite": {
+        "identity": _identity(["version", "name"]),
+        "required": {
+            "version": ["ssl30", "tls10", "tls11", "tls12", "tls13", "dtls10", "dtls12", "dtls13"],
+            "name": "tls_cipher_name",
+        },
+    },
+    "txt_record": {"identity": _identity(["value"]), "required": {"value": "txt_value"}},
 }
 
 _D = ["domain", "subdomain"]
@@ -171,9 +204,11 @@ _RELATIONS = {
     "cname_to": _relation(_D, _D, self_edge=True),
     "contains_cidr": _relation(["ip_cidr"], ["ip_cidr"]),
     "contains_ip": _relation(["ip_cidr"], ["ip_address"]),
+    "covers_name": _relation(["certificate"], _D),
     "dname_to": _relation(_D, _D, self_edge=True),
+    "has_dmarc": _relation(_D, ["dmarc_record"]),
     "has_finding": _relation(
-        ["port", "domain", "subdomain", "ip_address", "ip_cidr", "service", "endpoint"],
+        ["port", "domain", "subdomain", "ip_address", "ip_cidr", "service", "endpoint", "certificate"],
         ["finding"],
     ),
     "has_mail_exchange": _relation(
@@ -202,6 +237,7 @@ _RELATIONS = {
         self_edge=True,
     ),
     "has_subdomain": _relation(_D, ["subdomain"]),
+    "has_txt_record": _relation(_D, ["txt_record"]),
     "presents_certificate": _relation(
         ["service"],
         ["certificate"],
@@ -212,6 +248,12 @@ _RELATIONS = {
         },
         identity=_identity(["mode", "server_name", "alpn_offered"], order_independent=_ALPN_ORDER),
     ),
+    "protected_by": _relation(
+        ["service", "endpoint"],
+        ["technology"],
+        required={"kind": ["waf", "cdn", "reverse_proxy", "load_balancer"]},
+        identity=_identity(["kind"]),
+    ),
     "redirects_to": _relation(
         ["endpoint"],
         ["endpoint"],
@@ -221,7 +263,9 @@ _RELATIONS = {
     ),
     "resolves_to": _relation(_D, ["ip_address"]),
     "reverse_resolves_to": _relation(["ip_address"], _D),
+    "runs_technology": _relation(["service", "endpoint"], ["technology"]),
     "serves_endpoint": _relation(["service"], ["endpoint"]),
+    "supports_tls_cipher": _relation(["service"], ["tls_cipher_suite"]),
 }
 
 _CATALOG = {
@@ -272,27 +316,58 @@ def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> No
     _validate_cross_fields(kind, type_name, properties)
 
 
+def _cross_field_dns_name(type_name: str, properties: dict[str, Any]) -> None:
+    value = properties["value"]
+    if type(value) is not str or _dns_kind(value) != type_name:
+        raise ExpectedValidationError("/properties/value: DNS name type mismatch")
+
+
+def _cross_field_ip_address(_type_name: str, properties: dict[str, Any]) -> None:
+    value = properties["value"]
+    address = _parse_ip(value) if type(value) is str else None
+    if address is None or address.version != properties["version"]:
+        raise ExpectedValidationError("IP address version mismatch")
+
+
+def _cross_field_ip_cidr(_type_name: str, properties: dict[str, Any]) -> None:
+    value = properties["value"]
+    network = _parse_cidr(value) if type(value) is str else None
+    if network is None or network.version != properties["version"]:
+        raise ExpectedValidationError("IP network version mismatch")
+
+
+def _cross_field_service(_type_name: str, properties: dict[str, Any]) -> None:
+    name = cast("str", properties["name"])
+    if secure_required(name) and ("secure" not in properties or type(properties["secure"]) is not bool):
+        raise ExpectedValidationError("/properties/secure: expected boolean")
+
+
+def _cross_field_txt_record(_type_name: str, properties: dict[str, Any]) -> None:
+    value = cast("str", properties["value"])
+    if value.startswith(("v=spf1", "v=DMARC1", "v=DKIM1")):
+        raise ExpectedValidationError("/properties/value: use the dedicated TXT record type")
+
+
+# Every entry runs after the required map validated the properties it reads.
+_CROSS_FIELDS: dict[str, Callable[[str, dict[str, Any]], None]] = {
+    "domain": _cross_field_dns_name,
+    "subdomain": _cross_field_dns_name,
+    "ip_address": _cross_field_ip_address,
+    "ip_cidr": _cross_field_ip_cidr,
+    "service": _cross_field_service,
+    "txt_record": _cross_field_txt_record,
+}
+
+
 def _validate_cross_fields(kind: str, type_name: str, properties: dict[str, Any]) -> None:
-    if kind != "nodes":
-        return
-    if type_name in ("domain", "subdomain"):
-        value = properties["value"]
-        if type(value) is not str or _dns_kind(value) != type_name:
-            raise ExpectedValidationError("/properties/value: DNS name type mismatch")
-    elif type_name == "ip_address":
-        value = properties["value"]
-        address = _parse_ip(value) if type(value) is str else None
-        if address is None or address.version != properties["version"]:
-            raise ExpectedValidationError("IP address version mismatch")
-    elif type_name == "ip_cidr":
-        value = properties["value"]
-        network = _parse_cidr(value) if type(value) is str else None
-        if network is None or network.version != properties["version"]:
-            raise ExpectedValidationError("IP network version mismatch")
-    elif type_name == "service":
-        name = cast("str", properties["name"])
-        if secure_required(name) and ("secure" not in properties or type(properties["secure"]) is not bool):
-            raise ExpectedValidationError("/properties/secure: expected boolean")
+    check = _CROSS_FIELDS.get(type_name) if kind == "nodes" else None
+    if check is not None:
+        check(type_name, properties)
+
+
+# NIST IR 7695 formatted-string binding: `part` plus ten colon-separated attribute components.
+_CPE_COMPONENT = r"(?:[*\-]|\?*\*?(?:[a-z0-9._\-~]|\\[!-~])+\*?\?*)"
+_CPE23 = re.compile(r"cpe:2\.3:[aho*\-]:" + ":".join([_CPE_COMPONENT] * 10))
 
 
 def _valid_field(value: object, rule: str | list[str]) -> bool:
@@ -315,7 +390,9 @@ def _valid_field(value: object, rule: str | list[str]) -> bool:
         return False
     validators: dict[str, Callable[[str], bool]] = {
         "cidr": lambda text: _parse_cidr(text) is not None,
+        "cpe23_or_empty": lambda text: text == "" or (len(text) <= 512 and _CPE23.fullmatch(text) is not None),
         "cve": lambda text: re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", text) is not None,
+        "dmarc": _valid_dmarc,
         "dns_name": lambda text: _dns_kind(text) is not None,
         "dns_or_explicit_empty": lambda text: text == "" or _dns_kind(text) is not None,
         "http_url": _valid_url,
@@ -326,6 +403,11 @@ def _valid_field(value: object, rule: str | list[str]) -> bool:
         "sha256": lambda text: re.fullmatch(r"[0-9a-f]{64}", text) is not None,
         "spf": _valid_spf,
         "srv_label": lambda text: re.fullmatch(r"_[a-z0-9](?:[a-z0-9-]{0,60}[a-z0-9])?", text) is not None,
+        "tech_token": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9._+-]{0,61}[a-z0-9])?", text) is not None,
+        "tls_cipher_name": lambda text: (
+            5 <= len(text) <= 128 and re.fullmatch(r"TLS_[A-Z0-9]+(?:_[A-Z0-9]+)*", text) is not None
+        ),
+        "txt_value": lambda text: 1 <= len(text) <= 4096 and all(0x20 <= ord(char) <= 0x7E for char in text),
     }
     validator = validators.get(rule)
     return validator is not None and validator(value)
@@ -333,6 +415,14 @@ def _valid_field(value: object, rule: str | list[str]) -> bool:
 
 def _valid_spf(value: str) -> bool:
     return (value == "v=spf1" or value.startswith("v=spf1 ")) and all(0x20 <= ord(char) <= 0x7E for char in value)
+
+
+def _valid_dmarc(value: str) -> bool:
+    if not 1 <= len(value) <= 4096:
+        return False
+    if not (value == "v=DMARC1" or value.startswith(("v=DMARC1;", "v=DMARC1 "))):
+        return False
+    return all(0x20 <= ord(char) <= 0x7E for char in value)
 
 
 def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:

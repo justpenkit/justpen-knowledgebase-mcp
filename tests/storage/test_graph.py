@@ -370,7 +370,7 @@ async def test_unlimited_lifetime_links_and_owner_bound_pagination(tmp_path):
         assert len(source_page["sources"]) == 20
         assert source_page["next_cursor"]
         types = await kb.types(TypesRequest(kind="nodes"))
-        assert len(types["types"]) == 12
+        assert len(types["types"]) == 16
         assert {item["type"]: item["count"] for item in types["types"]}["ip_address"] == 1
         assert {item["type"]: item["count"] for item in types["types"]}["endpoint"] == 0
 
