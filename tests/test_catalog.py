@@ -38,6 +38,8 @@ NODE_TYPES = {
     "tls_cipher_suite",
     "dkim_record",
     "parameter",
+    "tls_fingerprint",
+    "registrar",
 }
 RELATION_TYPES = {
     "resolves_to",
@@ -70,6 +72,8 @@ RELATION_TYPES = {
     "covers_name",
     "has_dkim_selector",
     "has_parameter",
+    "has_tls_fingerprint",
+    "registered_through",
 }
 
 
@@ -89,7 +93,7 @@ def test_manifest_has_only_catalog_v2_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 2
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "f3c8017d5f0e482f48b0298dedc51879d48aa375f37569b2e69d90de47b01fa0"
+    assert CATALOG_FINGERPRINT == "d242effba72f797442490d45a8cb464edf328a3b67cff05ceb53c26dc0858ba1"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -201,6 +205,14 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("parameter", {"name": "a" * 128, "location": "body"}),
         ("parameter", {"name": "%20foo", "location": "path"}),
         ("parameter", {"name": "session", "location": "cookie", "reflected": True}),
+        (
+            "tls_fingerprint",
+            {"kind": "jarm", "value": "22222222222222222222222222222222222222222222222222222222222222"},
+        ),
+        ("tls_fingerprint", {"kind": "ja3s", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}),
+        ("registrar", {"iana_id": 292, "name": "MarkMonitor Inc."}),
+        ("registrar", {"iana_id": 1, "name": "a"}),
+        ("registrar", {"iana_id": 65535, "name": "x" * 200}),
     ],
 )
 def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, object]) -> None:
@@ -336,6 +348,20 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("parameter", {"name": "id", "location": "GET"}),
         ("parameter", {"name": "id"}),
         ("parameter", {"name": 1, "location": "query"}),
+        ("tls_fingerprint", {"kind": "jarm", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}),
+        (
+            "tls_fingerprint",
+            {"kind": "ja3s", "value": "22222222222222222222222222222222222222222222222222222222222222"},
+        ),
+        ("tls_fingerprint", {"kind": "jarm", "value": "2" * 61}),
+        ("tls_fingerprint", {"kind": "ja3s", "value": "A" * 32}),
+        ("tls_fingerprint", {"kind": "ja3", "value": "a" * 32}),
+        ("tls_fingerprint", {"value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}),
+        ("registrar", {"iana_id": 0, "name": "unset"}),
+        ("registrar", {"iana_id": -1, "name": "negative"}),
+        ("registrar", {"iana_id": 65536, "name": "over"}),
+        ("registrar", {"iana_id": 292}),
+        ("registrar", {"iana_id": "292", "name": "string id"}),
     ],
 )
 def test_invalid_node_types_bounds_and_noncanonical_spellings(type_name: str, properties: dict[str, object]) -> None:
@@ -413,6 +439,8 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "has_dmarc": (d, ["dmarc_record"]),
         "has_dkim_selector": (d, ["dkim_record"]),
         "has_parameter": (["endpoint"], ["parameter"]),
+        "has_tls_fingerprint": (["service"], ["tls_fingerprint"]),
+        "registered_through": (["domain"], ["registrar"]),
         "has_txt_record": (d, ["txt_record"]),
         "supports_tls_cipher": (["service"], ["tls_cipher_suite"]),
         "covers_name": (["certificate"], d),

@@ -113,6 +113,22 @@ rather than one per rotation; the superseded key survives only in whatever
 evidence the earlier write attached. Attach evidence to every `dkim_record`
 write that matters.
 
+A `tls_fingerprint` is a clustering pivot, not an identifier. Every host behind
+one load balancer or CDN presents the same JARM, so the node answers "what else
+runs this TLS stack" and never "which host is this". JARM is 62 characters and
+JA3S is 32; the declared `kind` fixes the length, and the two must not be
+written under one another's name.
+
+`registered_through` accepts a `domain` source only, because registration is a
+registrable-domain fact and a subdomain has no registrar. A `registrar` is keyed
+on its IANA id, which survives the renames and acquisitions that make the name
+unstable; `0` is rejected because it is what an agent emits for a missing field.
+Registration dates and EPP status describe the registration rather than the
+registrar, so they belong on the `domain` node as attributes, where a renewal
+patches them in place instead of stranding them on an edge after a transfer.
+Many ccTLD responses carry no IANA id at all, and those domains simply get no
+registrar node.
+
 `technology` and `tls_cipher_suite` are workspace-global shared-vocabulary
 nodes referenced by every host that matches. Neither is a `has_finding` source:
 attaching a host-specific finding to either would appear to apply to every host

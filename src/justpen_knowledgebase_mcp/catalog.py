@@ -89,6 +89,10 @@ _FORMATS = {
         "with underscore-separated alphanumeric components. Shape only; membership in the IANA registry is not "
         "checked, so a well-formed name that no suite bears is accepted."
     ),
+    "tls_fingerprint_value": (
+        "Exactly 32 lowercase hexadecimal characters for a JA3S MD5 digest, or exactly 62 for a JARM "
+        "fingerprint. The declared kind fixes which length is accepted."
+    ),
     "txt_value": (
         "1 to 4096 printable ASCII characters, the concatenated and unquoted character-strings of one TXT RRset."
     ),
@@ -190,6 +194,10 @@ _NODES = {
         "identity": _identity(["transport", "number"], scope=_SCOPE_OPEN_PORT),
         "required": {"number": "uint16", "transport": ["tcp", "udp", "sctp"]},
     },
+    "registrar": {
+        "identity": _identity(["iana_id"]),
+        "required": {"iana_id": "uint16", "name": "printable_text_200"},
+    },
     "service": {
         "identity": _identity(["name"], scope=_SCOPE_SERVICE),
         "required": {"name": "service_name"},
@@ -206,6 +214,10 @@ _NODES = {
             "version": ["ssl30", "tls10", "tls11", "tls12", "tls13", "dtls10", "dtls12", "dtls13"],
             "name": "tls_cipher_name",
         },
+    },
+    "tls_fingerprint": {
+        "identity": _identity(["kind", "value"]),
+        "required": {"kind": ["jarm", "ja3s"], "value": "tls_fingerprint_value"},
     },
     "txt_record": {"identity": _identity(["value"]), "required": {"value": "txt_value"}},
 }
@@ -266,6 +278,7 @@ _RELATIONS = {
         self_edge=True,
     ),
     "has_subdomain": _relation(_D, ["subdomain"]),
+    "has_tls_fingerprint": _relation(["service"], ["tls_fingerprint"]),
     "has_txt_record": _relation(_D, ["txt_record"]),
     "presents_certificate": _relation(
         ["service"],
@@ -290,6 +303,7 @@ _RELATIONS = {
         identity=_identity(["status"]),
         self_edge=True,
     ),
+    "registered_through": _relation(["domain"], ["registrar"]),
     "resolves_to": _relation(_D, ["ip_address"]),
     "reverse_resolves_to": _relation(["ip_address"], _D),
     "runs_technology": _relation(["service", "endpoint"], ["technology"]),
@@ -386,6 +400,17 @@ def _cross_field_service(_type_name: str, properties: dict[str, Any]) -> None:
         raise ExpectedValidationError("/properties/secure: expected boolean")
 
 
+def _cross_field_tls_fingerprint(_type_name: str, properties: dict[str, Any]) -> None:
+    expected = 62 if properties["kind"] == "jarm" else 32
+    if len(cast("str", properties["value"])) != expected:
+        raise ExpectedValidationError("/properties/value: fingerprint length does not match kind")
+
+
+def _cross_field_registrar(_type_name: str, properties: dict[str, Any]) -> None:
+    if cast("int", properties["iana_id"]) < 1:
+        raise ExpectedValidationError("/properties/iana_id: expected an assigned IANA registrar id")
+
+
 def _cross_field_txt_record(_type_name: str, properties: dict[str, Any]) -> None:
     value = cast("str", properties["value"])
     if value.startswith(("v=spf1", "v=DMARC1", "v=DKIM1")):
@@ -399,6 +424,8 @@ _CROSS_FIELDS: dict[str, Callable[[str, dict[str, Any]], None]] = {
     "ip_address": _cross_field_ip_address,
     "ip_cidr": _cross_field_ip_cidr,
     "service": _cross_field_service,
+    "tls_fingerprint": _cross_field_tls_fingerprint,
+    "registrar": _cross_field_registrar,
     "txt_record": _cross_field_txt_record,
 }
 
@@ -452,6 +479,7 @@ def _valid_field(value: object, rule: str | list[str]) -> bool:
         "spf": _valid_spf,
         "srv_label": lambda text: re.fullmatch(r"_[a-z0-9](?:[a-z0-9-]{0,60}[a-z0-9])?", text) is not None,
         "tech_token": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9._+-]{0,61}[a-z0-9])?", text) is not None,
+        "tls_fingerprint_value": lambda text: re.fullmatch(r"[0-9a-f]{32}|[0-9a-f]{62}", text) is not None,
         "tls_cipher_name": lambda text: (
             5 <= len(text) <= 128 and re.fullmatch(r"TLS_[A-Z0-9]+(?:_[A-Z0-9]+)*", text) is not None
         ),
