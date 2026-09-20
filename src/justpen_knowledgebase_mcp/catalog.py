@@ -356,6 +356,54 @@ _CATALOG = {
     "version": CATALOG_VERSION,
 }
 
+
+def scope_relations() -> dict[str, str]:
+    """Map every parent-scoped node type to the relation that supplies its single parent."""
+    return {
+        name: cast("dict[str, str]", definition["identity"]["scope"])["relation"]
+        for name, definition in _NODES.items()
+        if "scope" in cast("dict[str, Any]", definition["identity"])
+    }
+
+
+def scope_order() -> tuple[str, ...]:
+    """Order scoped node types parent-first, so a scoped parent is resolved before its scoped child.
+
+    A write resolves scoped nodes in this order, so a type whose scope relation accepts another
+    scoped type as a source must come later. Deriving the order keeps that true by construction
+    rather than by remembering to reorder a hand-written tuple.
+    """
+    scoped = scope_relations()
+    pending = {
+        child: {source for source in cast("list[str]", _RELATIONS[relation]["sources"]) if source in scoped}
+        for child, relation in scoped.items()
+    }
+    resolved: list[str] = []
+    while pending:
+        ready = sorted(child for child, parents in pending.items() if parents.issubset(resolved))
+        if not ready:
+            raise RuntimeError("parent-scoped node types form a cycle")
+        resolved.extend(ready)
+        for child in ready:
+            del pending[child]
+    return tuple(resolved)
+
+
+def _ensure_scope_contract() -> None:
+    """Fail at import if a scope declaration names something the storage layer cannot honor."""
+    for child, relation in scope_relations().items():
+        definition = cast("dict[str, Any] | None", _RELATIONS.get(relation))
+        scope = cast("dict[str, str]", cast("dict[str, Any]", _NODES[child]["identity"])["scope"])
+        if definition is None or scope["endpoint"] != "source" or child not in definition["targets"]:
+            raise RuntimeError(f"scope declaration for {child} is not a source-scoped relation target")
+        if re.fullmatch(r"[a-z_]+", relation) is None:
+            raise RuntimeError(f"scope relation name {relation} is not a bare identifier")
+    scope_order()
+
+
+_ensure_scope_contract()
+
+
 # The canonical serialized contract is immutable; callers receive a fresh tree.
 CATALOG_JSON = json.dumps(_CATALOG, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 

@@ -83,7 +83,10 @@ def _reject_scope_orphan(connection: apsw.Connection, kind: str, row: dict[str, 
         if row["type"] in sql.SCOPE_RELATION_TYPES and row_by_id(connection, "nodes", row["target_id"]) is not None:
             raise ConflictError("scoped child must be deleted first")
         return
-    if kind == "nodes" and connection.execute(sql.SCOPED_CHILD_BY_PARENT, (row["id"],)).get is not None:
+    if (
+        kind == "nodes"
+        and connection.execute(sql.SCOPED_CHILD_BY_PARENT, (row["id"], sql.SCOPED_CHILD_RELATIONS)).get is not None
+    ):
         raise ConflictError("scoped child must be deleted first")
 
 

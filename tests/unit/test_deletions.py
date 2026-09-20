@@ -1,5 +1,6 @@
 """Delete admission and bounded cleanup decisions with isolated database responses."""
 
+import json
 import re
 from unittest.mock import Mock
 
@@ -55,10 +56,12 @@ def test_scope_relation_delete_requires_child_first(monkeypatch, relation_type):
         deletions._reject_scope_orphan(database(), "relations", relation)
 
 
-def test_scope_relation_names_agree_between_the_frozenset_and_the_inline_sql():
-    """The two constants repeat one list in two syntaxes; a missed edit drops a delete guard."""
-    quoted = set(re.findall(r"'([a-z_]+)'", graph_sql.SCOPED_CHILD_BY_PARENT))
-    assert quoted == set(graph_sql.SCOPE_RELATION_TYPES)
+def test_scope_relation_names_travel_as_bound_data_rather_than_query_text():
+    """The parent-delete guard reads the same derived list the frozenset holds, and it reaches
+    SQLite as one bound JSON array, so no relation name is ever spliced into the statement."""
+    assert set(json.loads(graph_sql.SCOPED_CHILD_RELATIONS)) == set(graph_sql.SCOPE_RELATION_TYPES)
+    assert re.search(r"'[a-z_]+'", graph_sql.SCOPED_CHILD_BY_PARENT) is None
+    assert "json_each(?)" in graph_sql.SCOPED_CHILD_BY_PARENT
 
 
 def test_scope_relation_types_are_derived_from_the_catalog():

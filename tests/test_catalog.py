@@ -722,3 +722,43 @@ def test_catalog_returns_isolated_manifest_and_rejects_unknown_types() -> None:
     _invalid("nodes", "ip", {"value": "192.0.2.1"})
     with pytest.raises(ExpectedValidationError):
         catalog_schema("nodes", "application")
+
+
+def test_scope_declarations_are_derived_rather_than_mirrored_by_hand() -> None:
+    """Three call sites used to repeat this list by hand; a missed edit failed writes or dropped a
+    delete guard silently. They now read one declaration."""
+    assert catalog_module.scope_relations() == {
+        "port": "has_open_port",
+        "service": "has_service",
+        "finding": "has_finding",
+        "dkim_record": "has_dkim_selector",
+        "parameter": "has_parameter",
+    }
+    order = catalog_module.scope_order()
+    assert set(order) == set(catalog_module.scope_relations())
+    assert order.index("port") < order.index("service") < order.index("finding")
+    assert order.index("parameter") < order.index("finding")
+    assert order.index("dkim_record") < order.index("finding")
+
+
+def test_scope_order_refuses_a_cycle_instead_of_emitting_a_partial_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(catalog_module._RELATIONS, "has_open_port", catalog_module._relation(["service"], ["port"]))
+    with pytest.raises(RuntimeError, match="cycle"):
+        catalog_module.scope_order()
+
+
+def test_scope_contract_rejects_a_declaration_the_storage_layer_cannot_honor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        catalog_module._NODES,
+        "port",
+        {
+            "identity": catalog_module._identity(
+                ["transport", "number"], scope={"relation": "has_open_port", "endpoint": "target"}
+            ),
+            "required": {"number": "uint16", "transport": ["tcp", "udp", "sctp"]},
+        },
+    )
+    with pytest.raises(RuntimeError, match="source-scoped relation target"):
+        catalog_module._ensure_scope_contract()
