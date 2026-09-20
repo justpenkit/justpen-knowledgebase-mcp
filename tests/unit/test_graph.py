@@ -21,6 +21,24 @@ def test_scoped_node_order_covers_every_parent_scoped_catalog_type():
     assert len(graph._SCOPED_NODE_ORDER) == len(declared)
 
 
+def test_scoped_node_order_places_every_scoped_parent_before_its_child():
+    """Membership is not enough: _prepare_node_plans resolves the tuple in order, so a scoped type
+    whose parent is itself scoped must come later. Adding a scoped type to another scoped type's
+    scope relation sources without reordering fails at runtime, not here, unless this holds."""
+    manifest = catalog_manifest()
+    scoped = {
+        name: definition["identity"]["scope"]
+        for name, definition in manifest["nodes"].items()
+        if "scope" in definition["identity"]
+    }
+    for child, scope in scoped.items():
+        for source in manifest["relations"][scope["relation"]]["sources"]:
+            if source in scoped:
+                assert graph._SCOPED_NODE_ORDER.index(source) < graph._SCOPED_NODE_ORDER.index(child), (
+                    f"{source} must precede {child} in _SCOPED_NODE_ORDER"
+                )
+
+
 def test_row_materialization_and_kind_validation():
     db = database(cursor(record=owner()), cursor())
     assert graph.row_by_id(db, "nodes", 1) == owner()

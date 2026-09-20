@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from justpen_knowledgebase_mcp.catalog import catalog_manifest
 from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, MissingRecordsError, RecordConflictError
 from justpen_knowledgebase_mcp.models import DeleteRequest
 from justpen_knowledgebase_mcp.storage import deletions, graph_sql
@@ -58,6 +59,15 @@ def test_scope_relation_names_agree_between_the_frozenset_and_the_inline_sql():
     """The two constants repeat one list in two syntaxes; a missed edit drops a delete guard."""
     quoted = set(re.findall(r"'([a-z_]+)'", graph_sql.SCOPED_CHILD_BY_PARENT))
     assert quoted == set(graph_sql.SCOPE_RELATION_TYPES)
+
+
+def test_scope_relation_types_are_derived_from_the_catalog():
+    """Agreeing with the sibling constant is not enough: both can go stale together."""
+    assert set(graph_sql.SCOPE_RELATION_TYPES) == {
+        definition["identity"]["scope"]["relation"]
+        for definition in catalog_manifest()["nodes"].values()
+        if "scope" in definition["identity"]
+    }
 
 
 def test_parent_delete_requires_scoped_child_first():
