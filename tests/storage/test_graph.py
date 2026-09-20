@@ -481,8 +481,13 @@ async def test_unlimited_lifetime_links_and_owner_bound_pagination(tmp_path):
         assert source_page["next_cursor"]
         types = await kb.types(TypesRequest(kind="nodes"))
         assert len(types["types"]) == 20
-        assert {item["type"]: item["count"] for item in types["types"]}["ip_address"] == 1
-        assert {item["type"]: item["count"] for item in types["types"]}["endpoint"] == 0
+        assert types["next_cursor"]
+        rest = await kb.types(TypesRequest(kind="nodes", cursor=types["next_cursor"]))
+        assert rest["next_cursor"] is None
+        counts = {item["type"]: item["count"] for item in [*types["types"], *rest["types"]]}
+        assert len(counts) == 22
+        assert counts["ip_address"] == 1
+        assert counts["endpoint"] == 0
 
 
 async def test_evidence_link_cursor_preserves_colliding_association_ids(tmp_path):

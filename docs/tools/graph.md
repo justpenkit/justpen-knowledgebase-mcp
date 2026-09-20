@@ -144,6 +144,30 @@ runs this TLS stack" and never "which host is this". JARM is 62 characters and
 JA3S is 32; the declared `kind` fixes the length, and the two must not be
 written under one another's name.
 
+`operated_by` points an `asn` or an `ip_cidr` at the organization that holds
+it, keyed on the registry and the registry's own handle. A handle is unique
+within one RIR and never across them, so both properties are identity. Free-text
+organization names are not: "Google LLC", "Google Inc." and "Google" are the
+same holder, so `name` is an attribute a rescan patches in place. It is not
+required, because an RDAP entity's name can be redacted while the handle
+remains. `domain` is not a source here: domain registration is expressed by
+`registered_through`, and a registrant organization has no RIR handle to key on.
+A handle is case-sensitive and is written exactly as the registry publishes it:
+RIPE and AFRINIC derive handles from the organisation name and keep its case, so
+`ORG-nG51-RIPE` is the handle and `ORG-NG51-RIPE` is a different string that the
+registry does not publish. Never uppercase one. Treat `abuse_contact` as
+low-confidence: the registries themselves state the value is frequently wrong or
+absent.
+
+`has_weakness` classifies a `finding` or a `cve` as an instance of a CWE
+weakness class. Both sources are real: a scanner assigns the class to its own
+finding, and the NVD assigns it to a published CVE. A `finding` title is free
+text, so two scanners reporting the same reflected XSS produce two unjoinable
+titles; the CWE id is the canonical spelling that joins them. Write it as MITRE
+publishes it, `CWE-79`, not the lowercase `cwe-79` some tools emit. `name` is an
+attribute, not required, because a template that carries a cwe-id often carries
+no title for it.
+
 `registered_through` accepts a `domain` source only, because registration is a
 registrable-domain fact and a subdomain has no registrar. A `registrar` is keyed
 on its IANA id, which survives the renames and acquisitions that make the name
@@ -158,6 +182,11 @@ registrar node.
 nodes referenced by every host that matches. Neither is a `has_finding` source:
 attaching a host-specific finding to either would appear to apply to every host
 in the workspace that shares the node.
+
+`kb_types` pages at `limit`, which defaults to 20. Both the node and the
+relation catalogs are now larger than that, so a single default call returns a
+partial list plus a `next_cursor`. Follow the cursor, or raise `limit`, before
+concluding that a type does not exist.
 
 ## `kb_get`
 

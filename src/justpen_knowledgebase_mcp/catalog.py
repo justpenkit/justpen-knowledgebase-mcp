@@ -47,6 +47,7 @@ _FORMATS = {
         "states the spelling writers must produce and readers must re-validate."
     ),
     "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
+    "cwe": "A string matching `CWE-[0-9]{1,6}` exactly, uppercase as MITRE publishes it.",
     "dkim_selector": (
         "A lowercase ASCII DKIM selector of at most 253 bytes - in practice far less, since the owner name "
         "`<selector>._domainkey.<domain>` must itself fit in 253 bytes - as one or more dot-separated labels "
@@ -76,6 +77,13 @@ _FORMATS = {
     ),
     "printable_text_200": "A string of 1-200 printable Unicode characters.",
     "redirect_status": "A strict JSON integer in 301, 302, 303, 307, or 308.",
+    "rir_handle": (
+        "A regional-registry object handle of 2 to 64 ASCII characters, starting and ending alphanumeric and "
+        "continuing alphanumeric or hyphen. Handles are case-sensitive and stored exactly as the registry "
+        "publishes them: RIPE and AFRINIC derive them from the organisation name and preserve its case "
+        "(ORG-nG51-RIPE, ORG-Ab1-AFRINIC), so a writer must never uppercase one. Handles are unique within one "
+        "registry, never across registries."
+    ),
     "service_name": "A member of the bundled versioned service name whitelist.",
     "sha256": "Exactly 64 lowercase ASCII hexadecimal characters.",
     "spf": "Printable ASCII beginning with `v=spf1` followed by a normal space or end of text.",
@@ -164,6 +172,7 @@ _NODES = {
         "required": {"der_sha256": "sha256"},
     },
     "cve": {"identity": _identity(["value"]), "required": {"value": "cve"}},
+    "cwe": {"identity": _identity(["value"]), "required": {"value": "cwe"}},
     "dkim_record": {
         "identity": _identity(["selector"], scope=_SCOPE_DKIM),
         "required": {"selector": "dkim_selector", "value": "txt_value"},
@@ -188,6 +197,13 @@ _NODES = {
     "ip_cidr": {
         "identity": _identity(["value"]),
         "required": {"value": "cidr", "version": "ip_version"},
+    },
+    "organization": {
+        "identity": _identity(["registry", "handle"]),
+        "required": {
+            "registry": ["arin", "ripe", "apnic", "lacnic", "afrinic"],
+            "handle": "rir_handle",
+        },
     },
     "parameter": {
         "identity": _identity(["name", "location"], scope=_SCOPE_PARAMETER),
@@ -298,7 +314,9 @@ _RELATIONS = {
     ),
     "has_tls_fingerprint": _relation(["service"], ["tls_fingerprint"]),
     "has_txt_record": _relation(_D, ["txt_record"]),
+    "has_weakness": _relation(["finding", "cve"], ["cwe"]),
     "issued_by": _relation(["certificate"], ["certificate"], self_edge=True),
+    "operated_by": _relation(["asn", "ip_cidr"], ["organization"]),
     "presents_certificate": _relation(
         ["service"],
         ["certificate"],
@@ -482,6 +500,7 @@ def _valid_field(value: object, rule: str | list[str]) -> bool:
         "cidr": lambda text: _parse_cidr(text) is not None,
         "cpe23_or_empty": lambda text: text == "" or (len(text) <= 512 and _CPE23.fullmatch(text) is not None),
         "cve": lambda text: re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", text) is not None,
+        "cwe": lambda text: re.fullmatch(r"CWE-[0-9]{1,6}", text) is not None,
         "dkim_selector": _valid_dkim_selector,
         "dmarc": _valid_dmarc,
         "dns_name": lambda text: _dns_kind(text) is not None,
@@ -493,6 +512,7 @@ def _valid_field(value: object, rule: str | list[str]) -> bool:
             1 <= len(text) <= 128 and all(0x21 <= ord(char) <= 0x7E and char not in "&=#" for char in text)
         ),
         "printable_text_200": lambda text: 1 <= len(text) <= 200 and text.isprintable(),
+        "rir_handle": lambda text: re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]", text) is not None,
         "service_name": is_service_name,
         "sha256": lambda text: re.fullmatch(r"[0-9a-f]{64}", text) is not None,
         "spf": _valid_spf,

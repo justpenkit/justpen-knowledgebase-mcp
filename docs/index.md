@@ -27,7 +27,8 @@ telemetry only; it never partitions graph data.
 - Required identity properties are strictly validated; additional JSON
     properties remain available for scanner-specific facts.
 - Catalog v2 models domains, subdomains, IP addresses and CIDRs, ASNs, DNS
-    records, technologies, TLS cipher suites and fingerprints, registrars, ports
+    records, technologies, TLS cipher suites and fingerprints, registrars, organizations,
+    weaknesses, ports
     and services, findings,
     parameters, certificates, endpoints, and CVEs.
 - Unscoped identity maps a natural identity to one node per workspace. Port,

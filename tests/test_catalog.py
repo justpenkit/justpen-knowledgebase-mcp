@@ -40,6 +40,8 @@ NODE_TYPES = {
     "parameter",
     "tls_fingerprint",
     "registrar",
+    "cwe",
+    "organization",
 }
 RELATION_TYPES = {
     "resolves_to",
@@ -76,6 +78,8 @@ RELATION_TYPES = {
     "has_parameter",
     "has_tls_fingerprint",
     "registered_through",
+    "has_weakness",
+    "operated_by",
 }
 
 
@@ -95,7 +99,7 @@ def test_manifest_has_only_catalog_v2_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 2
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "1f843e1beed1ef44063555cee189e803f866acd0a042655126908ffaa4f27ee1"
+    assert CATALOG_FINGERPRINT == "e31b081e3544dfa23e4cb0480750f1b3cbbe585651a726f366a07f956cdc19e6"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -215,6 +219,18 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("registrar", {"iana_id": 292, "name": "MarkMonitor Inc."}),
         ("registrar", {"iana_id": 1, "name": "a"}),
         ("registrar", {"iana_id": 65535, "name": "x" * 200}),
+        ("cwe", {"value": "CWE-79"}),
+        ("cwe", {"value": "CWE-1"}),
+        ("cwe", {"value": "CWE-999999"}),
+        ("cwe", {"value": "CWE-89", "name": "SQL Injection"}),
+        ("organization", {"registry": "arin", "handle": "ORG-GOGL-1-ARIN"}),
+        ("organization", {"registry": "ripe", "handle": "ORG-GC128-RIPE"}),
+        ("organization", {"registry": "apnic", "handle": "A1"}),
+        ("organization", {"registry": "afrinic", "handle": "X" * 64}),
+        ("organization", {"registry": "ripe", "handle": "ORG-nG51-RIPE"}),
+        ("organization", {"registry": "afrinic", "handle": "ORG-Ab1-AFRINIC"}),
+        ("organization", {"registry": "arin", "handle": "org-gogl-1-arin"}),
+        ("organization", {"registry": "lacnic", "handle": "ORG-1", "abuse_contact": "x@example.com"}),
     ],
 )
 def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, object]) -> None:
@@ -364,6 +380,22 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("registrar", {"iana_id": 65536, "name": "over"}),
         ("registrar", {"iana_id": 292}),
         ("registrar", {"iana_id": "292", "name": "string id"}),
+        ("cwe", {"value": "cwe-79"}),
+        ("cwe", {"value": "CWE-"}),
+        ("cwe", {"value": "CWE-0079x"}),
+        ("cwe", {"value": "CWE-1234567"}),
+        ("cwe", {"value": "79"}),
+        ("cwe", {"value": 79}),
+        ("organization", {"registry": "ARIN", "handle": "ORG-GOGL-1-ARIN"}),
+        ("organization", {"registry": "iana", "handle": "ORG-1"}),
+        ("organization", {"registry": "arin", "handle": "ORG-"}),
+        ("organization", {"registry": "arin", "handle": "A"}),
+        ("organization", {"registry": "arin", "handle": "-ORG-1"}),
+        ("organization", {"registry": "arin", "handle": "ORG-1-"}),
+        ("organization", {"registry": "arin", "handle": "X" * 65}),
+        ("organization", {"registry": "arin", "handle": "ORG_1"}),
+        ("organization", {"handle": "ORG-GOGL-1-ARIN"}),
+        ("organization", {"registry": "arin"}),
     ],
 )
 def test_invalid_node_types_bounds_and_noncanonical_spellings(type_name: str, properties: dict[str, object]) -> None:
@@ -443,6 +475,8 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "has_parameter": (["endpoint"], ["parameter"]),
         "has_tls_fingerprint": (["service"], ["tls_fingerprint"]),
         "registered_through": (["domain"], ["registrar"]),
+        "has_weakness": (["finding", "cve"], ["cwe"]),
+        "operated_by": (["asn", "ip_cidr"], ["organization"]),
         "has_txt_record": (d, ["txt_record"]),
         "supports_tls_cipher": (["service"], ["tls_cipher_suite"]),
         "covers_name": (["certificate"], d),

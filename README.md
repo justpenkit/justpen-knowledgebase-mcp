@@ -9,7 +9,7 @@ and local files, without an LLM, embedding service, or separate database server.
 ## Features
 
 - **Catalog v2 recon graph:** domains, subdomains, IP addresses and CIDRs, ASNs,
-    DNS records, technologies, TLS cipher suites and fingerprints, registrars,
+    DNS records, technologies, TLS cipher suites and fingerprints, registrars, organizations, weaknesses,
     parent-scoped
     ports/services/findings/DKIM selectors/parameters, certificates, endpoints,
     and CVEs with server-generated identities and strict required properties.
