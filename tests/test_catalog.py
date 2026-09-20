@@ -70,6 +70,8 @@ RELATION_TYPES = {
     "has_txt_record",
     "supports_tls_cipher",
     "covers_name",
+    "has_svcb_binding",
+    "issued_by",
     "has_dkim_selector",
     "has_parameter",
     "has_tls_fingerprint",
@@ -93,7 +95,7 @@ def test_manifest_has_only_catalog_v2_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 2
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "d242effba72f797442490d45a8cb464edf328a3b67cff05ceb53c26dc0858ba1"
+    assert CATALOG_FINGERPRINT == "1f843e1beed1ef44063555cee189e803f866acd0a042655126908ffaa4f27ee1"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -444,6 +446,8 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "has_txt_record": (d, ["txt_record"]),
         "supports_tls_cipher": (["service"], ["tls_cipher_suite"]),
         "covers_name": (["certificate"], d),
+        "has_svcb_binding": (d, d),
+        "issued_by": (["certificate"], ["certificate"]),
     }
     relations = catalog_manifest()["relations"]
 
@@ -494,7 +498,13 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         ("has_dmarc", {}),
         ("has_txt_record", {}),
         ("supports_tls_cipher", {"preferred": True, "curve": "x25519"}),
-        ("covers_name", {}),
+        ("covers_name", {"coverage": "exact"}),
+        ("covers_name", {"coverage": "wildcard"}),
+        ("has_svcb_binding", {"record_type": "https", "priority": 1, "alpn": ["h2", "h3"]}),
+        ("has_svcb_binding", {"record_type": "svcb", "priority": 0, "alpn": []}),
+        ("has_svcb_binding", {"record_type": "https", "priority": 65535, "alpn": ["h3"]}),
+        ("issued_by", {}),
+        ("presents_certificate", {"mode": "quic", "server_name": "example.com", "alpn_offered": ["h3"]}),
     ],
 )
 def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[str, object]) -> None:
@@ -548,6 +558,16 @@ def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[s
         ("protected_by", {"kind": "WAF"}),
         ("protected_by", {"kind": "ids"}),
         ("protected_by", {"kind": 1}),
+        ("covers_name", {}),
+        ("covers_name", {"coverage": "Exact"}),
+        ("covers_name", {"coverage": "san"}),
+        ("has_svcb_binding", {"record_type": "https", "priority": 1}),
+        ("has_svcb_binding", {"record_type": "HTTPS", "priority": 1, "alpn": ["h2"]}),
+        ("has_svcb_binding", {"record_type": "https", "priority": -1, "alpn": ["h2"]}),
+        ("has_svcb_binding", {"record_type": "https", "priority": 65536, "alpn": ["h2"]}),
+        ("has_svcb_binding", {"record_type": "https", "priority": 1, "alpn": "h2,h3"}),
+        ("has_svcb_binding", {"record_type": "https", "priority": 1, "alpn": ["h2 h3"]}),
+        ("presents_certificate", {"mode": "QUIC", "server_name": "", "alpn_offered": []}),
     ],
 )
 def test_invalid_relation_types_bounds_and_grammars(type_name: str, properties: dict[str, object]) -> None:
@@ -597,6 +617,18 @@ def test_cpe23_rule_is_published_without_a_consuming_required_map() -> None:
 
     assert "cpe23_or_empty" in manifest["formats"]
     assert "cpe23_or_empty" not in referenced
+
+
+def test_every_order_independent_property_is_required_by_its_own_type() -> None:
+    """An order-independent property missing from `required` is not a validation failure: it reaches
+    _order_independent_hash and raises a bare KeyError, which surfaces as INTERNAL."""
+    manifest = catalog_manifest()
+    for kind in ("nodes", "relations"):
+        for type_name, definition in manifest[kind].items():
+            rule = definition["identity"].get("order_independent")
+            if rule is not None:
+                assert rule["property"] in definition["required"], f"{kind}.{type_name}"
+                assert rule["property"] in definition["identity"]["properties"], f"{kind}.{type_name}"
 
 
 def test_caa_and_alpn_identity_declarations_are_order_independent() -> None:

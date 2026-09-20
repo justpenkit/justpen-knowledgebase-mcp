@@ -144,6 +144,12 @@ _CAA_ORDER: dict[str, object] = {
     "sort": ["name", "value"],
     "preserve_duplicates": True,
 }
+_SVCB_ALPN_ORDER: dict[str, object] = {
+    "property": "alpn",
+    "algorithm": "sha256",
+    "sort": "value",
+    "preserve_duplicates": True,
+}
 _ALPN_ORDER: dict[str, object] = {
     "property": "alpn_offered",
     "algorithm": "sha256",
@@ -243,7 +249,12 @@ _RELATIONS = {
     "cname_to": _relation(_D, _D, self_edge=True),
     "contains_cidr": _relation(["ip_cidr"], ["ip_cidr"]),
     "contains_ip": _relation(["ip_cidr"], ["ip_address"]),
-    "covers_name": _relation(["certificate"], _D),
+    "covers_name": _relation(
+        ["certificate"],
+        _D,
+        required={"coverage": ["exact", "wildcard"]},
+        identity=_identity(["coverage"]),
+    ),
     "dname_to": _relation(_D, _D, self_edge=True),
     "has_dkim_selector": _relation(_D, ["dkim_record"]),
     "has_dmarc": _relation(_D, ["dmarc_record"]),
@@ -278,13 +289,21 @@ _RELATIONS = {
         self_edge=True,
     ),
     "has_subdomain": _relation(_D, ["subdomain"]),
+    "has_svcb_binding": _relation(
+        _D,
+        _D,
+        required={"record_type": ["https", "svcb"], "priority": "uint16", "alpn": "alpn_tokens"},
+        identity=_identity(["record_type", "priority", "alpn"], order_independent=_SVCB_ALPN_ORDER),
+        self_edge=True,
+    ),
     "has_tls_fingerprint": _relation(["service"], ["tls_fingerprint"]),
     "has_txt_record": _relation(_D, ["txt_record"]),
+    "issued_by": _relation(["certificate"], ["certificate"], self_edge=True),
     "presents_certificate": _relation(
         ["service"],
         ["certificate"],
         required={
-            "mode": ["tls", "dtls", "starttls"],
+            "mode": ["tls", "dtls", "starttls", "quic"],
             "server_name": "dns_or_explicit_empty",
             "alpn_offered": "alpn_tokens",
         },

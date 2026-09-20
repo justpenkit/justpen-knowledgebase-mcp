@@ -113,6 +113,31 @@ rather than one per rotation; the superseded key survives only in whatever
 evidence the earlier write attached. Attach evidence to every `dkim_record`
 write that matters.
 
+`has_svcb_binding` records an RFC 9460 HTTPS or SVCB record. Write it only
+after parsing the record's SvcParams: `alpn: []` asserts that the record carries
+no ALPN parameter, and never that the writer did not look. A writer that cannot
+parse them must not write the edge at all, because `alpn` is part of the
+identity and an under-parsed record becomes a second edge beside the correct
+one rather than an obvious error. A ServiceMode record whose TargetName is `.`
+targets the owner name itself and is written as a self edge; an AliasMode
+record (`priority: 0`) whose TargetName is `.` is the wire's negative record and
+must not be written at all.
+
+`issued_by` points from a certificate to its issuer's certificate. A self edge
+is how the catalog records a self-signed certificate, and it is the only
+structural form of that fact. Reading it back costs a `search` for the type
+followed by a `get`, since relation search returns no endpoints and this edge
+carries no filterable property; keep a `self_signed` attribute on the
+certificate alongside the edge rather than treating the edge as a replacement.
+Absence of the edge means the issuer was never written, not that the chain ends.
+
+`covers_name` now requires `coverage`, which is part of its identity. A
+wildcard SAN cannot be written as a name: `*.example.com` fails `dns_name`.
+Write the wildcard's base name with `coverage: "wildcard"`, and a name the
+certificate lists literally with `coverage: "exact"`. A certificate that carries
+both `example.com` and `*.example.com` therefore produces two edges to one
+node instead of one edge that silently loses half the fact.
+
 A `tls_fingerprint` is a clustering pivot, not an identifier. Every host behind
 one load balancer or CDN presents the same JARM, so the node answers "what else
 runs this TLS stack" and never "which host is this". JARM is 62 characters and
