@@ -142,6 +142,116 @@ async def test_new_scoped_node_requires_exactly_one_scope_relation(tmp_path, sco
         assert await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get) == 0
 
 
+async def test_dkim_and_parameter_scope_to_their_parent_and_separate_by_parent(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        request = {
+            "nodes": [
+                {"type": "domain", "properties": {"value": "example.com"}},
+                {"type": "domain", "properties": {"value": "example.net"}},
+                {"type": "dkim_record", "properties": {"selector": "default", "value": "v=DKIM1; p=A"}},
+                {"type": "dkim_record", "properties": {"selector": "default", "value": "v=DKIM1; p=B"}},
+                {"type": "endpoint", "properties": {"url": "https://example.com/a", "method": "GET"}},
+                {"type": "endpoint", "properties": {"url": "https://example.com/b", "method": "GET"}},
+                {"type": "parameter", "properties": {"name": "id", "location": "query"}},
+                {"type": "parameter", "properties": {"name": "id", "location": "query"}},
+            ],
+            "relations": [
+                {
+                    "type": "has_dkim_selector",
+                    "source_ref": {"node_index": 0},
+                    "target_ref": {"node_index": 2},
+                    "properties": {},
+                },
+                {
+                    "type": "has_dkim_selector",
+                    "source_ref": {"node_index": 1},
+                    "target_ref": {"node_index": 3},
+                    "properties": {},
+                },
+                {
+                    "type": "has_parameter",
+                    "source_ref": {"node_index": 4},
+                    "target_ref": {"node_index": 6},
+                    "properties": {},
+                },
+                {
+                    "type": "has_parameter",
+                    "source_ref": {"node_index": 5},
+                    "target_ref": {"node_index": 7},
+                    "properties": {},
+                },
+            ],
+        }
+        created = await kb.write(write(request))
+        identifiers = [node["id"] for node in created["nodes"]]
+        assert identifiers[2] != identifiers[3]
+        assert identifiers[6] != identifiers[7]
+        assert await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get) == 8
+
+
+@pytest.mark.parametrize(
+    ("child", "properties", "parent", "parent_properties", "relation"),
+    [
+        (
+            "dkim_record",
+            {"selector": "default", "value": "v=DKIM1; p=A"},
+            "domain",
+            {"value": "example.com"},
+            "has_dkim_selector",
+        ),
+        (
+            "parameter",
+            {"name": "id", "location": "query"},
+            "endpoint",
+            {"url": "https://example.com/a", "method": "GET"},
+            "has_parameter",
+        ),
+    ],
+)
+async def test_new_dkim_and_parameter_nodes_require_their_scope_relation(
+    tmp_path, child, properties, parent, parent_properties, relation
+):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        nodes = [{"type": parent, "properties": parent_properties}, {"type": child, "properties": properties}]
+        with pytest.raises(InvalidParamsError, match=f"exactly one {relation}"):
+            await kb.write(write({"nodes": nodes}))
+        assert await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get) == 0
+        created = await kb.write(
+            write(
+                {
+                    "nodes": nodes,
+                    "relations": [
+                        {
+                            "type": relation,
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 1},
+                            "properties": {},
+                        }
+                    ],
+                }
+            )
+        )
+        second_parent = (
+            await kb.write(write({"nodes": [{"type": "domain", "properties": {"value": "example.net"}}]}))
+        )["nodes"][0]["id"]
+        if child == "dkim_record":
+            with pytest.raises(InvalidParamsError, match="different parent"):
+                await kb.write(
+                    write(
+                        {
+                            "relations": [
+                                {
+                                    "type": relation,
+                                    "source_ref": {"id": second_parent},
+                                    "target_ref": {"id": created["nodes"][1]["id"]},
+                                    "properties": {},
+                                }
+                            ]
+                        }
+                    )
+                )
+
+
 async def test_scoped_write_failure_has_zero_partial_rows(tmp_path):
     request = scoped_stack()
     request["relations"].append(
@@ -370,7 +480,7 @@ async def test_unlimited_lifetime_links_and_owner_bound_pagination(tmp_path):
         assert len(source_page["sources"]) == 20
         assert source_page["next_cursor"]
         types = await kb.types(TypesRequest(kind="nodes"))
-        assert len(types["types"]) == 16
+        assert len(types["types"]) == 18
         assert {item["type"]: item["count"] for item in types["types"]}["ip_address"] == 1
         assert {item["type"]: item["count"] for item in types["types"]}["endpoint"] == 0
 

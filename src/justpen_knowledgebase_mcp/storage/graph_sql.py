@@ -1,10 +1,10 @@
 """Literal SQL for the closed graph kinds; cursor/input values are only bound data."""
 
-SCOPE_RELATION_TYPES = frozenset(("has_open_port", "has_service", "has_finding"))
+SCOPE_RELATION_TYPES = frozenset(("has_open_port", "has_service", "has_finding", "has_dkim_selector", "has_parameter"))
 
 SCOPED_CHILD_BY_PARENT = (
     "SELECT r.id FROM relations r JOIN nodes child ON child.id=r.target_id "
-    "WHERE r.source_id=? AND r.type IN ('has_open_port','has_service','has_finding') ORDER BY r.id LIMIT 1"
+    "WHERE r.source_id=? AND r.type IN ('has_open_port','has_service','has_finding','has_dkim_selector','has_parameter') ORDER BY r.id LIMIT 1"
 )
 
 OWNER_LOOKUP = {

@@ -96,6 +96,40 @@ async def scoped_graph(kb, relation_type):
             1,
             0,
         ),
+        "has_dkim_selector": (
+            [
+                {"type": "domain", "properties": {"value": "example.com"}},
+                {"type": "dkim_record", "properties": {"selector": "default", "value": "v=DKIM1; p=MIGf"}},
+            ],
+            [
+                {
+                    "type": "has_dkim_selector",
+                    "source_ref": {"node_index": 0},
+                    "target_ref": {"node_index": 1},
+                    "properties": {},
+                }
+            ],
+            0,
+            1,
+            0,
+        ),
+        "has_parameter": (
+            [
+                {"type": "endpoint", "properties": {"url": "https://example.com/search", "method": "GET"}},
+                {"type": "parameter", "properties": {"name": "q", "location": "query"}},
+            ],
+            [
+                {
+                    "type": "has_parameter",
+                    "source_ref": {"node_index": 0},
+                    "target_ref": {"node_index": 1},
+                    "properties": {},
+                }
+            ],
+            0,
+            1,
+            0,
+        ),
     }
     nodes, relations, parent_index, child_index, relation_index = definitions[relation_type]
     result = await kb.write(WriteRequest.model_validate({"nodes": nodes, "relations": relations}))
@@ -113,7 +147,9 @@ async def finish_delete(kb, intent):
             return
 
 
-@pytest.mark.parametrize("relation_type", ["has_open_port", "has_service", "has_finding"])
+@pytest.mark.parametrize(
+    "relation_type", ["has_open_port", "has_service", "has_finding", "has_dkim_selector", "has_parameter"]
+)
 async def test_scope_relation_rejected_while_child_exists_and_removed_with_child(tmp_path, relation_type):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         parent, child, relation = await scoped_graph(kb, relation_type)
@@ -126,7 +162,9 @@ async def test_scope_relation_rejected_while_child_exists_and_removed_with_child
         await finish_delete(kb, parent_intent)
 
 
-@pytest.mark.parametrize("relation_type", ["has_open_port", "has_service", "has_finding"])
+@pytest.mark.parametrize(
+    "relation_type", ["has_open_port", "has_service", "has_finding", "has_dkim_selector", "has_parameter"]
+)
 async def test_parent_node_delete_rejected_while_scoped_child_exists(tmp_path, relation_type):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         parent, _child, _relation = await scoped_graph(kb, relation_type)

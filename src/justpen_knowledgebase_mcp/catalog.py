@@ -45,6 +45,11 @@ _FORMATS = {
         "anchored by '*' or a run of '?', at most 512 characters. The legacy 'cpe:/' URI binding is rejected."
     ),
     "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
+    "dkim_selector": (
+        "A lowercase ASCII DKIM selector of at most 253 bytes - in practice far less, since the owner name "
+        "`<selector>._domainkey.<domain>` must itself fit in 253 bytes - as one or more dot-separated labels "
+        "of at most 63 bytes each, written without the `_domainkey` suffix or the domain."
+    ),
     "dmarc": (
         "Printable ASCII of at most 4096 characters beginning with 'v=DMARC1' followed by a semicolon, a normal "
         "space, or end of text."
@@ -61,6 +66,10 @@ _FORMATS = {
     "ip": "Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.",
     "ip_version": "A strict JSON integer equal to 4 or 6.",
     "method": "One to 32 characters matching an uppercase HTTP method token.",
+    "parameter_name": (
+        "1 to 128 printable ASCII characters without space, `&`, `=`, or `#`; one single parameter name, "
+        "never a raw query string."
+    ),
     "printable_text_200": "A string of 1-200 printable Unicode characters.",
     "redirect_status": "A strict JSON integer in 301, 302, 303, 307, or 308.",
     "service_name": "A member of the bundled versioned service name whitelist.",
@@ -117,6 +126,8 @@ def _relation(
 _SCOPE_OPEN_PORT = {"relation": "has_open_port", "endpoint": "source"}
 _SCOPE_SERVICE = {"relation": "has_service", "endpoint": "source"}
 _SCOPE_FINDING = {"relation": "has_finding", "endpoint": "source"}
+_SCOPE_DKIM = {"relation": "has_dkim_selector", "endpoint": "source"}
+_SCOPE_PARAMETER = {"relation": "has_parameter", "endpoint": "source"}
 _CAA_ORDER: dict[str, object] = {
     "property": "parameters",
     "algorithm": "sha256",
@@ -138,6 +149,10 @@ _NODES = {
         "required": {"der_sha256": "sha256"},
     },
     "cve": {"identity": _identity(["value"]), "required": {"value": "cve"}},
+    "dkim_record": {
+        "identity": _identity(["selector"], scope=_SCOPE_DKIM),
+        "required": {"selector": "dkim_selector", "value": "txt_value"},
+    },
     "dmarc_record": {"identity": _identity(["value"]), "required": {"value": "dmarc"}},
     "domain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}},
     "endpoint": {
@@ -158,6 +173,13 @@ _NODES = {
     "ip_cidr": {
         "identity": _identity(["value"]),
         "required": {"value": "cidr", "version": "ip_version"},
+    },
+    "parameter": {
+        "identity": _identity(["name", "location"], scope=_SCOPE_PARAMETER),
+        "required": {
+            "name": "parameter_name",
+            "location": ["query", "body", "header", "cookie", "path"],
+        },
     },
     "port": {
         "identity": _identity(["transport", "number"], scope=_SCOPE_OPEN_PORT),
@@ -206,6 +228,7 @@ _RELATIONS = {
     "contains_ip": _relation(["ip_cidr"], ["ip_address"]),
     "covers_name": _relation(["certificate"], _D),
     "dname_to": _relation(_D, _D, self_edge=True),
+    "has_dkim_selector": _relation(_D, ["dkim_record"]),
     "has_dmarc": _relation(_D, ["dmarc_record"]),
     "has_finding": _relation(
         ["port", "domain", "subdomain", "ip_address", "ip_cidr", "service", "endpoint", "certificate"],
@@ -220,6 +243,7 @@ _RELATIONS = {
     ),
     "has_nameserver": _relation(_D, _D, self_edge=True),
     "has_open_port": _relation(["ip_address"], ["port"]),
+    "has_parameter": _relation(["endpoint"], ["parameter"]),
     "has_service": _relation(["port"], ["service"]),
     "has_soa_primary": _relation(_D, _D, self_edge=True),
     "has_spf": _relation(_D, ["spf_record"]),
@@ -392,12 +416,16 @@ def _valid_field(value: object, rule: str | list[str]) -> bool:
         "cidr": lambda text: _parse_cidr(text) is not None,
         "cpe23_or_empty": lambda text: text == "" or (len(text) <= 512 and _CPE23.fullmatch(text) is not None),
         "cve": lambda text: re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", text) is not None,
+        "dkim_selector": _valid_dkim_selector,
         "dmarc": _valid_dmarc,
         "dns_name": lambda text: _dns_kind(text) is not None,
         "dns_or_explicit_empty": lambda text: text == "" or _dns_kind(text) is not None,
         "http_url": _valid_url,
         "ip": lambda text: _parse_ip(text) is not None,
         "method": lambda text: re.fullmatch(r"[A-Z][A-Z0-9!#$%&'*+.^_`|~-]{0,31}", text) is not None,
+        "parameter_name": lambda text: (
+            1 <= len(text) <= 128 and all(0x21 <= ord(char) <= 0x7E and char not in "&=#" for char in text)
+        ),
         "printable_text_200": lambda text: 1 <= len(text) <= 200 and text.isprintable(),
         "service_name": is_service_name,
         "sha256": lambda text: re.fullmatch(r"[0-9a-f]{64}", text) is not None,
@@ -411,6 +439,12 @@ def _valid_field(value: object, rule: str | list[str]) -> bool:
     }
     validator = validators.get(rule)
     return validator is not None and validator(value)
+
+
+def _valid_dkim_selector(value: str) -> bool:
+    if not value.isascii() or not 1 <= len(value) <= 253:
+        return False
+    return all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is not None for label in value.split("."))
 
 
 def _valid_spf(value: str) -> bool:

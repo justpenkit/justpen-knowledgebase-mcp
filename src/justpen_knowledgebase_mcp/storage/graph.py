@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 KINDS = frozenset(("nodes", "relations", "evidence"))
-_SCOPED_NODE_ORDER = ("port", "service", "finding")
+_SCOPED_NODE_ORDER = ("port", "service", "finding", "dkim_record", "parameter")
 
 
 @dataclass

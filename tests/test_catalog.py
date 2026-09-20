@@ -35,6 +35,8 @@ NODE_TYPES = {
     "dmarc_record",
     "txt_record",
     "tls_cipher_suite",
+    "dkim_record",
+    "parameter",
 }
 RELATION_TYPES = {
     "resolves_to",
@@ -65,6 +67,8 @@ RELATION_TYPES = {
     "has_txt_record",
     "supports_tls_cipher",
     "covers_name",
+    "has_dkim_selector",
+    "has_parameter",
 }
 
 
@@ -84,7 +88,7 @@ def test_manifest_has_only_catalog_v2_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 2
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "6b22ba316c6605f1052cde19284b8d8fd513df69aa5d99ff87315f2f20dbcd51"
+    assert CATALOG_FINGERPRINT == "6398e01eec0d914f661f66baa13f9bdef7fe9b60e095ad5bb3d9f013bda2ab0c"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -186,6 +190,15 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("tls_cipher_suite", {"version": "tls12", "name": "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"}),
         ("tls_cipher_suite", {"version": "ssl30", "name": "TLS_RSA_WITH_3DES_EDE_CBC_SHA"}),
         ("tls_cipher_suite", {"version": "dtls13", "name": "TLS_NULL_WITH_NULL_NULL"}),
+        ("dkim_record", {"selector": "default", "value": "v=DKIM1; k=rsa; p=MIGf"}),
+        ("dkim_record", {"selector": "s1", "value": "p=MIGf"}),
+        ("dkim_record", {"selector": "selector1.sub", "value": "p=MIGf"}),
+        ("dkim_record", {"selector": "a" * 63, "value": "p=MIGf"}),
+        ("parameter", {"name": "id", "location": "query"}),
+        ("parameter", {"name": "X-Request-Id", "location": "header"}),
+        ("parameter", {"name": "a" * 128, "location": "body"}),
+        ("parameter", {"name": "%20foo", "location": "path"}),
+        ("parameter", {"name": "session", "location": "cookie", "reflected": True}),
     ],
 )
 def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, object]) -> None:
@@ -303,6 +316,25 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("tls_cipher_suite", {"version": "tls13", "name": "TLS_AES__128_GCM_SHA256"}),
         ("tls_cipher_suite", {"version": "tls13", "name": "TLS_A" + "_A" * 100}),
         ("tls_cipher_suite", {"version": "tls13", "name": 1}),
+        ("dkim_record", {"selector": "s1._domainkey", "value": "p=MIGf"}),
+        ("dkim_record", {"selector": "_domainkey", "value": "p=MIGf"}),
+        ("dkim_record", {"selector": "Default", "value": "p=MIGf"}),
+        ("dkim_record", {"selector": "", "value": "p=MIGf"}),
+        ("dkim_record", {"selector": "a" * 64, "value": "p=MIGf"}),
+        ("dkim_record", {"selector": "s1-", "value": "p=MIGf"}),
+        ("dkim_record", {"selector": "s1", "value": ""}),
+        ("dkim_record", {"selector": "s1"}),
+        ("dkim_record", {"selector": 1, "value": "p=MIGf"}),
+        ("parameter", {"name": "id=1&page=2", "location": "query"}),
+        ("parameter", {"name": "id=1", "location": "query"}),
+        ("parameter", {"name": "id#frag", "location": "query"}),
+        ("parameter", {"name": "two words", "location": "query"}),
+        ("parameter", {"name": "", "location": "query"}),
+        ("parameter", {"name": "a" * 129, "location": "query"}),
+        ("parameter", {"name": "café", "location": "query"}),
+        ("parameter", {"name": "id", "location": "GET"}),
+        ("parameter", {"name": "id"}),
+        ("parameter", {"name": 1, "location": "query"}),
     ],
 )
 def test_invalid_node_types_bounds_and_noncanonical_spellings(type_name: str, properties: dict[str, object]) -> None:
@@ -352,6 +384,8 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "runs_technology": (["service", "endpoint"], ["technology"]),
         "protected_by": (["service", "endpoint"], ["technology"]),
         "has_dmarc": (d, ["dmarc_record"]),
+        "has_dkim_selector": (d, ["dkim_record"]),
+        "has_parameter": (["endpoint"], ["parameter"]),
         "has_txt_record": (d, ["txt_record"]),
         "supports_tls_cipher": (["service"], ["tls_cipher_suite"]),
         "covers_name": (["certificate"], d),
