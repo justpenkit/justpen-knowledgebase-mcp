@@ -1,12 +1,13 @@
 """Delete admission and bounded cleanup decisions with isolated database responses."""
 
+import re
 from unittest.mock import Mock
 
 import pytest
 
 from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, MissingRecordsError, RecordConflictError
 from justpen_knowledgebase_mcp.models import DeleteRequest
-from justpen_knowledgebase_mcp.storage import deletions
+from justpen_knowledgebase_mcp.storage import deletions, graph_sql
 
 from .helpers import EVIDENCE, NODE, OTHER, cursor, database, owner
 
@@ -33,15 +34,30 @@ def test_prepare_checks_entire_batch_before_any_mutation(monkeypatch):
     assert db.execute.call_count == 2
 
 
-@pytest.mark.parametrize("relation_type", ["has_open_port", "has_service", "has_finding"])
+@pytest.mark.parametrize(
+    "relation_type", ["has_open_port", "has_service", "has_finding", "has_dkim_selector", "has_parameter"]
+)
 def test_scope_relation_delete_requires_child_first(monkeypatch, relation_type):
     child = owner(
-        id=2, type={"has_open_port": "port", "has_service": "service", "has_finding": "finding"}[relation_type]
+        id=2,
+        type={
+            "has_open_port": "port",
+            "has_service": "service",
+            "has_finding": "finding",
+            "has_dkim_selector": "dkim_record",
+            "has_parameter": "parameter",
+        }[relation_type],
     )
     monkeypatch.setattr(deletions, "row_by_id", Mock(return_value=child))
     relation = owner(type=relation_type, target_id=2)
     with pytest.raises(ConflictError, match="child must be deleted first"):
         deletions._reject_scope_orphan(database(), "relations", relation)
+
+
+def test_scope_relation_names_agree_between_the_frozenset_and_the_inline_sql():
+    """The two constants repeat one list in two syntaxes; a missed edit drops a delete guard."""
+    quoted = set(re.findall(r"'([a-z_]+)'", graph_sql.SCOPED_CHILD_BY_PARENT))
+    assert quoted == set(graph_sql.SCOPE_RELATION_TYPES)
 
 
 def test_parent_delete_requires_scoped_child_first():

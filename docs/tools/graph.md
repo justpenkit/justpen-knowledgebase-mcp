@@ -72,8 +72,13 @@ it to the `domain` or `subdomain` node itself, matching `has_spf`. Do not create
 a `_dmarc.example.com` subdomain node to hold it.
 
 `txt_record` and `dkim_record` values must be normalized before writing: strip
-DNS presentation-form quoting, decode escapes, and concatenate a multi-string
-RRset's character-strings into one value. Never write ephemeral
+DNS presentation-form quoting, decode escapes, concatenate a multi-string
+RRset's character-strings into one value, and remove surrounding whitespace.
+Version tags are matched exactly, so `v=spf1` is routed to `spf_record` while
+`V=SPF1` and a leading-space spelling are accepted as a generic `txt_record`.
+That is deliberate: a case-variant tag is a real misconfiguration, the
+dedicated types reject it, and refusing it here too would leave it no home.
+Record it as a `txt_record` and report the defect as a `finding`. Never write ephemeral
 `_acme-challenge` DNS-01 challenge values as `txt_record`s; each certificate
 issuance rotates the nonce, so recording them accumulates one node per renewal
 with no supersession.
@@ -83,11 +88,23 @@ normalized — not to each crawled URL variant. `endpoint` identity includes the
 query string, so unscoped attachment mints one `id` parameter node per observed
 URL instead of one per real parameter.
 
+No required map references the `cpe23_or_empty` rule, so a stored `cpe` is
+never validated against it. Produce the spelling the rule describes and
+re-validate it on read rather than trusting the stored bytes.
+
 A versioned `technology.cpe` (`cpe:2.3:a:f5:nginx:1.18.0:*:...`) belongs on the
 `runs_technology` edge beside `version`, since the version is per-host. An
 unversioned product CPE may sit on the `technology` node itself. Omit the key
 rather than sending an empty string; a later write that sends the key overwrites
 the stored value.
+
+A `dkim_record` is identified by its selector and its parent domain, not by its
+key. Writing the same selector again patches the stored `value` in place, so a
+rotated or hijacked answer overwrites the key material previously recorded for
+that selector. This keeps the graph a current-state view, one node per selector
+rather than one per rotation; the superseded key survives only in whatever
+evidence the earlier write attached. Attach evidence to every `dkim_record`
+write that matters.
 
 `technology` and `tls_cipher_suite` are workspace-global shared-vocabulary
 nodes referenced by every host that matches. Neither is a `has_finding` source:

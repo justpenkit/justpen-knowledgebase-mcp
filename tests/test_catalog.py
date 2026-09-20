@@ -88,7 +88,7 @@ def test_manifest_has_only_catalog_v2_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 2
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "6398e01eec0d914f661f66baa13f9bdef7fe9b60e095ad5bb3d9f013bda2ab0c"
+    assert CATALOG_FINGERPRINT == "39a27a4bbc7a1b9f32c142d2f8e55d6d36efd5f98ff994601de0c2618fdef675"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:

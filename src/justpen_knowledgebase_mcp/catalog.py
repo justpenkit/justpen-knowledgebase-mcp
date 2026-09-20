@@ -42,7 +42,9 @@ _FORMATS = {
     "cpe23_or_empty": (
         "The empty string, or a lowercase CPE 2.3 formatted string (NIST IR 7695): 'cpe:2.3:' followed by the "
         "part and ten colon-separated components, each '*', '-', or an escaped attribute value optionally "
-        "anchored by '*' or a run of '?', at most 512 characters. The legacy 'cpe:/' URI binding is rejected."
+        "anchored by '*' or a run of '?', at most 512 characters. The legacy 'cpe:/' URI binding is rejected. "
+        "No required map references this rule, so a stored cpe property is never checked against it; the rule "
+        "states the spelling writers must produce and readers must re-validate."
     ),
     "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
     "dkim_selector": (
@@ -81,8 +83,9 @@ _FORMATS = {
         "interior dot, underscore, plus, or hyphen."
     ),
     "tls_cipher_name": (
-        "An IANA TLS cipher suite name: 5 to 128 uppercase ASCII characters beginning 'TLS_', with "
-        "underscore-separated alphanumeric components."
+        "The spelling of an IANA TLS cipher suite name: 5 to 128 uppercase ASCII characters beginning 'TLS_', "
+        "with underscore-separated alphanumeric components. Shape only; membership in the IANA registry is not "
+        "checked, so a well-formed name that no suite bears is accepted."
     ),
     "txt_value": (
         "1 to 4096 printable ASCII characters, the concatenated and unquoted character-strings of one TXT RRset."

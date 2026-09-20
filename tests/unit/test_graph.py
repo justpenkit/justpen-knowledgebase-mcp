@@ -5,11 +5,20 @@ from unittest.mock import Mock
 
 import pytest
 
+from justpen_knowledgebase_mcp.catalog import catalog_manifest
 from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, NotFoundError, RecordConflictError
 from justpen_knowledgebase_mcp.models import GetRequest, NodeRef, NodeWrite, RelationWrite, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.storage import graph
 
 from .helpers import EVIDENCE, NODE, OTHER, cursor, database, owner
+
+
+def test_scoped_node_order_covers_every_parent_scoped_catalog_type():
+    """A scoped type missing here is not an import or catalog failure: the first write of it raises
+    InvalidParamsError("scoped node dependency could not be resolved") at runtime instead."""
+    declared = {name for name, definition in catalog_manifest()["nodes"].items() if "scope" in definition["identity"]}
+    assert set(graph._SCOPED_NODE_ORDER) == declared
+    assert len(graph._SCOPED_NODE_ORDER) == len(declared)
 
 
 def test_row_materialization_and_kind_validation():
