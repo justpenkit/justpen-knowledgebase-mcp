@@ -34,6 +34,12 @@ _FORMATS = {
         "and duplicates are preserved."
     ),
     "asn": "A strict JSON integer from 0 through 4294967295.",
+    "bucket_name": (
+        "The provider-global name of an object-storage bucket: 3 to 222 lowercase ASCII characters from "
+        "letters, digits, hyphen, underscore and dot, starting and ending alphanumeric, without a doubled "
+        "dot, and never a dotted-quad IPv4 address. Every provider is stricter than this union rule, and "
+        "the declared provider fixes which of the narrower spellings is accepted."
+    ),
     "caa_parameters": (
         "An array of objects with name and value strings. Names start alphanumeric and continue alphanumeric or "
         "hyphen. Values are empty or use ASCII 0x21-0x3A and 0x3C-0x7E."
@@ -62,6 +68,17 @@ _FORMATS = {
         "labels at most 63 bytes, total at most 253 bytes, and no trailing dot."
     ),
     "dns_or_explicit_empty": "dns_name or the explicit empty string for no SNI offer; IP literals are rejected.",
+    "email_address": (
+        "A lowercase ASCII mailbox of at most 254 characters: an RFC 5322 dot-atom local part of at most 64 "
+        "characters, one `@`, and a domain that satisfies dns_name. Quoted local parts, address literals and "
+        "display names are rejected. A local part is case-sensitive on the wire; this rule requires the "
+        "lowercase spelling anyway, so one mailbox is one node."
+    ),
+    "http_fingerprint_value": (
+        "Either a signed 32-bit decimal integer written in ASCII without a leading zero or a plus sign, for a "
+        "MurmurHash3 favicon hash, or exactly 64 lowercase hexadecimal characters for a response digest. The "
+        "declared kind fixes which one is accepted."
+    ),
     "http_url": (
         "Canonical absolute ASCII http/https URL with lowercase host, mandatory path, no userinfo, fragment, "
         "whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase percent escape. "
@@ -71,12 +88,29 @@ _FORMATS = {
     "ip": "Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.",
     "ip_version": "A strict JSON integer equal to 4 or 6.",
     "method": "One to 32 characters matching an uppercase HTTP method token.",
+    "mta_sts": (
+        "Printable ASCII of at most 4096 characters beginning with 'v=STSv1' followed by a semicolon, a normal "
+        "space, or end of text: the TXT record at `_mta-sts.<domain>`, not the policy file body."
+    ),
     "parameter_name": (
         "1 to 128 printable ASCII characters without space, `&`, `=`, or `#`; one single parameter name, "
         "never a raw query string."
     ),
+    "phone_e164": "An E.164 number: `+`, a leading digit from 1 through 9, and in total 2 to 15 digits.",
+    "printable_text_1024": "A string of 1-1024 printable Unicode characters.",
     "printable_text_200": "A string of 1-200 printable Unicode characters.",
     "redirect_status": "A strict JSON integer in 301, 302, 303, 307, or 308.",
+    "repo_name": (
+        "A 1-100 character lowercase ASCII repository name from letters, digits, dot, underscore and hyphen, "
+        "holding at least one alphanumeric character and never the reserved `.` or `..`. Hosting platforms "
+        "resolve names case-insensitively, so the lowercase spelling is required to keep one repository one node."
+    ),
+    "repo_owner": (
+        "A 1-255 character lowercase ASCII owner path of one or more `/`-separated segments, each 1-100 "
+        "characters from letters, digits, dot, underscore and hyphen and each starting and ending "
+        "alphanumeric. The separator exists for nested GitLab groups; the declared platform fixes whether "
+        "more than one segment is accepted."
+    ),
     "rir_handle": (
         "A regional-registry object handle of 2 to 64 ASCII characters, starting and ending alphanumeric and "
         "continuing alphanumeric or hyphen. Handles are case-sensitive and stored exactly as the registry "
@@ -91,6 +125,12 @@ _FORMATS = {
     "tech_token": (
         "A 1-63 character lowercase ASCII technology slug that starts and ends alphanumeric and may contain "
         "interior dot, underscore, plus, or hyphen."
+    ),
+    "tenant_id": (
+        "A 1-128 character lowercase ASCII identity-tenant identifier that starts and ends alphanumeric and "
+        "may contain interior dot, underscore or hyphen. The declared provider fixes the narrower spelling, "
+        "and every member of the provider enum has one: a canonical lowercase UUID for Entra ID, a bare "
+        "organization slug for Okta."
     ),
     "tls_cipher_name": (
         "The spelling of an IANA TLS cipher suite name: 5 to 128 uppercase ASCII characters beginning 'TLS_', "
@@ -145,6 +185,7 @@ _SCOPE_SERVICE = {"relation": "has_service", "endpoint": "source"}
 _SCOPE_FINDING = {"relation": "has_finding", "endpoint": "source"}
 _SCOPE_DKIM = {"relation": "has_dkim_selector", "endpoint": "source"}
 _SCOPE_PARAMETER = {"relation": "has_parameter", "endpoint": "source"}
+_SCOPE_MTA_STS = {"relation": "has_mta_sts_policy", "endpoint": "source"}
 _CAA_ORDER: dict[str, object] = {
     "property": "parameters",
     "algorithm": "sha256",
@@ -179,6 +220,7 @@ _NODES = {
     },
     "dmarc_record": {"identity": _identity(["value"]), "required": {"value": "dmarc"}},
     "domain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}},
+    "email_address": {"identity": _identity(["value"]), "required": {"value": "email_address"}},
     "endpoint": {
         "identity": _identity(["url", "method"]),
         "required": {"url": "http_url", "method": "method"},
@@ -190,6 +232,33 @@ _NODES = {
             "severity": ["info", "low", "medium", "high", "critical"],
         },
     },
+    "host_key": {
+        "identity": _identity(["algorithm", "fingerprint_sha256"]),
+        "required": {
+            "algorithm": [
+                "ssh-rsa",
+                "ssh-dss",
+                "ssh-ed25519",
+                "ecdsa-sha2-nistp256",
+                "ecdsa-sha2-nistp384",
+                "ecdsa-sha2-nistp521",
+                "sk-ssh-ed25519@openssh.com",
+                "sk-ecdsa-sha2-nistp256@openssh.com",
+            ],
+            "fingerprint_sha256": "sha256",
+        },
+    },
+    "http_fingerprint": {
+        "identity": _identity(["kind", "value"]),
+        "required": {
+            "kind": ["favicon_mmh3", "body_sha256", "header_sha256"],
+            "value": "http_fingerprint_value",
+        },
+    },
+    "identity_tenant": {
+        "identity": _identity(["provider", "tenant_id"]),
+        "required": {"provider": ["entra_id", "okta"], "tenant_id": "tenant_id"},
+    },
     "ip_address": {
         "identity": _identity(["value"]),
         "required": {"value": "ip", "version": "ip_version"},
@@ -197,6 +266,10 @@ _NODES = {
     "ip_cidr": {
         "identity": _identity(["value"]),
         "required": {"value": "cidr", "version": "ip_version"},
+    },
+    "mta_sts_policy": {
+        "identity": _identity(["value"], scope=_SCOPE_MTA_STS),
+        "required": {"value": "mta_sts"},
     },
     "organization": {
         "identity": _identity(["registry", "handle"]),
@@ -212,6 +285,7 @@ _NODES = {
             "location": ["query", "body", "header", "cookie", "path"],
         },
     },
+    "phone": {"identity": _identity(["value"]), "required": {"value": "phone_e164"}},
     "port": {
         "identity": _identity(["transport", "number"], scope=_SCOPE_OPEN_PORT),
         "required": {"number": "uint16", "transport": ["tcp", "udp", "sctp"]},
@@ -220,11 +294,28 @@ _NODES = {
         "identity": _identity(["iana_id"]),
         "required": {"iana_id": "uint16", "name": "printable_text_200"},
     },
+    "repository": {
+        "identity": _identity(["host", "owner", "name"]),
+        "required": {
+            "platform": ["github", "gitlab", "bitbucket", "gitea"],
+            "host": "dns_name",
+            "owner": "repo_owner",
+            "name": "repo_name",
+        },
+    },
+    "secret": {
+        "identity": _identity(["value_sha256"]),
+        "required": {"value_sha256": "sha256"},
+    },
     "service": {
         "identity": _identity(["name"], scope=_SCOPE_SERVICE),
         "required": {"name": "service_name"},
     },
     "spf_record": {"identity": _identity(["value"]), "required": {"value": "spf"}},
+    "storage_bucket": {
+        "identity": _identity(["provider", "name"]),
+        "required": {"provider": ["aws_s3", "gcp_gcs", "azure_blob"], "name": "bucket_name"},
+    },
     "subdomain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}},
     "technology": {
         "identity": _identity(["name"]),
@@ -246,8 +337,9 @@ _NODES = {
 
 _D = ["domain", "subdomain"]
 _RELATIONS = {
-    "affected_by": _relation(["service", "finding"], ["cve"]),
+    "affected_by": _relation(["service", "finding", "endpoint"], ["cve"]),
     "announced_by": _relation(["ip_cidr"], ["asn"]),
+    "backed_by_bucket": _relation(["domain", "subdomain", "endpoint"], ["storage_bucket"]),
     "caa_issue": _relation(
         _D,
         _D,
@@ -272,12 +364,42 @@ _RELATIONS = {
         identity=_identity(["coverage"]),
     ),
     "dname_to": _relation(_D, _D, self_edge=True),
+    "exposes_secret": _relation(
+        ["repository", "endpoint", "storage_bucket"],
+        ["secret"],
+        required={"location": "printable_text_1024"},
+        identity=_identity(["location"]),
+    ),
+    "federates_with": _relation(_D, ["identity_tenant"]),
+    "has_contact": _relation(
+        ["organization", "registrar", "domain", "subdomain", "repository"],
+        ["email_address", "phone"],
+        required={"role": ["abuse", "admin", "tech", "registrant", "billing", "noc", "security", "published"]},
+        identity=_identity(["role"]),
+    ),
     "has_dkim_selector": _relation(_D, ["dkim_record"]),
     "has_dmarc": _relation(_D, ["dmarc_record"]),
     "has_finding": _relation(
-        ["port", "domain", "subdomain", "ip_address", "ip_cidr", "service", "endpoint", "certificate"],
+        [
+            "port",
+            "domain",
+            "subdomain",
+            "ip_address",
+            "ip_cidr",
+            "service",
+            "endpoint",
+            "certificate",
+            "parameter",
+            "dkim_record",
+            "storage_bucket",
+            "repository",
+            "identity_tenant",
+            "secret",
+            "mta_sts_policy",
+        ],
         ["finding"],
     ),
+    "has_http_fingerprint": _relation(["endpoint"], ["http_fingerprint"]),
     "has_mail_exchange": _relation(
         _D,
         _D,
@@ -285,6 +407,7 @@ _RELATIONS = {
         identity=_identity(["preference"]),
         self_edge=True,
     ),
+    "has_mta_sts_policy": _relation(_D, ["mta_sts_policy"]),
     "has_nameserver": _relation(_D, _D, self_edge=True),
     "has_open_port": _relation(["ip_address"], ["port"]),
     "has_parameter": _relation(["endpoint"], ["parameter"]),
@@ -317,6 +440,7 @@ _RELATIONS = {
     "has_weakness": _relation(["finding", "cve"], ["cwe"]),
     "issued_by": _relation(["certificate"], ["certificate"], self_edge=True),
     "operated_by": _relation(["asn", "ip_cidr"], ["organization"]),
+    "owns_repository": _relation(_D, ["repository"]),
     "presents_certificate": _relation(
         ["service"],
         ["certificate"],
@@ -327,8 +451,9 @@ _RELATIONS = {
         },
         identity=_identity(["mode", "server_name", "alpn_offered"], order_independent=_ALPN_ORDER),
     ),
+    "presents_host_key": _relation(["service"], ["host_key"]),
     "protected_by": _relation(
-        ["service", "endpoint"],
+        ["service", "endpoint", "domain", "subdomain"],
         ["technology"],
         required={"kind": ["waf", "cdn", "reverse_proxy", "load_balancer"]},
         identity=_identity(["kind"]),
@@ -343,7 +468,7 @@ _RELATIONS = {
     "registered_through": _relation(["domain"], ["registrar"]),
     "resolves_to": _relation(_D, ["ip_address"]),
     "reverse_resolves_to": _relation(["ip_address"], _D),
-    "runs_technology": _relation(["service", "endpoint"], ["technology"]),
+    "runs_technology": _relation(["service", "endpoint", "domain", "subdomain"], ["technology"]),
     "serves_endpoint": _relation(["service"], ["endpoint"]),
     "supports_tls_cipher": _relation(["service"], ["tls_cipher_suite"]),
 }
@@ -402,7 +527,6 @@ def _ensure_scope_contract() -> None:
 
 
 _ensure_scope_contract()
-
 
 # The canonical serialized contract is immutable; callers receive a fresh tree.
 CATALOG_JSON = json.dumps(_CATALOG, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -498,21 +622,134 @@ def _cross_field_registrar(_type_name: str, properties: dict[str, Any]) -> None:
 
 def _cross_field_txt_record(_type_name: str, properties: dict[str, Any]) -> None:
     value = cast("str", properties["value"])
-    if value.startswith(("v=spf1", "v=DMARC1", "v=DKIM1")):
+    if value.startswith(("v=spf1", "v=DMARC1", "v=DKIM1", "v=STSv1")):
         raise ExpectedValidationError("/properties/value: use the dedicated TXT record type")
+
+
+# The digest kinds share one rule; favicon_mmh3 is the one that does not.
+_FINGERPRINT_DIGEST_KINDS = ("body_sha256", "header_sha256")
+_SHA256_TEXT = re.compile(r"[0-9a-f]{64}")
+
+
+def _cross_field_http_fingerprint(_type_name: str, properties: dict[str, Any]) -> None:
+    value = cast("str", properties["value"])
+    if properties["kind"] == "favicon_mmh3":
+        if not _valid_signed_int32_text(value):
+            raise ExpectedValidationError("/properties/value: favicon_mmh3 expects a signed 32-bit integer")
+    elif _SHA256_TEXT.fullmatch(value) is None:
+        raise ExpectedValidationError("/properties/value: a response digest expects 64 lowercase hex characters")
+
+
+# One entry per provider enum member; _ensure_cross_field_contract refuses a missing one at import.
+_TENANT_RULES: dict[str, str] = {
+    "entra_id": r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}",
+    "okta": r"[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?",
+}
+
+
+def _cross_field_identity_tenant(_type_name: str, properties: dict[str, Any]) -> None:
+    provider = cast("str", properties["provider"])
+    if re.fullmatch(_TENANT_RULES[provider], cast("str", properties["tenant_id"])) is None:
+        raise ExpectedValidationError(f"/properties/tenant_id: not a {provider} tenant spelling")
+
+
+# None means the platform nests owner segments, so repo_owner is already the whole rule.
+_REPO_OWNER_RULES: dict[str, tuple[int, str] | None] = {
+    "github": (39, r"[a-z0-9](?:-?[a-z0-9])*"),
+    "bitbucket": (62, r"[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?"),
+    "gitea": (40, r"[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?"),
+    "gitlab": None,
+}
+
+
+def _cross_field_repository(_type_name: str, properties: dict[str, Any]) -> None:
+    platform, owner = cast("str", properties["platform"]), cast("str", properties["owner"])
+    rule = _REPO_OWNER_RULES[platform]
+    if rule is None:
+        return
+    if "/" in owner:
+        raise ExpectedValidationError(f"/properties/owner: a {platform} owner holds one segment")
+    limit, grammar = rule
+    if len(owner) > limit or re.fullmatch(grammar, owner) is None:
+        raise ExpectedValidationError(f"/properties/owner: not a {platform} owner spelling")
+
+
+# A secret node holds a digest so that occurrences join; the secret itself must never reach storage,
+# where an additional property would also be property-indexed and full-text searchable.
+_SECRET_PLAINTEXT_KEYS = frozenset(
+    {"value", "secret", "plaintext", "password", "token", "key", "credential", "match", "raw"}
+)
+
+
+def _cross_field_secret(_type_name: str, properties: dict[str, Any]) -> None:
+    carried = sorted(_SECRET_PLAINTEXT_KEYS.intersection(properties))
+    if carried:
+        raise ExpectedValidationError(f"/properties/{carried[0]}: a secret node never carries the secret itself")
+
+
+_BUCKET_RULES: dict[str, tuple[int, int, str]] = {
+    "aws_s3": (3, 63, r"[a-z0-9][a-z0-9.-]*[a-z0-9]"),
+    "gcp_gcs": (3, 222, r"[a-z0-9][a-z0-9._-]*[a-z0-9]"),
+    "azure_blob": (3, 24, r"[a-z0-9]+"),
+}
+
+
+def _cross_field_storage_bucket(_type_name: str, properties: dict[str, Any]) -> None:
+    provider, name = cast("str", properties["provider"]), cast("str", properties["name"])
+    low, high, grammar = _BUCKET_RULES[provider]
+    if not low <= len(name) <= high or re.fullmatch(grammar, name) is None:
+        raise ExpectedValidationError(f"/properties/name: not a {provider} bucket spelling")
+    if provider == "aws_s3" and (name.startswith(("xn--", "sthree-")) or name.endswith(("-s3alias", "--ol-s3"))):
+        raise ExpectedValidationError("/properties/name: reserved aws_s3 bucket prefix or suffix")
+    if provider == "gcp_gcs" and (name.startswith("goog") or "google" in name):
+        raise ExpectedValidationError("/properties/name: reserved gcp_gcs bucket name")
+    if provider == "gcp_gcs" and any(len(label) > 63 for label in name.split(".")):
+        raise ExpectedValidationError("/properties/name: gcp_gcs dotted components hold at most 63 characters")
 
 
 # Every entry runs after the required map validated the properties it reads.
 _CROSS_FIELDS: dict[str, Callable[[str, dict[str, Any]], None]] = {
     "domain": _cross_field_dns_name,
     "subdomain": _cross_field_dns_name,
+    "http_fingerprint": _cross_field_http_fingerprint,
+    "identity_tenant": _cross_field_identity_tenant,
     "ip_address": _cross_field_ip_address,
     "ip_cidr": _cross_field_ip_cidr,
+    "repository": _cross_field_repository,
+    "secret": _cross_field_secret,
     "service": _cross_field_service,
+    "storage_bucket": _cross_field_storage_bucket,
     "tls_fingerprint": _cross_field_tls_fingerprint,
     "registrar": _cross_field_registrar,
     "txt_record": _cross_field_txt_record,
 }
+
+
+def _enum(kind: str, type_name: str, field: str) -> set[str]:
+    definitions = cast("dict[str, dict[str, Any]]", _CATALOG[kind])
+    return set(cast("list[str]", definitions[type_name]["required"][field]))
+
+
+def _ensure_cross_field_contract() -> None:
+    """Fail at import if a per-member cross-field table stops covering its own enum.
+
+    Each table below is indexed by an enum member, so a member added without its entry would raise
+    KeyError as INTERNAL instead of rejecting the value, and a member silently inheriting another
+    member's branch would accept a spelling nobody checked.
+    """
+    tables = {
+        ("nodes", "identity_tenant", "provider"): set(_TENANT_RULES),
+        ("nodes", "repository", "platform"): set(_REPO_OWNER_RULES),
+        ("nodes", "storage_bucket", "provider"): set(_BUCKET_RULES),
+        ("nodes", "http_fingerprint", "kind"): {"favicon_mmh3", *_FINGERPRINT_DIGEST_KINDS},
+    }
+    for (kind, type_name, field), covered in tables.items():
+        declared = _enum(kind, type_name, field)
+        if declared != covered:
+            raise RuntimeError(f"cross-field table for {type_name}.{field} does not cover {declared ^ covered}")
+
+
+_ensure_cross_field_contract()
 
 
 def _validate_cross_fields(kind: str, type_name: str, properties: dict[str, Any]) -> None:
@@ -545,6 +782,7 @@ def _valid_field(value: object, rule: str | list[str]) -> bool:
     if type(value) is not str:
         return False
     validators: dict[str, Callable[[str], bool]] = {
+        "bucket_name": _valid_bucket_name,
         "cidr": lambda text: _parse_cidr(text) is not None,
         "cpe23_or_empty": lambda text: text == "" or (len(text) <= 512 and _CPE23.fullmatch(text) is not None),
         "cve": lambda text: re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", text) is not None,
@@ -553,19 +791,29 @@ def _valid_field(value: object, rule: str | list[str]) -> bool:
         "dmarc": _valid_dmarc,
         "dns_name": lambda text: _dns_kind(text) is not None,
         "dns_or_explicit_empty": lambda text: text == "" or _dns_kind(text) is not None,
+        "email_address": _valid_email_address,
+        "http_fingerprint_value": lambda text: (
+            re.fullmatch(r"[0-9a-f]{64}", text) is not None or _valid_signed_int32_text(text)
+        ),
         "http_url": _valid_url,
         "ip": lambda text: _parse_ip(text) is not None,
         "method": lambda text: re.fullmatch(r"[A-Z][A-Z0-9!#$%&'*+.^_`|~-]{0,31}", text) is not None,
+        "mta_sts": _valid_mta_sts,
         "parameter_name": lambda text: (
             1 <= len(text) <= 128 and all(0x21 <= ord(char) <= 0x7E and char not in "&=#" for char in text)
         ),
+        "phone_e164": lambda text: re.fullmatch(r"\+[1-9][0-9]{1,14}", text) is not None,
         "printable_text_200": lambda text: 1 <= len(text) <= 200 and text.isprintable(),
+        "printable_text_1024": lambda text: 1 <= len(text) <= 1024 and text.isprintable(),
+        "repo_name": _valid_repo_name,
+        "repo_owner": _valid_repo_owner,
         "rir_handle": lambda text: re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]", text) is not None,
         "service_name": is_service_name,
         "sha256": lambda text: re.fullmatch(r"[0-9a-f]{64}", text) is not None,
         "spf": _valid_spf,
         "srv_label": lambda text: re.fullmatch(r"_[a-z0-9](?:[a-z0-9-]{0,60}[a-z0-9])?", text) is not None,
         "tech_token": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9._+-]{0,61}[a-z0-9])?", text) is not None,
+        "tenant_id": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?", text) is not None,
         "tls_fingerprint_value": lambda text: re.fullmatch(r"[0-9a-f]{32}|[0-9a-f]{62}", text) is not None,
         "tls_cipher_name": lambda text: (
             5 <= len(text) <= 128 and re.fullmatch(r"TLS_[A-Z0-9]+(?:_[A-Z0-9]+)*", text) is not None
@@ -580,6 +828,53 @@ def _valid_dkim_selector(value: str) -> bool:
     if not value.isascii() or not 1 <= len(value) <= 253:
         return False
     return all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is not None for label in value.split("."))
+
+
+def _valid_signed_int32_text(value: str) -> bool:
+    """Accept one spelling of a signed 32-bit integer: no plus, no leading zero, and no negative zero."""
+    if re.fullmatch(r"(?:0|-?[1-9][0-9]{0,9})", value) is None:
+        return False
+    return -(2**31) <= int(value) <= 2**31 - 1
+
+
+def _valid_bucket_name(value: str) -> bool:
+    if not 3 <= len(value) <= 222 or ".." in value:
+        return False
+    if re.fullmatch(r"[a-z0-9][a-z0-9._-]*[a-z0-9]", value) is None:
+        return False
+    return re.fullmatch(r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}", value) is None
+
+
+def _valid_repo_name(value: str) -> bool:
+    """`.` and `..` are excluded by the alphanumeric requirement, which every real name satisfies."""
+    if not 1 <= len(value) <= 100:
+        return False
+    return re.fullmatch(r"[a-z0-9._-]+", value) is not None and any(character.isalnum() for character in value)
+
+
+def _valid_repo_owner(value: str) -> bool:
+    if not 1 <= len(value) <= 255:
+        return False
+    segments = value.split("/")
+    return all(re.fullmatch(r"[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?", segment) is not None for segment in segments)
+
+
+def _valid_email_address(value: str) -> bool:
+    if not value.isascii() or not 3 <= len(value) <= 254 or value != value.lower():
+        return False
+    local, separator, domain = value.rpartition("@")
+    if separator == "" or not 1 <= len(local) <= 64 or _dns_kind(domain) is None:
+        return False
+    atom = r"[a-z0-9!#$%&'*+/=?^_`{|}~-]+"
+    return re.fullmatch(rf"{atom}(?:\.{atom})*", local) is not None
+
+
+def _valid_mta_sts(value: str) -> bool:
+    if not 1 <= len(value) <= 4096:
+        return False
+    if not (value == "v=STSv1" or value.startswith(("v=STSv1;", "v=STSv1 "))):
+        return False
+    return all(0x20 <= ord(char) <= 0x7E for char in value)
 
 
 def _valid_spf(value: str) -> bool:

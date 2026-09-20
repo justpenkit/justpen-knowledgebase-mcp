@@ -42,6 +42,15 @@ NODE_TYPES = {
     "registrar",
     "cwe",
     "organization",
+    "email_address",
+    "host_key",
+    "http_fingerprint",
+    "identity_tenant",
+    "mta_sts_policy",
+    "phone",
+    "repository",
+    "secret",
+    "storage_bucket",
 }
 RELATION_TYPES = {
     "resolves_to",
@@ -80,6 +89,14 @@ RELATION_TYPES = {
     "registered_through",
     "has_weakness",
     "operated_by",
+    "backed_by_bucket",
+    "exposes_secret",
+    "federates_with",
+    "has_contact",
+    "has_http_fingerprint",
+    "has_mta_sts_policy",
+    "owns_repository",
+    "presents_host_key",
 }
 
 
@@ -99,7 +116,7 @@ def test_manifest_has_only_catalog_v2_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 2
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "e31b081e3544dfa23e4cb0480750f1b3cbbe585651a726f366a07f956cdc19e6"
+    assert CATALOG_FINGERPRINT == "d25e5c37a1e363eccfcadbd7919aac85b017b730380badd765fd3c1a9252c7c9"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -146,6 +163,10 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
     assert manifest["nodes"]["finding"]["identity"] == {
         "properties": ["title"],
         "scope": {"relation": "has_finding", "endpoint": "source"},
+    }
+    assert manifest["nodes"]["mta_sts_policy"]["identity"] == {
+        "properties": ["value"],
+        "scope": {"relation": "has_mta_sts_policy", "endpoint": "source"},
     }
 
 
@@ -230,7 +251,44 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("organization", {"registry": "ripe", "handle": "ORG-nG51-RIPE"}),
         ("organization", {"registry": "afrinic", "handle": "ORG-Ab1-AFRINIC"}),
         ("organization", {"registry": "arin", "handle": "org-gogl-1-arin"}),
-        ("organization", {"registry": "lacnic", "handle": "ORG-1", "abuse_contact": "x@example.com"}),
+        ("organization", {"registry": "lacnic", "handle": "ORG-1", "country": "br"}),
+        ("email_address", {"value": "abuse@example.com"}),
+        ("email_address", {"value": "first.last+tag@mail.example.co.uk"}),
+        ("email_address", {"value": "a@b.io"}),
+        ("email_address", {"value": "a" * 64 + "@example.com"}),
+        ("host_key", {"algorithm": "ssh-ed25519", "fingerprint_sha256": "a" * 64}),
+        ("host_key", {"algorithm": "sk-ecdsa-sha2-nistp256@openssh.com", "fingerprint_sha256": "0" * 64}),
+        ("host_key", {"algorithm": "ssh-rsa", "fingerprint_sha256": "f" * 64, "bits": 2048}),
+        ("http_fingerprint", {"kind": "favicon_mmh3", "value": "-1752256170"}),
+        ("http_fingerprint", {"kind": "favicon_mmh3", "value": "0"}),
+        ("http_fingerprint", {"kind": "favicon_mmh3", "value": "2147483647"}),
+        ("http_fingerprint", {"kind": "favicon_mmh3", "value": "-2147483648"}),
+        ("http_fingerprint", {"kind": "body_sha256", "value": "a" * 64}),
+        ("http_fingerprint", {"kind": "header_sha256", "value": "0" * 64}),
+        ("identity_tenant", {"provider": "entra_id", "tenant_id": "72f988bf-86f1-41af-91ab-2d7cd011db47"}),
+        ("identity_tenant", {"provider": "okta", "tenant_id": "dev-12345"}),
+        ("identity_tenant", {"provider": "okta", "tenant_id": "acme_corp"}),
+        ("mta_sts_policy", {"value": "v=STSv1"}),
+        ("mta_sts_policy", {"value": "v=STSv1; id=20260920t000000z;"}),
+        ("mta_sts_policy", {"value": "v=STSv1 id=1"}),
+        ("phone", {"value": "+14155552671"}),
+        ("phone", {"value": "+905321234567"}),
+        ("phone", {"value": "+12"}),
+        ("phone", {"value": "+" + "9" * 15}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "example-org", "name": "web-app"}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "a", "name": ".github"}),
+        ("repository", {"platform": "gitlab", "host": "git.example.com", "owner": "group/sub", "name": "api"}),
+        ("repository", {"platform": "bitbucket", "host": "bitbucket.org", "owner": "team_x", "name": "infra"}),
+        ("repository", {"platform": "gitea", "host": "code.example.com", "owner": "ops", "name": "runbooks"}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "a" * 39, "name": "n" * 100}),
+        ("secret", {"value_sha256": "a" * 64}),
+        ("secret", {"value_sha256": "f" * 64, "verified": True, "detector": "aws"}),
+        ("storage_bucket", {"provider": "aws_s3", "name": "example-assets"}),
+        ("storage_bucket", {"provider": "aws_s3", "name": "a" * 63}),
+        ("storage_bucket", {"provider": "gcp_gcs", "name": "example.appspot.com"}),
+        ("storage_bucket", {"provider": "azure_blob", "name": "examplestorage"}),
+        ("storage_bucket", {"provider": "gcp_gcs", "name": "my_bucket"}),
+        ("storage_bucket", {"provider": "aws_s3", "name": "1234"}),
     ],
 )
 def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, object]) -> None:
@@ -396,6 +454,82 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("organization", {"registry": "arin", "handle": "ORG_1"}),
         ("organization", {"handle": "ORG-GOGL-1-ARIN"}),
         ("organization", {"registry": "arin"}),
+        ("email_address", {"value": "Abuse@example.com"}),
+        ("email_address", {"value": "abuse@localhost"}),
+        ("email_address", {"value": "abuse@@example.com"}),
+        ("email_address", {"value": "@example.com"}),
+        ("email_address", {"value": "abuse@example.com."}),
+        ("email_address", {"value": ".abuse@example.com"}),
+        ("email_address", {"value": "a" * 65 + "@example.com"}),
+        ("email_address", {"value": "abuse name@example.com"}),
+        ("email_address", {"value": 1}),
+        ("host_key", {"algorithm": "ssh-rsa", "fingerprint_sha256": "A" * 64}),
+        ("host_key", {"algorithm": "rsa-sha2-512", "fingerprint_sha256": "a" * 64}),
+        ("host_key", {"algorithm": "ssh-rsa", "fingerprint_sha256": "a" * 63}),
+        ("host_key", {"algorithm": "ssh-rsa"}),
+        ("http_fingerprint", {"kind": "favicon_mmh3", "value": "2147483648"}),
+        ("http_fingerprint", {"kind": "favicon_mmh3", "value": "-2147483649"}),
+        ("http_fingerprint", {"kind": "favicon_mmh3", "value": "+1"}),
+        ("http_fingerprint", {"kind": "favicon_mmh3", "value": "01"}),
+        ("http_fingerprint", {"kind": "favicon_mmh3", "value": "-0"}),
+        ("http_fingerprint", {"kind": "favicon_mmh3", "value": "a" * 64}),
+        ("http_fingerprint", {"kind": "favicon_mmh3", "value": -1752256170}),
+        ("http_fingerprint", {"kind": "body_sha256", "value": "-1"}),
+        ("http_fingerprint", {"kind": "body_sha256", "value": "A" * 64}),
+        ("http_fingerprint", {"kind": "ja3s", "value": "a" * 64}),
+        ("identity_tenant", {"provider": "entra_id", "tenant_id": "not-a-uuid"}),
+        ("identity_tenant", {"provider": "entra_id", "tenant_id": "72F988BF-86F1-41AF-91AB-2D7CD011DB47"}),
+        ("identity_tenant", {"provider": "okta", "tenant_id": "example.okta.com"}),
+        ("identity_tenant", {"provider": "entra", "tenant_id": "example"}),
+        ("identity_tenant", {"provider": "auth0", "tenant_id": "example"}),
+        ("identity_tenant", {"provider": "google_workspace", "tenant_id": "c01abc23d"}),
+        ("identity_tenant", {"provider": "okta", "tenant_id": "acme.corp"}),
+        ("identity_tenant", {"provider": "okta", "tenant_id": ""}),
+        ("identity_tenant", {"provider": "okta", "tenant_id": "Dev-12345"}),
+        ("mta_sts_policy", {"value": "v=STSv10"}),
+        ("mta_sts_policy", {"value": "V=STSv1"}),
+        ("mta_sts_policy", {"value": " v=STSv1"}),
+        ("mta_sts_policy", {"value": ""}),
+        ("txt_record", {"value": "v=STSv1; id=1"}),
+        ("phone", {"value": "14155552671"}),
+        ("phone", {"value": "+0155552671"}),
+        ("phone", {"value": "+1"}),
+        ("phone", {"value": "+" + "9" * 16}),
+        ("phone", {"value": "+1 415 555"}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "Example-Org", "name": "web"}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "group/sub", "name": "web"}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "-example", "name": "web"}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "ex--ample", "name": "web"}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "a" * 40, "name": "web"}),
+        ("repository", {"platform": "bitbucket", "host": "bitbucket.org", "owner": "team/x", "name": "web"}),
+        ("repository", {"platform": "bitbucket", "host": "bitbucket.org", "owner": "t" * 63, "name": "web"}),
+        ("repository", {"platform": "gitlab", "host": "git.example.com", "owner": "g" * 101, "name": "web"}),
+        ("repository", {"platform": "gitlab", "host": "git.example.com", "owner": "g/" * 128, "name": "web"}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "example", "name": ".."}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "example", "name": "n" * 101}),
+        ("repository", {"platform": "github.com", "host": "github.com", "owner": "example", "name": "web"}),
+        ("repository", {"platform": "github", "host": "GitHub.com", "owner": "example", "name": "web"}),
+        ("repository", {"platform": "github", "owner": "example", "name": "web"}),
+        ("secret", {"value_sha256": "A" * 64}),
+        ("secret", {"value_sha256": "a" * 63}),
+        ("secret", {}),
+        ("secret", {"value_sha256": "a" * 64, "value": "hunter2"}),
+        ("secret", {"value_sha256": "a" * 64, "password": "hunter2"}),
+        ("storage_bucket", {"provider": "azure_blob", "name": "example-storage"}),
+        ("storage_bucket", {"provider": "azure_blob", "name": "a" * 25}),
+        ("storage_bucket", {"provider": "aws_s3", "name": "a" * 64}),
+        ("storage_bucket", {"provider": "aws_s3", "name": "192.168.1.1"}),
+        ("storage_bucket", {"provider": "aws_s3", "name": "xn--example"}),
+        ("storage_bucket", {"provider": "aws_s3", "name": "example-s3alias"}),
+        ("storage_bucket", {"provider": "aws_s3", "name": "my_bucket"}),
+        ("storage_bucket", {"provider": "aws_s3", "name": "192.0.2.1"}),
+        ("storage_bucket", {"provider": "do_spaces", "name": "example-space"}),
+        ("storage_bucket", {"provider": "aws_s3", "name": "Example"}),
+        ("storage_bucket", {"provider": "aws_s3", "name": "ex..ample"}),
+        ("storage_bucket", {"provider": "gcp_gcs", "name": "googtest"}),
+        ("storage_bucket", {"provider": "gcp_gcs", "name": "my-google-bucket"}),
+        ("storage_bucket", {"provider": "gcp_gcs", "name": "a" * 64 + ".example"}),
+        ("storage_bucket", {"provider": "s3", "name": "example"}),
     ],
 )
 def test_invalid_node_types_bounds_and_noncanonical_spellings(type_name: str, properties: dict[str, object]) -> None:
@@ -461,15 +595,42 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "has_open_port": (["ip_address"], ["port"]),
         "has_service": (["port"], ["service"]),
         "has_finding": (
-            ["port", "domain", "subdomain", "ip_address", "ip_cidr", "service", "endpoint", "certificate"],
+            [
+                "port",
+                "domain",
+                "subdomain",
+                "ip_address",
+                "ip_cidr",
+                "service",
+                "endpoint",
+                "certificate",
+                "parameter",
+                "dkim_record",
+                "storage_bucket",
+                "repository",
+                "identity_tenant",
+                "secret",
+                "mta_sts_policy",
+            ],
             ["finding"],
         ),
         "presents_certificate": (["service"], ["certificate"]),
+        "presents_host_key": (["service"], ["host_key"]),
         "serves_endpoint": (["service"], ["endpoint"]),
         "redirects_to": (["endpoint"], ["endpoint"]),
-        "affected_by": (["service", "finding"], ["cve"]),
-        "runs_technology": (["service", "endpoint"], ["technology"]),
-        "protected_by": (["service", "endpoint"], ["technology"]),
+        "affected_by": (["service", "finding", "endpoint"], ["cve"]),
+        "runs_technology": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
+        "protected_by": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
+        "backed_by_bucket": (["domain", "subdomain", "endpoint"], ["storage_bucket"]),
+        "exposes_secret": (["repository", "endpoint", "storage_bucket"], ["secret"]),
+        "federates_with": (d, ["identity_tenant"]),
+        "has_contact": (
+            ["organization", "registrar", "domain", "subdomain", "repository"],
+            ["email_address", "phone"],
+        ),
+        "has_http_fingerprint": (["endpoint"], ["http_fingerprint"]),
+        "has_mta_sts_policy": (d, ["mta_sts_policy"]),
+        "owns_repository": (d, ["repository"]),
         "has_dmarc": (d, ["dmarc_record"]),
         "has_dkim_selector": (d, ["dkim_record"]),
         "has_parameter": (["endpoint"], ["parameter"]),
@@ -539,6 +700,16 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         ("has_svcb_binding", {"record_type": "https", "priority": 65535, "alpn": ["h3"]}),
         ("issued_by", {}),
         ("presents_certificate", {"mode": "quic", "server_name": "example.com", "alpn_offered": ["h3"]}),
+        ("has_contact", {"role": "abuse"}),
+        ("has_contact", {"role": "published", "name": "security team"}),
+        ("backed_by_bucket", {}),
+        ("exposes_secret", {"location": "src/config.py"}),
+        ("exposes_secret", {"location": "x" * 1024, "commit": "a" * 40}),
+        ("federates_with", {"namespace_type": "federated"}),
+        ("has_http_fingerprint", {}),
+        ("has_mta_sts_policy", {}),
+        ("owns_repository", {}),
+        ("presents_host_key", {}),
     ],
 )
 def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[str, object]) -> None:
@@ -602,6 +773,14 @@ def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[s
         ("has_svcb_binding", {"record_type": "https", "priority": 1, "alpn": "h2,h3"}),
         ("has_svcb_binding", {"record_type": "https", "priority": 1, "alpn": ["h2 h3"]}),
         ("presents_certificate", {"mode": "QUIC", "server_name": "", "alpn_offered": []}),
+        ("has_contact", {}),
+        ("has_contact", {"role": "Abuse"}),
+        ("has_contact", {"role": "owner"}),
+        ("has_contact", {"role": 1}),
+        ("exposes_secret", {}),
+        ("exposes_secret", {"location": ""}),
+        ("exposes_secret", {"location": "x" * 1025}),
+        ("exposes_secret", {"location": "line\nbreak"}),
     ],
 )
 def test_invalid_relation_types_bounds_and_grammars(type_name: str, properties: dict[str, object]) -> None:
@@ -733,6 +912,7 @@ def test_scope_declarations_are_derived_rather_than_mirrored_by_hand() -> None:
         "finding": "has_finding",
         "dkim_record": "has_dkim_selector",
         "parameter": "has_parameter",
+        "mta_sts_policy": "has_mta_sts_policy",
     }
     order = catalog_module.scope_order()
     assert set(order) == set(catalog_module.scope_relations())
@@ -762,3 +942,65 @@ def test_scope_contract_rejects_a_declaration_the_storage_layer_cannot_honor(
     )
     with pytest.raises(RuntimeError, match="source-scoped relation target"):
         catalog_module._ensure_scope_contract()
+
+
+def test_shared_vocabulary_nodes_are_never_a_finding_source() -> None:
+    """A finding names one real object. A node that unrelated hosts legitimately share - a
+    technology slug, a cipher suite, a stack fingerprint, an SPF string thousands of domains
+    publish verbatim - is not one object, so a finding hung there would read as applying to all of
+    them. A bucket, a repository, a tenant and a secret digest each name exactly one object."""
+    shared = {
+        "technology",
+        "tls_cipher_suite",
+        "tls_fingerprint",
+        "http_fingerprint",
+        "host_key",
+        "spf_record",
+        "dmarc_record",
+        "txt_record",
+        "email_address",
+        "phone",
+        "cve",
+        "cwe",
+    }
+    sources = set(catalog_manifest()["relations"]["has_finding"]["sources"])
+
+    assert sources & shared == set()
+    assert {
+        "parameter",
+        "dkim_record",
+        "mta_sts_policy",
+        "storage_bucket",
+        "repository",
+        "identity_tenant",
+        "secret",
+    } <= sources
+
+
+def test_every_relation_endpoint_names_a_declared_node_type() -> None:
+    manifest = catalog_manifest()
+    nodes = set(manifest["nodes"])
+    for type_name, definition in manifest["relations"].items():
+        for field in ("sources", "targets"):
+            assert definition[field], f"{type_name}.{field} is empty"
+            assert set(definition[field]) <= nodes, f"{type_name}.{field} names an unknown node type"
+
+
+def test_every_required_rule_is_published_and_executable() -> None:
+    """A rule missing from _FORMATS is undocumented, and one missing from _schema_for_rule
+    degrades the discovery schema to a bare string, and one published but referenced by nothing is
+    dead weight an agent still has to read. The positive cases above cover the third place a rule
+    has to exist, _valid_field, which rejects every value without it."""
+    manifest = catalog_manifest()
+    used: set[str] = set()
+    for kind in ("nodes", "relations"):
+        for type_name, definition in manifest[kind].items():
+            for field, rule in definition["required"].items():
+                if isinstance(rule, list):
+                    continue
+                assert rule in manifest["formats"], f"{kind}.{type_name}.{field} uses an unpublished rule"
+                assert catalog_schema(kind, type_name)["properties"][field].get("format") == rule
+                used.add(rule)
+
+    # `cpe23_or_empty` is the one deliberate exception, covered by its own test above.
+    assert set(manifest["formats"]) - used == {"cpe23_or_empty"}

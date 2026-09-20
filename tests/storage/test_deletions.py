@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from justpen_knowledgebase_mcp.catalog import scope_relations
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import ConflictError, MissingRecordsError, NotFoundError, RecordConflictError
 from justpen_knowledgebase_mcp.models import GetRequest, WriteRequest
@@ -130,7 +131,25 @@ async def scoped_graph(kb, relation_type):
             1,
             0,
         ),
+        "has_mta_sts_policy": (
+            [
+                {"type": "domain", "properties": {"value": "example.com"}},
+                {"type": "mta_sts_policy", "properties": {"value": "v=STSv1; id=20260920t000000z;"}},
+            ],
+            [
+                {
+                    "type": "has_mta_sts_policy",
+                    "source_ref": {"node_index": 0},
+                    "target_ref": {"node_index": 1},
+                    "properties": {},
+                }
+            ],
+            0,
+            1,
+            0,
+        ),
     }
+    assert set(definitions) == set(scope_relations().values()), "a scope relation has no delete fixture"
     nodes, relations, parent_index, child_index, relation_index = definitions[relation_type]
     result = await kb.write(WriteRequest.model_validate({"nodes": nodes, "relations": relations}))
     return (
@@ -147,9 +166,7 @@ async def finish_delete(kb, intent):
             return
 
 
-@pytest.mark.parametrize(
-    "relation_type", ["has_open_port", "has_service", "has_finding", "has_dkim_selector", "has_parameter"]
-)
+@pytest.mark.parametrize("relation_type", sorted(scope_relations().values()))
 async def test_scope_relation_rejected_while_child_exists_and_removed_with_child(tmp_path, relation_type):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         parent, child, relation = await scoped_graph(kb, relation_type)
@@ -162,9 +179,7 @@ async def test_scope_relation_rejected_while_child_exists_and_removed_with_child
         await finish_delete(kb, parent_intent)
 
 
-@pytest.mark.parametrize(
-    "relation_type", ["has_open_port", "has_service", "has_finding", "has_dkim_selector", "has_parameter"]
-)
+@pytest.mark.parametrize("relation_type", sorted(scope_relations().values()))
 async def test_parent_node_delete_rejected_while_scoped_child_exists(tmp_path, relation_type):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         parent, _child, _relation = await scoped_graph(kb, relation_type)
@@ -348,3 +363,44 @@ async def test_hundred_target_pending_batch_has_no_partial_admission(tmp_path):
             == 1
         )
         assert await kb.workers.read(lambda c, t: c.execute("select count(*) from jobs").get) == 1
+
+
+async def test_a_scoped_child_of_a_scoped_child_is_deleted_innermost_first(tmp_path):
+    """has_finding now accepts parameter, so a scope chain can be three nodes deep. Each level
+    still refuses to go while the level below it exists."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        written = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {"type": "endpoint", "properties": {"url": "https://example.com/search", "method": "GET"}},
+                        {"type": "parameter", "properties": {"name": "q", "location": "query"}},
+                        {"type": "finding", "properties": {"title": "reflected value", "severity": "medium"}},
+                    ],
+                    "relations": [
+                        {
+                            "type": "has_parameter",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 1},
+                            "properties": {},
+                        },
+                        {
+                            "type": "has_finding",
+                            "source_ref": {"node_index": 1},
+                            "target_ref": {"node_index": 2},
+                            "properties": {},
+                        },
+                    ],
+                }
+            )
+        )
+        endpoint, parameter, finding = (node["id"] for node in written["nodes"])
+
+        for blocked in (endpoint, parameter):
+            with pytest.raises(ConflictError, match="child must be deleted first"):
+                await admit(kb, "nodes", [blocked])
+        await finish_delete(kb, (await admit(kb, "nodes", [finding]))[0])
+        await finish_delete(kb, (await admit(kb, "nodes", [parameter]))[0])
+        await finish_delete(kb, (await admit(kb, "nodes", [endpoint]))[0])
+
+        assert (await kb.get(GetRequest(kind="nodes", ids=[endpoint])))["missing_ids"] == [endpoint]

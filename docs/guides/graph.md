@@ -98,18 +98,27 @@ records can relate to that shared node. Do not copy a parent UUID or session ID
 into unscoped properties to force duplication. Use `{ "id": "..." }` for an
 existing node or `{ "node_index": 2 }` for a node in the same call.
 
-`port`, `service`, `finding`, `dkim_record`, and `parameter` are parent-scoped.
-Their identity includes the parent node UUID selected through `has_open_port`,
-`has_service`, `has_finding`, `has_dkim_selector`, or `has_parameter`,
-respectively. A new scoped child must arrive with exactly one of its scope
+`port`, `service`, `finding`, `dkim_record`, `parameter`, and `mta_sts_policy`
+are parent-scoped. Their identity includes the parent node UUID selected through
+`has_open_port`, `has_service`, `has_finding`, `has_dkim_selector`,
+`has_parameter`, or `has_mta_sts_policy`, respectively. A new scoped child must arrive with exactly one of its scope
 relations in the same `kb_write`; the complete batch is validated and committed
 atomically. An existing scoped child can be patched by ID without repeating its
 relation, but it cannot be attached to a different parent.
 
+A scope parent can itself be scoped. `has_finding` accepts `parameter` and
+`dkim_record` as sources, so a finding about one query parameter is keyed on that
+parameter, which is in turn keyed on its endpoint. The server resolves scoped
+nodes parent-first inside the batch, so one `kb_write` can create the endpoint,
+the parameter, the finding and all three relations together.
+
 Delete a scoped child with `cascade: true` before deleting its scope relation or
 parent node. The cascade removes the child's incident scope relation. The server
 rejects deletion of that relation or parent while the child exists, preventing
-orphan ports, services, findings, DKIM records, and parameters.
+orphan ports, services, findings, DKIM records, parameters, and MTA-STS
+policies. A chain deletes innermost first: an endpoint with a parameter that
+carries a finding takes three deletes, finding, parameter, endpoint, and the two
+outer ones are refused until the level below them is gone.
 
 ## Catalog v1 workspaces
 

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from justpen_knowledgebase_mcp.catalog import catalog_manifest
+from justpen_knowledgebase_mcp.catalog import catalog_manifest, scope_relations
 from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, MissingRecordsError, RecordConflictError
 from justpen_knowledgebase_mcp.models import DeleteRequest
 from justpen_knowledgebase_mcp.storage import deletions, graph_sql
@@ -36,20 +36,9 @@ def test_prepare_checks_entire_batch_before_any_mutation(monkeypatch):
     assert db.execute.call_count == 2
 
 
-@pytest.mark.parametrize(
-    "relation_type", ["has_open_port", "has_service", "has_finding", "has_dkim_selector", "has_parameter"]
-)
-def test_scope_relation_delete_requires_child_first(monkeypatch, relation_type):
-    child = owner(
-        id=2,
-        type={
-            "has_open_port": "port",
-            "has_service": "service",
-            "has_finding": "finding",
-            "has_dkim_selector": "dkim_record",
-            "has_parameter": "parameter",
-        }[relation_type],
-    )
+@pytest.mark.parametrize(("child_type", "relation_type"), sorted(scope_relations().items()))
+def test_scope_relation_delete_requires_child_first(monkeypatch, child_type, relation_type):
+    child = owner(id=2, type=child_type)
     monkeypatch.setattr(deletions, "row_by_id", Mock(return_value=child))
     relation = owner(type=relation_type, target_id=2)
     with pytest.raises(ConflictError, match="child must be deleted first"):
@@ -59,7 +48,11 @@ def test_scope_relation_delete_requires_child_first(monkeypatch, relation_type):
 def test_scope_relation_names_travel_as_bound_data_rather_than_query_text():
     """The parent-delete guard reads the same derived list the frozenset holds, and it reaches
     SQLite as one bound JSON array, so no relation name is ever spliced into the statement."""
-    assert set(json.loads(graph_sql.SCOPED_CHILD_RELATIONS)) == set(graph_sql.SCOPE_RELATION_TYPES)
+    bound = json.loads(graph_sql.SCOPED_CHILD_RELATIONS)
+    assert set(bound) == set(graph_sql.SCOPE_RELATION_TYPES)
+    # relations.type has TEXT affinity: a JSON number would compare unequal to every stored type
+    # and the guard would match nothing, so the array must hold strings.
+    assert all(isinstance(name, str) for name in bound)
     assert re.search(r"'[a-z_]+'", graph_sql.SCOPED_CHILD_BY_PARENT) is None
     assert "json_each(?)" in graph_sql.SCOPED_CHILD_BY_PARENT
 

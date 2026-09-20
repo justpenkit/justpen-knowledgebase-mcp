@@ -30,6 +30,15 @@ failure; `NOT_FOUND` for an atomic missing reference/evidence set;
 `CONFLICT`/`RECORD_DELETING` for immutable or pending records; `BUSY`, `LIMIT`,
 or storage errors. No partial batch commits.
 
+The catalog is the only place a type, its required properties, its identity, its
+parent scope and its allowed relation endpoint **types** are declared. `kb_types`
+returns that declaration, including the format rule behind every required
+property, so an agent can read the contract instead of guessing it. A few
+relations also constrain endpoint **values**, which `kb_types` does not publish:
+`has_subdomain` requires the target to end in the source, `contains_ip` and
+`contains_cidr` require real containment. Properties outside the required map
+are accepted as submitted and are not validated.
+
 `CONFLICT` also reports attempts to change an existing record's type, required
 identity fields, or relation endpoints, which are immutable. It also reports an
 identity hash collision or inconsistent stored scope, including multiple or
@@ -63,9 +72,12 @@ not validate; agents must still follow them, since documentation is the only
 enforcement:
 
 `endpoint` has no dedicated HTTP-observation node. Record scan results directly
-on the `endpoint` node using `status`, `title`, `content_length`, `body_sha256`,
-`header_sha256`, `webserver`, and `content_type`, so agents converge on one
-spelling instead of forking equivalent facts under different keys.
+on the `endpoint` node using `status`, `title`, `content_length`, `webserver`,
+and `content_type`, so agents converge on one spelling instead of forking
+equivalent facts under different keys. Response digests are the exception: they
+are pivots rather than descriptions, so they live on `http_fingerprint` nodes
+reached through `has_http_fingerprint`, not as `body_sha256` and `header_sha256`
+attributes.
 
 A `dmarc_record` lives at `_dmarc.<domain>` on the wire, but `has_dmarc` attaches
 it to the `domain` or `subdomain` node itself, matching `has_spf`. Do not create
@@ -155,9 +167,10 @@ remains. `domain` is not a source here: domain registration is expressed by
 A handle is case-sensitive and is written exactly as the registry publishes it:
 RIPE and AFRINIC derive handles from the organisation name and keep its case, so
 `ORG-nG51-RIPE` is the handle and `ORG-NG51-RIPE` is a different string that the
-registry does not publish. Never uppercase one. Treat `abuse_contact` as
-low-confidence: the registries themselves state the value is frequently wrong or
-absent.
+registry does not publish. Never uppercase one. An abuse contact is an
+`email_address` or `phone` reached through `has_contact` with `role: "abuse"`,
+not an attribute on this node; treat it as low-confidence either way, because
+the registries themselves state the value is frequently wrong or absent.
 
 `has_weakness` classifies a `finding` or a `cve` as an instance of a CWE
 weakness class. Both sources are real: a scanner assigns the class to its own
@@ -182,6 +195,129 @@ registrar node.
 nodes referenced by every host that matches. Neither is a `has_finding` source:
 attaching a host-specific finding to either would appear to apply to every host
 in the workspace that shares the node.
+
+`http_fingerprint` is the response-side twin of `tls_fingerprint`: a clustering
+pivot, never an identifier. `favicon_mmh3` is the Shodan/FOFA spelling, a
+MurmurHash3 32-bit **signed** hash of the **base64 encoding** of the icon bytes,
+not of the raw bytes, written in decimal as a string because the same property
+also carries the 64-character hex digests of `body_sha256` and `header_sha256`.
+A shared favicon hash means "same default icon" at least as often as "same
+organization", and a body digest changes on every deploy, so neither is evidence
+of ownership on its own.
+
+`host_key` records the SSH host key a service presents, keyed on the key type
+and the SHA-256 of the raw public key blob written as 64 lowercase hex
+characters. OpenSSH prints that digest base64 after the `SHA256:` prefix, so
+convert it rather than storing the printed form. Two hosts presenting one key
+are a cloned image or one machine behind two addresses, which makes this the
+strongest host-correlation pivot in the catalog; write the edge from each
+`service` and let the single shared node do the joining.
+
+`storage_bucket` is keyed on the provider and the provider-global bucket name,
+and the enum admits only providers whose namespace really is global. DigitalOcean
+Spaces is not one: a Spaces name is unique per region, so two regions can hold
+the same name and one node would be two buckets. The required map is per type,
+not per provider, so a region cannot be required for one member alone; that
+provider waits for a shape that can express it.
+Each provider's naming rules are enforced against the declared provider, so an
+Azure name is checked as 3 to 24 lowercase alphanumerics and an S3 name is
+checked for the reserved prefixes and suffixes AWS refuses. For `azure_blob` the
+name is the **storage account**, because a container is not globally unique; a
+public container listing is an `endpoint`, reached the same way any other URL is.
+`backed_by_bucket` says a name or a URL serves content from that bucket: write it
+from the `subdomain` whose CNAME points at the bucket host, or from the
+`endpoint` whose response came out of it. A bucket found only by mutating an
+organization's name and probing for it has no such edge; write the node and
+attach the evidence that found it.
+
+`identity_tenant` records the identity provider a domain or subdomain federates
+with, which `federates_with` attaches to that name. Every provider in the enum
+has a cross-field rule that fixes one canonical spelling: `entra_id` a lowercase
+UUID, `okta` the bare organization slug rather than `example.okta.com`. The enum
+stops there on purpose. A Google Workspace customer id is uppercase-initial on
+the wire and agents substitute the primary domain when they cannot read it, and
+an Auth0 tenant name is unique per region, so neither has one spelling an agent
+would reliably reproduce. The federation kind that `getuserrealm` reports belongs
+on the edge as a conventional `namespace_type` attribute (`managed`,
+`federated`), because it changes without the pairing changing.
+
+`repository` is keyed on the instance host, the owner and the name, all
+lowercase: hosting platforms resolve names case-insensitively, so `Example/Web`
+and `example/web` are one repository and must not become two nodes. The host is
+in the identity because self-hosted GitLab, Gitea and GitHub Enterprise are a
+routine outcome of this very enumeration, and `git.example.com/acme/web` is not
+`gitlab.com/acme/web`. `platform` is required but is not identity: it names the
+software, which selects the owner grammar, and only `gitlab` accepts a `/` in the
+owner for nested groups. `owns_repository` from a `domain` or `subdomain` is an
+attribution claim, usually made because the organization's name matches; attach
+the evidence that supports it.
+
+`secret` records an exposed credential by digest. Its identity is the SHA-256 of
+the secret value alone, so the same key leaked in a repository and in a
+JavaScript bundle is one node with two `exposes_secret` edges. The detector is
+not identity: trufflehog calls a key `aws` where gitleaks calls it
+`aws-access-token`, and a scanner renaming its own rule would fork the node.
+Keep it as a `detector` attribute. Hash the credential exactly as the provider
+issues it, with no surrounding quotes, assignment prefix or trailing newline,
+or two observations of one key produce two digests.
+
+Three rules follow from the digest, and only the first is enforced. The server
+rejects a `secret` node carrying `value`, `secret`, `plaintext`, `password`,
+`token`, `key`, `credential`, `match` or `raw`, because an additional property
+is stored, property-indexed and full-text searchable, which would make a leaked
+plaintext searchable in the graph. Beyond that: treat `value_sha256` itself as
+sensitive, since an unsalted single-round digest of a human-chosen password is a
+cracking target, and the store as a whole is classified at the level of the
+credentials it indexes. Location is required on the `exposes_secret` edge and is
+part of its identity, so one key at five paths is five edges rather than one edge
+overwritten four times.
+
+`email_address` and `phone` are shared contact nodes reached through
+`has_contact`, whose required `role` is part of the edge identity, so one
+organization can publish one address as both `abuse` and `security`. Use
+`published` for an address harvested from an organization's own surface with no
+declared role. The whole local part is required lowercase: a mailbox is
+case-sensitive on the wire, but tools emit inconsistent case and one mailbox has
+to stay one node. `has_contact` replaces the `abuse_contact` attribute the
+`organization` node used to carry; the registries' own warning still applies, so
+treat an `abuse` role as low-confidence.
+
+`mta_sts_policy` holds the TXT record published at `_mta-sts.<domain>`, and it
+is parent-scoped through `has_mta_sts_policy`, unlike `spf_record` and
+`dmarc_record`. The difference is that an SPF or DMARC value *is* the whole
+fact, so two domains publishing the same string really do share one record,
+while an MTA-STS TXT value is only a version pointer: providers template it, and
+a date-only id such as `v=STSv1; id=20190429T010101;` is published verbatim by
+many unrelated tenants. Unscoped, those tenants would collapse onto one node,
+and the `mode`, `max_age` and `mx` attributes that each of them reads from its
+own `https://mta-sts.<domain>/.well-known/mta-sts.txt` would overwrite each
+other. `txt_record` now rejects a leading `v=STSv1` for the same reason it
+rejects `v=spf1`.
+
+`has_finding` gained `parameter`, `dkim_record`, `mta_sts_policy`,
+`storage_bucket`, `repository`, `identity_tenant` and `secret` as sources. A
+finding names one real object, and each of those is one: a bucket, a repository
+and a tenant have exactly one owner, a scoped record belongs to its parent
+domain, and a secret digest is one credential.
+
+It deliberately did not gain `technology`, `tls_cipher_suite`,
+`tls_fingerprint`, `http_fingerprint`, `host_key`, `spf_record`, `dmarc_record`,
+`txt_record`, `email_address`, `phone`, `cve` or `cwe`. Those are shared
+vocabulary or coincidence values: unrelated hosts legitimately share a
+technology slug, a stack fingerprint, or an SPF string thousands of domains
+publish verbatim, so a host-specific finding hung there would read as applying
+to all of them. A defect in an SPF record is a finding on the `domain` that
+publishes it, not on the record node. `host_key` is the borderline case and
+stays out, because a finding about a host key is nearly always a finding about
+the host presenting it.
+
+`protected_by` now also accepts `domain` and `subdomain`, because `dnsx` and
+`cdncheck` identify a CDN or WAF from DNS alone, before any port is probed.
+`runs_technology` accepts them too, which is how a name gets a vendor when
+nothing is listening: a dangling CNAME at a SaaS host is the single most common
+actionable DNS-stage result, and `protected_by` cannot express it because none
+of its `kind` values describes SaaS hosting. `affected_by` now also accepts
+`endpoint`, which is where a nuclei CVE template matches.
 
 `kb_types` pages at `limit`, which defaults to 20. Both the node and the
 relation catalogs are now larger than that, so a single default call returns a
