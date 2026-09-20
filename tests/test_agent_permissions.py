@@ -64,6 +64,108 @@ def test_uv_prefix_cannot_approve_a_protected_shell_write(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "cat pyproject.toml | sort | cut -d= -f1",
+        "cut -d= -f1 pyproject.toml",
+        "sort uv.lock",
+        "diff pyproject.toml /tmp/candidate.toml",
+        "cmp pyproject.toml /tmp/candidate.toml",
+        "md5sum uv.lock",
+        "sha256sum pyproject.toml",
+        "cksum pyproject.toml",
+        "file pyproject.toml",
+        "jq .project.name pyproject.toml",
+        "od -c uv.lock",
+        "column -t pyproject.toml",
+        "basename pyproject.toml",
+        "realpath pyproject.toml",
+        "du -h uv.lock",
+        "diff pyproject.toml /tmp/a && md5sum uv.lock",
+    ],
+)
+def test_inspecting_protected_files_with_stdout_only_tools_does_not_ask(command: str) -> None:
+    """Reading is not writing: an inspection that cannot create a file must not prompt."""
+    assert call_claude(command) == {}
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sort -o pyproject.toml /dev/null",
+        "sort --output=uv.lock /dev/null",
+        "sort -uo pyproject.toml /dev/null",
+        "sort -ubo uv.lock /dev/null",
+        "sort --compress-program=./writer pyproject.toml",
+        "cat /tmp/candidate | sort -o pyproject.toml",
+        "file -C -m pyproject.toml",
+        "uniq /tmp/candidate pyproject.toml",
+        "cat /dev/null | uniq - pyproject.toml",
+        "xxd -r -p /tmp/candidate.hex uv.lock",
+        "xxd pyproject.toml uv.lock",
+        "sort -opyproject.toml /dev/null",
+        "sort -uopyproject.toml /dev/null",
+        "sort --out=pyproject.toml /dev/null",
+        "sort --outp=uv.lock /dev/null",
+        "sort --compress=/tmp/writer pyproject.toml",
+        "file --comp -m pyproject.toml",
+        "cp /dev/null uv.loc[[:lower:]]",
+        "awk 'system(\"touch /tmp/ran\")' pyproject.toml",
+        "awk '\"touch /tmp/ran\" | getline line' pyproject.toml",
+        "awk /fastmcp/ pyproject.toml",
+    ],
+)
+def test_inspection_tools_cannot_write_a_protected_file(command: str) -> None:
+    """Each spelling here was executed against real copies and changed a protected file.
+
+    `uniq` and `xxd` take their output file as a positional operand, so no option list can gate
+    them and neither command is admitted at all. `sort -uo` proves a write option must be matched
+    inside a short-option cluster. `awk -i`/`-l` reach further still: gawk loads a shared object
+    whose constructor runs before gawk rejects the plugin.
+    """
+    assert call_claude(command)["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sed -i s/a/b/ py*.toml",
+        "sed -i s/a/b/ pyproject*.toml",
+        "cp /tmp/candidate ./py?roject.toml",
+        "tee uv.loc? < /tmp/candidate",
+        "mv /tmp/candidate uv.loc[k]",
+        "sed -i s/a/b/ ~/*/py*.toml",
+        "cp /tmp/candidate /*/py*.toml",
+        "cp /tmp/candidate /**/pyproject.toml",
+        "cp /tmp/candidate /home/*/**/py*.toml",
+    ],
+)
+def test_a_glob_that_expands_onto_a_protected_file_is_guarded(command: str) -> None:
+    """A pattern names no protected path literally while the shell still resolves it onto one."""
+    assert call_claude(command)["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cp /tmp/candidate /etc/*.conf",
+        "mv /tmp/candidate /var/log/*.log",
+        "cp src/**/*.py /tmp/",
+        "tar -cf /tmp/x.tar /opt/**/*.so",
+        "rm /tmp/*.toml",
+    ],
+)
+def test_a_glob_that_cannot_reach_a_protected_file_is_not_gated(command: str) -> None:
+    """The pattern is matched against the two protected paths, so an unrelated write is quiet.
+
+    Expanding patterns against the filesystem instead would walk the tree for a pattern that
+    matches nothing and would ask about every absolute glob, which is the prompt fatigue this
+    policy exists to avoid.
+    """
+    assert call_claude(command) == {}
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "cat uv.lock | tee pyproject.toml",
         "sed -n '1w uv.lock' pyproject.toml",
         "sed -i '' 's/a/b/' pyproject.toml",

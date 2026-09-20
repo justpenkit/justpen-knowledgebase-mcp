@@ -137,6 +137,32 @@ The filesystem boundary covers root metadata in each active workspace root.
 Nested independent projects need explicit read rules of their own. Claude's
 command hook conservatively inspects visible commands; opaque scripts mentioning
 protected paths may still ask. It is not an OS sandbox for arbitrary subprocesses.
+
+The hook asks about writes, not about reads. It recognizes a fixed set of
+commands that write only to standard output, so inspecting a protected file with
+`cat`, `grep`, `rg`, `sed -n`, `cut`, `sort`, `diff`, `cmp`, a checksum tool,
+`file`, `jq`, `od`, `column`, `wc`, `stat`, `ls`, `du`, `basename`, `dirname`,
+`realpath` or a read-only `git` subcommand
+proceeds without a prompt, alone or in a pipeline. Each of those tools can also
+be told to write a file, so the option that does it — `sort -o`, `awk -f`, an
+`file -C` — is gated, including its GNU abbreviations such as `sort --out` and
+any spelling that attaches the value to the option, such as `sort -opyproject.toml`.
+A glob is matched against the protected paths rather than expanded, so
+`sed -i s/a/b/ py*.toml` and `uv.loc[[:lower:]]` are gated even though neither
+names a protected path.
+
+`awk`, `uniq`, `xxd` and `strings` are deliberately not in that list. `uniq` and
+`xxd` write their second positional operand, so no option list can gate them.
+`awk` is a programming language whose pattern position evaluates arbitrary
+expressions: `awk 'system("...")'` and `awk '"cmd" | getline x'` run a command
+with no option, no brace and no directive. Read those files with `grep`,
+`sed -n` or `cut` instead.
+
+A command the hook cannot classify still asks. An interpreter is the common
+case: `python3 -c` and `uv run python -c` are gated whether the code reads or
+writes, because a classifier cannot tell which without running it. Read such a
+file with one of the tools above, and make dependency and version changes
+through `uv`, which is approved automatically.
 Codex uses its filesystem policy to catch indirect local shell writes. Browser,
 remote MCP, connector, and already-running shell interactions have their own
 controls; never use them to bypass a required approval. See

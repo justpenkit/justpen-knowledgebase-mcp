@@ -47,6 +47,16 @@ implementation details, not alternate agent workflows.
 Reading `pyproject.toml` and `uv.lock` is allowed. Routine source, test, and docs
 edits may proceed within the user's task without repeated confirmation.
 
+Read a protected file with the host's file-reading tool or an ordinary inspection
+command: `cat`, `head`, `tail`, `grep`, `rg`, `sed -n`, `awk`, `cut`, `sort`,
+`diff`, a checksum tool, `jq`, `wc`, `stat` or a read-only `git` subcommand,
+alone or in a pipeline. Never read one through an interpreter, such as
+`python -c`, `python3 -c`, `uv run python -c`, `node -e` or `perl -e`. The hook
+cannot tell a reading interpreter from a writing one without executing it, so it
+asks about every one of them; using an interpreter to read turns a free
+inspection into an approval prompt and trains reviewers to click through the
+prompts that matter.
+
 Use `uv add`, `uv remove`, `uv lock`, `uv sync`, and `uv version` for normal
 dependency/version changes. Run them as separate commands from the project root.
 Do not hand-edit the lockfile.
