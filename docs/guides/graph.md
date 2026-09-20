@@ -98,17 +98,18 @@ records can relate to that shared node. Do not copy a parent UUID or session ID
 into unscoped properties to force duplication. Use `{ "id": "..." }` for an
 existing node or `{ "node_index": 2 }` for a node in the same call.
 
-`port`, `service`, and `finding` are parent-scoped. Their identity includes the
-parent node UUID selected through `has_open_port`, `has_service`, or
-`has_finding`, respectively. A new scoped child must arrive with exactly one of
-its scope relations in the same `kb_write`; the complete batch is validated and
-committed atomically. An existing scoped child can be patched by ID without
-repeating its relation, but it cannot be attached to a different parent.
+`port`, `service`, `finding`, `dkim_record`, and `parameter` are parent-scoped.
+Their identity includes the parent node UUID selected through `has_open_port`,
+`has_service`, `has_finding`, `has_dkim_selector`, or `has_parameter`,
+respectively. A new scoped child must arrive with exactly one of its scope
+relations in the same `kb_write`; the complete batch is validated and committed
+atomically. An existing scoped child can be patched by ID without repeating its
+relation, but it cannot be attached to a different parent.
 
 Delete a scoped child with `cascade: true` before deleting its scope relation or
 parent node. The cascade removes the child's incident scope relation. The server
 rejects deletion of that relation or parent while the child exists, preventing
-orphan ports, services, and findings.
+orphan ports, services, findings, DKIM records, and parameters.
 
 ## Catalog v1 workspaces
 

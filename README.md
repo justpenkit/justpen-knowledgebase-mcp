@@ -9,7 +9,8 @@ and local files, without an LLM, embedding service, or separate database server.
 ## Features
 
 - **Catalog v2 recon graph:** domains, subdomains, IP addresses and CIDRs, ASNs,
-    DNS records, parent-scoped ports/services/findings, certificates, endpoints,
+    DNS records, technologies, TLS cipher suites, parent-scoped
+    ports/services/findings/DKIM selectors/parameters, certificates, endpoints,
     and CVEs with server-generated identities and strict required properties.
 - **Raw evidence:** store exact file, text, or base64 content and link it to
     graph records; read evidence back in bounded byte ranges.

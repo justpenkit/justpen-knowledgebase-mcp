@@ -34,8 +34,8 @@ or storage errors. No partial batch commits.
 identity fields, or relation endpoints, which are immutable. It also reports an
 identity hash collision or inconsistent stored scope, including multiple or
 incomplete parent relations. Re-parenting a scoped child is invalid. Creating a
-new `port`, `service`, or `finding` without exactly one same-request scope
-relation is also invalid.
+new `port`, `service`, `finding`, `dkim_record`, or `parameter` without exactly
+one same-request scope relation is also invalid.
 
 `service.properties.name` must be a member of the bundled, versioned
 Nmap-derived service-name registry; the server does not normalize an arbitrary
@@ -53,10 +53,46 @@ removed object. Removing `/a/x` while setting `{"a": {"y": 1}}` is valid: it
 removes one child and merges a different child. Known catalog and mutation
 errors identify the field and rule without returning submitted values.
 
-Deleting `has_open_port`, `has_service`, or `has_finding`, or deleting its
-parent node, returns `CONFLICT` while the scoped child still exists. Delete the
-child first with `cascade: true`; the cascade removes its incident scope
-relation.
+Deleting `has_open_port`, `has_service`, `has_finding`, `has_dkim_selector`, or
+`has_parameter`, or deleting its parent node, returns `CONFLICT` while the
+scoped child still exists. Delete the child first with `cascade: true`; the
+cascade removes its incident scope relation.
+
+Several attribute names and attachment points are conventions the catalog does
+not validate; agents must still follow them, since documentation is the only
+enforcement:
+
+`endpoint` has no dedicated HTTP-observation node. Record scan results directly
+on the `endpoint` node using `status`, `title`, `content_length`, `body_sha256`,
+`header_sha256`, `webserver`, and `content_type`, so agents converge on one
+spelling instead of forking equivalent facts under different keys.
+
+A `dmarc_record` lives at `_dmarc.<domain>` on the wire, but `has_dmarc` attaches
+it to the `domain` or `subdomain` node itself, matching `has_spf`. Do not create
+a `_dmarc.example.com` subdomain node to hold it.
+
+`txt_record` and `dkim_record` values must be normalized before writing: strip
+DNS presentation-form quoting, decode escapes, and concatenate a multi-string
+RRset's character-strings into one value. Never write ephemeral
+`_acme-challenge` DNS-01 challenge values as `txt_record`s; each certificate
+issuance rotates the nonce, so recording them accumulates one node per renewal
+with no supersession.
+
+Attach a `parameter` to a canonical base endpoint — query string stripped or
+normalized — not to each crawled URL variant. `endpoint` identity includes the
+query string, so unscoped attachment mints one `id` parameter node per observed
+URL instead of one per real parameter.
+
+A versioned `technology.cpe` (`cpe:2.3:a:f5:nginx:1.18.0:*:...`) belongs on the
+`runs_technology` edge beside `version`, since the version is per-host. An
+unversioned product CPE may sit on the `technology` node itself. Omit the key
+rather than sending an empty string; a later write that sends the key overwrites
+the stored value.
+
+`technology` and `tls_cipher_suite` are workspace-global shared-vocabulary
+nodes referenced by every host that matches. Neither is a `has_finding` source:
+attaching a host-specific finding to either would appear to apply to every host
+in the workspace that shares the node.
 
 ## `kb_get`
 
