@@ -18,14 +18,14 @@ async def test_search_and_neighbors_use_reviewed_wire_shapes(tmp_path):
             {
                 "nodes": [
                     {
-                        "type": "application",
-                        "properties": {"sha256": "a" * 64, "platform": "linux", "note": "alpha proof"},
+                        "type": "domain",
+                        "properties": {"value": "example.test", "platform": "linux", "note": "alpha proof"},
                     },
-                    {"type": "endpoint", "properties": {"url": "https://example.test/", "method": "GET"}},
+                    {"type": "subdomain", "properties": {"value": "api.example.test"}},
                 ],
                 "relations": [
                     {
-                        "type": "contacts",
+                        "type": "has_subdomain",
                         "source_ref": {"node_index": 0},
                         "target_ref": {"node_index": 1},
                         "properties": {"context": "production", "basis": "static"},

@@ -81,7 +81,10 @@ with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace,config) as run
     try:
         field=sys.argv[2]
         assert field in ('schema_version','catalog_version','catalog_fingerprint','index_format_version')
-        connection.execute('UPDATE settings SET '+field+'=?, query_epoch=query_epoch+1',('changed' if field=='catalog_fingerprint' else 2,))
+        if field=='catalog_fingerprint':
+            connection.execute('UPDATE settings SET catalog_fingerprint=?, query_epoch=query_epoch+1',('changed',))
+        else:
+            connection.execute('UPDATE settings SET '+field+'='+field+'+1, query_epoch=query_epoch+1')
     finally:
         connection.close()
 """

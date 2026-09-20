@@ -59,7 +59,7 @@ dev = [
   "pytest-asyncio>=0.23",
   "pytest-cov>=5.0",
   "ruff>=0.15",
-  "taplo>=0.9.3",
+  "taplo>=0.9.3 ; platform_machine != 'aarch64' or sys_platform != 'linux'",
   "typing-extensions>=4.6,<5",
   "yamlfix>=1.16",
 ]

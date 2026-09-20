@@ -30,11 +30,11 @@ async def test_records_literal_words_and_full_projection(tmp_path):
                 {
                     "nodes": [
                         {
-                            "type": "domain",
+                            "type": "subdomain",
                             "label": "Admin",
                             "source": "hiddenword",
                             "properties": {
-                                "name": "admin.example.com",
+                                "value": "admin.example.com",
                                 "a": "access",
                                 "b": "denied",
                                 "long": "x " * 2000 + "secretword",
@@ -76,7 +76,7 @@ async def test_reindex_full_slot_epoch_and_current_record(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         written = await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "domain", "properties": {"name": "a.example", "note": "current"}}]}
+                {"nodes": [{"type": "domain", "properties": {"value": "a.example", "note": "current"}}]}
             )
         )
 
@@ -359,7 +359,7 @@ async def test_json_expanded_snippet_budget_and_match_reference_cap(tmp_path):
 
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         nodes = [
-            {"type": "domain", "properties": {"name": f"n{i}.example", "note": "word" + "\x00" * 1000}}
+            {"type": "domain", "properties": {"value": f"n{i}.example", "note": "word" + "\x00" * 1000}}
             for i in range(100)
         ]
         await kb.write(WriteRequest.model_validate({"nodes": nodes}))
@@ -405,7 +405,7 @@ async def test_literal_verification_timeout_is_incomplete_limit(tmp_path, monkey
 
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=100)) as kb:
         await kb.write(
-            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"name": "needle.example"}}]})
+            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "needle.example"}}]})
         )
         monkeypatch.setattr(fulltext, "_literal_ranges", slow)
         with pytest.raises(LimitError, match="incomplete"):
@@ -417,7 +417,7 @@ async def test_long_canonical_pointer_keeps_one_exact_match_reference(tmp_path):
         key = "/" * 60000
         await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "domain", "properties": {"name": "a.example", key: "uniqueneedle"}}]}
+                {"nodes": [{"type": "domain", "properties": {"value": "a.example", key: "uniqueneedle"}}]}
             )
         )
         found = (await kb.search(SearchRequest(kind="nodes", query="uniqueneedle")))["items"][0]
@@ -434,7 +434,7 @@ async def test_record_reindex_reads_canonical_after_concurrent_writer(tmp_path, 
         node = (
             await kb.write(
                 WriteRequest.model_validate(
-                    {"nodes": [{"type": "domain", "properties": {"name": "a.example", "note": "oldvalue"}}]}
+                    {"nodes": [{"type": "domain", "properties": {"value": "a.example", "note": "oldvalue"}}]}
                 )
             )
         )["nodes"][0]["id"]

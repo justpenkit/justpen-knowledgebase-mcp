@@ -26,13 +26,24 @@ telemetry only; it never partitions graph data.
 - Node and relation types come from a fixed catalog returned by `kb_types`.
 - Required identity properties are strictly validated; additional JSON
     properties remain available for scanner-specific facts.
-- A natural identity maps to one node per workspace, so several parents can
-    point to the same node without copying a parent UUID into its properties.
+- Catalog v2 models domains, subdomains, IP addresses and CIDRs, ASNs, DNS
+    records, technologies, TLS cipher suites and fingerprints, registrars, organizations,
+    weaknesses, ports
+    and services, findings,
+    parameters, certificates, endpoints, and CVEs.
+- Unscoped identity maps a natural identity to one node per workspace. Port,
+    service, finding, DKIM record, and parameter identity also includes the
+    UUID of its single parent.
+- New scoped children and their `has_open_port`, `has_service`, `has_finding`,
+    `has_dkim_selector`, or `has_parameter` relation commit atomically and
+    cannot be re-parented.
 - Evidence IDs are `e_` plus the lowercase SHA-256 of the exact stored bytes.
 - Writes and delete admission are atomic. Large native I/O continues as durable
     jobs with explicit pending, failure, retry, and retention state.
 - Read and search responses expose pagination, truncation, index coverage, and
     canonical property fallback rather than silently omitting unknown results.
+- Catalog v1 workspaces fail closed at startup; catalog v2 requires a new
+    workspace.
 
 ## Contributors
 

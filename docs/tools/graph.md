@@ -5,10 +5,12 @@
 **Input:** `kind` is `nodes` or `relations`; optional `type`; `limit` defaults to
 20 (1–100); optional cursor.
 
-**Output:** catalog entries with required property schemas, identity fields,
+**Output:** catalog entries with required property schemas,
 formats/enums/cross-field rules, and ready-only counts, plus common formats,
-`counts_deferred`, and `next_cursor`. A pending high-degree delete can defer
-counts rather than block discovery.
+`counts_deferred`, and `next_cursor`. Each entry has an `identity` object with a
+`properties` array. Parent-scoped node types also include `scope`, for example
+`{"relation":"has_open_port","endpoint":"source"}` for `port`. A pending
+high-degree delete can defer counts rather than block discovery.
 
 **Errors:** `INVALID` for a bad kind/type/page/cursor; `LIMIT` or `BUSY` for
 bounded admission. Listing types is discovery and does not replace `kb_status`.
@@ -25,11 +27,21 @@ flags, link counts, and property-index coverage.
 
 **Errors:** `INVALID` for strict catalog, merge, pointer, endpoint, or batch-rule
 failure; `NOT_FOUND` for an atomic missing reference/evidence set;
-`CONFLICT`/`RECORD_DELETING` for pending records; `BUSY`, `LIMIT`, or storage
-errors. No partial batch commits.
+`CONFLICT`/`RECORD_DELETING` for immutable or pending records; `BUSY`, `LIMIT`,
+or storage errors. No partial batch commits.
 
 `CONFLICT` also reports attempts to change an existing record's type, required
-identity fields, or relation endpoints, which are immutable.
+identity fields, or relation endpoints, which are immutable. It also reports an
+identity hash collision or inconsistent stored scope, including multiple or
+incomplete parent relations. Re-parenting a scoped child is invalid. Creating a
+new `port`, `service`, `finding`, `dkim_record`, or `parameter` without exactly
+one same-request scope relation is also invalid.
+
+`service.properties.name` must be a member of the bundled, versioned
+Nmap-derived service-name registry; the server does not normalize an arbitrary
+Nmap label during `kb_write`. Names whose registry entry is TLS-capable, such as
+`http`, require a strict boolean `secure` property. For other service names,
+`secure` is an optional additional property.
 
 Object patches merge recursively, arrays replace whole values, and `{}` leaves
 existing object children. Required identity cannot change. Explicit `null`
@@ -40,6 +52,141 @@ Removing `/a` while setting `{"a": {}}` conflicts because the set recreates the
 removed object. Removing `/a/x` while setting `{"a": {"y": 1}}` is valid: it
 removes one child and merges a different child. Known catalog and mutation
 errors identify the field and rule without returning submitted values.
+
+Deleting `has_open_port`, `has_service`, `has_finding`, `has_dkim_selector`, or
+`has_parameter`, or deleting its parent node, returns `CONFLICT` while the
+scoped child still exists. Delete the child first with `cascade: true`; the
+cascade removes its incident scope relation.
+
+Several attribute names and attachment points are conventions the catalog does
+not validate; agents must still follow them, since documentation is the only
+enforcement:
+
+`endpoint` has no dedicated HTTP-observation node. Record scan results directly
+on the `endpoint` node using `status`, `title`, `content_length`, `body_sha256`,
+`header_sha256`, `webserver`, and `content_type`, so agents converge on one
+spelling instead of forking equivalent facts under different keys.
+
+A `dmarc_record` lives at `_dmarc.<domain>` on the wire, but `has_dmarc` attaches
+it to the `domain` or `subdomain` node itself, matching `has_spf`. Do not create
+a `_dmarc.example.com` subdomain node to hold it.
+
+`txt_record` and `dkim_record` values must be normalized before writing: strip
+DNS presentation-form quoting, decode escapes, concatenate a multi-string
+RRset's character-strings into one value, and remove surrounding whitespace.
+Version tags are matched exactly, so `v=spf1` is routed to `spf_record` while
+`V=SPF1` and a leading-space spelling are accepted as a generic `txt_record`.
+That is deliberate: a case-variant tag is a real misconfiguration, the
+dedicated types reject it, and refusing it here too would leave it no home.
+Record it as a `txt_record` and report the defect as a `finding`. Never write ephemeral
+`_acme-challenge` DNS-01 challenge values as `txt_record`s; each certificate
+issuance rotates the nonce, so recording them accumulates one node per renewal
+with no supersession.
+
+A submitted `endpoint` URL may carry a query string, but the server validates
+it and then removes it: `https://example.com/search?q=1` is stored as
+`https://example.com/search`, and identity is computed from the stored
+spelling. A crawler that observes `?q=1` and `?q=2` therefore writes one
+endpoint, not one per value. Record the parameter names themselves as
+`parameter` nodes attached with `has_parameter`; a value seen during a scan is
+sample data and belongs in evidence or an attribute, not in an identity.
+
+This is the one place the server rewrites a submitted value. Everything else is
+stored as submitted or rejected, and `coercion` stays false: no JSON type is
+converted, only this declared spelling is canonicalized.
+
+No required map references the `cpe23_or_empty` rule, so a stored `cpe` is
+never validated against it. Produce the spelling the rule describes and
+re-validate it on read rather than trusting the stored bytes.
+
+A versioned `technology.cpe` (`cpe:2.3:a:f5:nginx:1.18.0:*:...`) belongs on the
+`runs_technology` edge beside `version`, since the version is per-host. An
+unversioned product CPE may sit on the `technology` node itself. Omit the key
+rather than sending an empty string; a later write that sends the key overwrites
+the stored value.
+
+A `dkim_record` is identified by its selector and its parent domain, not by its
+key. Writing the same selector again patches the stored `value` in place, so a
+rotated or hijacked answer overwrites the key material previously recorded for
+that selector. This keeps the graph a current-state view, one node per selector
+rather than one per rotation; the superseded key survives only in whatever
+evidence the earlier write attached. Attach evidence to every `dkim_record`
+write that matters.
+
+`has_svcb_binding` records an RFC 9460 HTTPS or SVCB record. Write it only
+after parsing the record's SvcParams: `alpn: []` asserts that the record carries
+no ALPN parameter, and never that the writer did not look. A writer that cannot
+parse them must not write the edge at all, because `alpn` is part of the
+identity and an under-parsed record becomes a second edge beside the correct
+one rather than an obvious error. A ServiceMode record whose TargetName is `.`
+targets the owner name itself and is written as a self edge; an AliasMode
+record (`priority: 0`) whose TargetName is `.` is the wire's negative record and
+must not be written at all.
+
+`issued_by` points from a certificate to its issuer's certificate. A self edge
+is how the catalog records a self-signed certificate, and it is the only
+structural form of that fact. Reading it back costs a `search` for the type
+followed by a `get`, since relation search returns no endpoints and this edge
+carries no filterable property; keep a `self_signed` attribute on the
+certificate alongside the edge rather than treating the edge as a replacement.
+Absence of the edge means the issuer was never written, not that the chain ends.
+
+`covers_name` now requires `coverage`, which is part of its identity. A
+wildcard SAN cannot be written as a name: `*.example.com` fails `dns_name`.
+Write the wildcard's base name with `coverage: "wildcard"`, and a name the
+certificate lists literally with `coverage: "exact"`. A certificate that carries
+both `example.com` and `*.example.com` therefore produces two edges to one
+node instead of one edge that silently loses half the fact.
+
+A `tls_fingerprint` is a clustering pivot, not an identifier. Every host behind
+one load balancer or CDN presents the same JARM, so the node answers "what else
+runs this TLS stack" and never "which host is this". JARM is 62 characters and
+JA3S is 32; the declared `kind` fixes the length, and the two must not be
+written under one another's name.
+
+`operated_by` points an `asn` or an `ip_cidr` at the organization that holds
+it, keyed on the registry and the registry's own handle. A handle is unique
+within one RIR and never across them, so both properties are identity. Free-text
+organization names are not: "Google LLC", "Google Inc." and "Google" are the
+same holder, so `name` is an attribute a rescan patches in place. It is not
+required, because an RDAP entity's name can be redacted while the handle
+remains. `domain` is not a source here: domain registration is expressed by
+`registered_through`, and a registrant organization has no RIR handle to key on.
+A handle is case-sensitive and is written exactly as the registry publishes it:
+RIPE and AFRINIC derive handles from the organisation name and keep its case, so
+`ORG-nG51-RIPE` is the handle and `ORG-NG51-RIPE` is a different string that the
+registry does not publish. Never uppercase one. Treat `abuse_contact` as
+low-confidence: the registries themselves state the value is frequently wrong or
+absent.
+
+`has_weakness` classifies a `finding` or a `cve` as an instance of a CWE
+weakness class. Both sources are real: a scanner assigns the class to its own
+finding, and the NVD assigns it to a published CVE. A `finding` title is free
+text, so two scanners reporting the same reflected XSS produce two unjoinable
+titles; the CWE id is the canonical spelling that joins them. Write it as MITRE
+publishes it, `CWE-79`, not the lowercase `cwe-79` some tools emit. `name` is an
+attribute, not required, because a template that carries a cwe-id often carries
+no title for it.
+
+`registered_through` accepts a `domain` source only, because registration is a
+registrable-domain fact and a subdomain has no registrar. A `registrar` is keyed
+on its IANA id, which survives the renames and acquisitions that make the name
+unstable; `0` is rejected because it is what an agent emits for a missing field.
+Registration dates and EPP status describe the registration rather than the
+registrar, so they belong on the `domain` node as attributes, where a renewal
+patches them in place instead of stranding them on an edge after a transfer.
+Many ccTLD responses carry no IANA id at all, and those domains simply get no
+registrar node.
+
+`technology` and `tls_cipher_suite` are workspace-global shared-vocabulary
+nodes referenced by every host that matches. Neither is a `has_finding` source:
+attaching a host-specific finding to either would appear to apply to every host
+in the workspace that shares the node.
+
+`kb_types` pages at `limit`, which defaults to 20. Both the node and the
+relation catalogs are now larger than that, so a single default call returns a
+partial list plus a `next_cursor`. Follow the cursor, or raise `limit`, before
+concluding that a type does not exist.
 
 ## `kb_get`
 

@@ -16,6 +16,7 @@ import pytest
 from justpen_knowledgebase_mcp import jobs as job_module
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import BusyError, LimitError
+from justpen_knowledgebase_mcp.identity import identity_key
 from justpen_knowledgebase_mcp.models import DeleteRequest, GetRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.job_recovery import recover_intents
@@ -195,19 +196,42 @@ async def test_heartbeat_retries_real_writer_contention_without_losing_lease(tmp
 
 
 async def test_recovery_keyset_reaches_owner101_with_million_ready_rows(tmp_path):
-    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=60_000)) as kb:
         await kb.job_runner.close()
         jobs = [str(uuid4()) for _ in range(101)]
 
         def populate(connection, _token):
+            policy = json.loads(connection.execute("SELECT policy FROM settings").get)
+            policy.update(
+                wal_low_bytes=512 * 1024**2,
+                wal_high_bytes=1024**3,
+                disk_reserve_bytes=3 * 1024**3,
+            )
+            connection.execute("UPDATE settings SET policy=?", (json.dumps(policy),))
+
+            def fixture_domain_key(index: int) -> str:
+                properties = f'{{"value":"n{index}.example"}}'
+                return hashlib.sha256(properties.encode()).hexdigest()
+
+            connection.create_scalar_function("fixture_domain_key", fixture_domain_key, 1, deterministic=True)
             connection.execute(
-                "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000) INSERT INTO nodes(uuid,type,key,properties) SELECT printf('%036d',x),'hostname',cast(x as text),'{}' FROM n"
+                "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000) "
+                "INSERT INTO nodes(uuid,type,key,properties) "
+                "SELECT printf('00000000-0000-4000-8000-%012x',x),'domain',fixture_domain_key(x),"
+                'printf(\'{"value":"n%d.example"}\',x) FROM n'
             )
             for index, job_id in enumerate(jobs):
                 identifier = str(uuid4())
+                properties = {"value": f"pending-{index}.example"}
                 connection.execute(
-                    "INSERT INTO nodes(uuid,type,key,properties,lifecycle,delete_job_id,delete_cascade,delete_requested_at) VALUES(?,'hostname',?,'{}','delete_pending',?,1,1)",
-                    (identifier, identifier, job_id),
+                    "INSERT INTO nodes(uuid,type,key,properties,lifecycle,delete_job_id,delete_cascade,delete_requested_at) "
+                    "VALUES(?,'domain',?,?,'delete_pending',?,1,1)",
+                    (
+                        identifier,
+                        identity_key("nodes", "domain", properties),
+                        json.dumps(properties),
+                        job_id,
+                    ),
                 )
                 if index < 100:
                     JobStore.insert(connection, job_id, "fixture", "short", {})
@@ -247,7 +271,9 @@ async def test_two_process_claim_and_expired_delete_worker_cannot_commit(tmp_pat
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         owner = (
             await kb.write(
-                WriteRequest.model_validate({"nodes": [{"type": "hostname", "properties": {"name": "delete-owner"}}]})
+                WriteRequest.model_validate(
+                    {"nodes": [{"type": "domain", "properties": {"value": "delete-owner.example"}}]}
+                )
             )
         )["nodes"][0]["id"]
 

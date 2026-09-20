@@ -220,12 +220,15 @@ async def test_pending_evidence_race_persists_readable_public_job(kb, monkeypatc
 async def test_association_pages_require_ready_owner_but_record_remains_inspectable(kb, monkeypatch, pending_kind):
     written = await kb.write(
         {
-            "nodes": [{"type": "domain", "properties": {"name": name}} for name in ("a.example.com", "example.com")],
+            "nodes": [
+                {"type": "subdomain", "properties": {"value": "a.example.com"}},
+                {"type": "domain", "properties": {"value": "example.com"}},
+            ],
             "relations": [
                 {
-                    "type": "subdomain_of",
-                    "source_ref": {"node_index": 0},
-                    "target_ref": {"node_index": 1},
+                    "type": "has_subdomain",
+                    "source_ref": {"node_index": 1},
+                    "target_ref": {"node_index": 0},
                     "properties": {},
                 }
             ],

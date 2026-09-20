@@ -1,3 +1,16 @@
+## Unreleased
+
+### Feat
+
+- replace the recon graph contract with catalog v2 node and relation types
+- bundle a versioned ICANN Public Suffix List snapshot and Nmap-derived service-name registry
+- add parent-scoped port, service, and finding identity with atomic scoped batch writes
+- guard scoped children by rejecting scope-relation or parent deletion until the child is deleted
+
+### Breaking
+
+- **BREAKING:** reject catalog v1 workspaces at startup; create a new workspace for catalog v2
+
 ## v0.1.1 (2026-09-17)
 
 ### Fix

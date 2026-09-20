@@ -156,11 +156,11 @@ async def test_all_tools_and_presence_over_real_wire(tmp_path, transport):
         assert status["engagement_scope"] == "single_engagement"
         assert status["request_workspace_selection"] is False
         assert status["canonical_session_source"] == "JUSTPEN_SESSION_ID"
-        await client.call_tool("kb_types", {"kind": "nodes", "type": "hostname"})
-        props = {"name": "exact.example", "array": [True, 1, 1.25, None, "Ä\n"], "nested": {"null": None}}
+        await client.call_tool("kb_types", {"kind": "nodes", "type": "domain"})
+        props = {"value": "exact.example", "array": [True, 1, 1.25, None, "Ä\n"], "nested": {"null": None}}
         result = envelope(
             await client.call_tool(
-                "kb_write", {"nodes": [{"type": "hostname", "properties": props, "label": "keep", "source": "keep"}]}
+                "kb_write", {"nodes": [{"type": "domain", "properties": props, "label": "keep", "source": "keep"}]}
             )
         )["data"]
         identifier = result["nodes"][0]["id"]
@@ -268,7 +268,7 @@ async def test_real_cancellation_notification_and_late_cancel(tmp_path, transpor
                 "tools/call",
                 {
                     "name": "kb_write",
-                    "arguments": {"nodes": [{"type": "hostname", "properties": {"name": "cancel.example"}}]},
+                    "arguments": {"nodes": [{"type": "domain", "properties": {"value": "cancel.example"}}]},
                 },
             )
         )
@@ -292,7 +292,7 @@ async def test_real_cancellation_notification_and_late_cancel(tmp_path, transpor
             "tools/call",
             {
                 "name": "kb_write",
-                "arguments": {"nodes": [{"type": "hostname", "properties": {"name": "next.example"}}]},
+                "arguments": {"nodes": [{"type": "domain", "properties": {"value": "next.example"}}]},
             },
         )
         assert response["result"]["structuredContent"]["status"] == "ok"
@@ -304,16 +304,16 @@ async def test_raw_duplicate_keys_last_wins_and_nonfinite_rejected(tmp_path, tra
     async with wire_client(tmp_path, transport) as client:
         result = await client.raw(
             2,
-            b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"kb_write","arguments":{"nodes":[{"type":"hostname","properties":{"name":"first.example","name":"last.example"}}]}}}',
+            b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"kb_write","arguments":{"nodes":[{"type":"domain","properties":{"value":"first.example","value":"last.example"}}]}}}',
         )
         identifier = result["result"]["structuredContent"]["data"]["nodes"][0]["id"]
         result = await client.request(
             3, "tools/call", {"name": "kb_get", "arguments": {"kind": "nodes", "ids": [identifier]}}
         )
-        assert result["result"]["structuredContent"]["data"]["records"][0]["properties"]["name"] == "last.example"
+        assert result["result"]["structuredContent"]["data"]["records"][0]["properties"]["value"] == "last.example"
         for identifier, invalid in enumerate(("NaN", "Infinity", "-Infinity"), 4):
             body = (
-                '{"jsonrpc":"2.0","id":$TOKEN,"method":"tools/call","params":{"name":"kb_write","arguments":{"nodes":[{"type":"hostname","properties":{"name":"bad.example","nested":{"value":$VALUE}}}]}}}'.replace(
+                '{"jsonrpc":"2.0","id":$TOKEN,"method":"tools/call","params":{"name":"kb_write","arguments":{"nodes":[{"type":"domain","properties":{"value":"bad.example","nested":{"value":$VALUE}}}]}}}'.replace(
                     "$TOKEN", str(identifier)
                 ).replace("$VALUE", invalid)
             ).encode()
@@ -333,14 +333,16 @@ async def test_delete_atomic_pending_cascade_and_retry_contract(tmp_path, transp
         graph = await kb.write(
             {
                 "nodes": [
-                    {"type": "domain", "properties": {"name": name}} for name in ("a.example", "b.example", "example")
+                    {"type": "subdomain", "properties": {"value": "a.example.com"}},
+                    {"type": "subdomain", "properties": {"value": "b.example.com"}},
+                    {"type": "domain", "properties": {"value": "example.com"}},
                 ],
                 "relations": [
                     {
-                        "type": "subdomain_of",
+                        "type": "has_subdomain",
                         "properties": {},
-                        "source_ref": {"node_index": index},
-                        "target_ref": {"node_index": 2},
+                        "source_ref": {"node_index": 2},
+                        "target_ref": {"node_index": index},
                     }
                     for index in (0, 1)
                 ],
@@ -418,14 +420,14 @@ async def test_delete_atomic_pending_cascade_and_retry_contract(tmp_path, transp
                 assert blocker["deletion_owner"] == {"kind": "nodes", "id": nodes[0]}
                 assert blocker["delete_job_id"] == job_id
                 assert blocker["pending_since"] == details["pending_since"]
-                types = envelope(await client.call_tool("kb_types", {"kind": "relations", "type": "subdomain_of"}))[
+                types = envelope(await client.call_tool("kb_types", {"kind": "relations", "type": "has_subdomain"}))[
                     "data"
                 ]
                 assert types["types"][0]["count"] == 1
                 for patch in (
                     {"id": relations[0]},
-                    {"id": relations[0], "source_ref": {"id": nodes[0]}},
-                    {"id": relations[0], "target_ref": {"id": nodes[2]}},
+                    {"id": relations[0], "source_ref": {"id": nodes[2]}},
+                    {"id": relations[0], "target_ref": {"id": nodes[0]}},
                 ):
                     rejected = envelope(
                         await client.call_tool("kb_write", {"relations": [patch]}, raise_on_error=False)
@@ -484,7 +486,10 @@ async def test_response_budget_and_lifetime_link_pagination(tmp_path, transport)
         graph = await kb.write(
             {
                 "nodes": [
-                    {"type": "hostname", "properties": {"name": f"large-{index}", "blob": "x" * 60000}}
+                    {
+                        "type": "subdomain",
+                        "properties": {"value": f"large-{index}.example.test", "blob": "x" * 60000},
+                    }
                     for index in range(5)
                 ]
             }
@@ -571,8 +576,8 @@ async def test_two_stdio_and_http_share_commits_after_disconnect_and_kill(tmp_pa
                     {
                         "nodes": [
                             {
-                                "type": "hostname",
-                                "properties": {"name": "shared.example", "values": [None, 1.25, True, "Ä"]},
+                                "type": "domain",
+                                "properties": {"value": "shared.example", "values": [None, 1.25, True, "Ä"]},
                             }
                         ]
                     },
@@ -742,7 +747,7 @@ async def test_real_lock_contention_and_deadline_errors(tmp_path, transport, cod
             result = envelope(
                 await client.call_tool(
                     "kb_write",
-                    {"nodes": [{"type": "hostname", "properties": {"name": "blocked.example"}}]},
+                    {"nodes": [{"type": "domain", "properties": {"value": "blocked.example"}}]},
                     raise_on_error=False,
                 )
             )
@@ -752,7 +757,7 @@ async def test_real_lock_contention_and_deadline_errors(tmp_path, transport, cod
             await holder
         assert envelope(await client.call_tool("kb_search", {"kind": "nodes"}))["data"]["items"] == []
         await client.call_tool(
-            "kb_write", {"nodes": [{"type": "hostname", "properties": {"name": "after-lock.example"}}]}
+            "kb_write", {"nodes": [{"type": "domain", "properties": {"value": "after-lock.example"}}]}
         )
 
 

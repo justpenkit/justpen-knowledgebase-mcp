@@ -2,20 +2,65 @@
 
 import pytest
 
-from justpen_knowledgebase_mcp.identity import format_timestamp, identity_key, parse_timestamp
+from justpen_knowledgebase_mcp.identity import format_timestamp, identity_json, identity_key, parse_timestamp
+
+PARENT = "00000000-0000-4000-8000-000000000001"
+OTHER_PARENT = "00000000-0000-4000-8000-000000000002"
 
 
 def test_identity_ignores_order_and_nonidentity_fields():
-    assert identity_key("nodes", "application", {"sha256": "a" * 64, "platform": "android"}) == identity_key(
-        "nodes", "application", {"note": "x", "platform": "linux", "sha256": "a" * 64}
+    assert identity_key("nodes", "domain", {"value": "example.com"}) == identity_key(
+        "nodes", "domain", {"note": "x", "value": "example.com"}
     )
-    assert identity_key("relations", "signed_by", {}) == ""
+    assert identity_key("relations", "resolves_to", {}) == ""
+
+
+def test_scoped_identity_is_canonical_and_parent_sensitive():
+    properties = {"transport": "tcp", "number": 443}
+    assert identity_json("nodes", "port", properties, PARENT) == (
+        '{"number":443,"parent":"00000000-0000-4000-8000-000000000001","transport":"tcp"}'
+    )
+    assert identity_key("nodes", "port", properties, PARENT) == identity_key(
+        "nodes", "port", {"number": 443, "note": "ignored", "transport": "tcp"}, PARENT
+    )
+    assert identity_key("nodes", "port", properties, PARENT) != identity_key("nodes", "port", properties, OTHER_PARENT)
+
+
+@pytest.mark.parametrize(
+    ("type_name", "properties"),
+    [
+        ("port", {"transport": "tcp", "number": 443}),
+        ("service", {"name": "unknown"}),
+        ("finding", {"title": "Open management port", "severity": "high"}),
+    ],
+)
+def test_scoped_identity_requires_parent(type_name, properties):
+    with pytest.raises(ValueError, match="parent"):
+        identity_key("nodes", type_name, properties)
 
 
 def test_identity_strict_integer_and_types():
     with pytest.raises(ValueError):
-        identity_key("nodes", "service", {"host": "x", "transport": "tcp", "port": 1.0})
-    assert identity_key("nodes", "service", {"host": "x", "transport": "tcp", "port": 1})
+        identity_key("nodes", "port", {"transport": "tcp", "number": 1.0}, PARENT)
+    assert identity_key("nodes", "port", {"transport": "tcp", "number": 1}, PARENT)
+
+
+def test_order_independent_relation_identity_hashes_declared_collection():
+    first = {
+        "flags": 0,
+        "parameters": [
+            {"name": "validationmethods", "value": "dns-01", "ignored": 1},
+            {"name": "accounturi", "value": "https://ca.example/acct/1"},
+        ],
+    }
+    second = {
+        "flags": 0,
+        "parameters": [
+            {"value": "https://ca.example/acct/1", "name": "accounturi"},
+            {"value": "dns-01", "name": "validationmethods", "ignored": 2},
+        ],
+    }
+    assert identity_key("relations", "caa_issue", first) == identity_key("relations", "caa_issue", second)
 
 
 @pytest.mark.parametrize(

@@ -26,7 +26,7 @@ async def test_search_partial_index_and_refresh(tmp_path):
                     "nodes": [
                         {
                             "type": "domain",
-                            "properties": {"name": "a.example", "ports": list(range(600)), "status": 403},
+                            "properties": {"value": "a.example", "ports": list(range(600)), "status": 403},
                         }
                     ]
                 }
@@ -52,11 +52,11 @@ async def test_search_partial_index_and_refresh(tmp_path):
 
 async def test_sql_matches_canonical_oracle_matrix(tmp_path):
     documents = [
-        {"name": "a.example", "items": list(range(600)), "zzz_status_code": 403},
-        {"name": "b.example", **{f"field{i:04}": i for i in range(600)}},
-        {"name": "c.example", "items": {"00": None, "0": "403"}, "big": "é" * 513, "x" * 1024: "unindexed"},
-        {"name": "d.example", "items": None, "big": "x" * 1024, "scalar": True},
-        {"name": "e.example", "items": ["first"], "big": "x" * 1025, "scalar": 2**53 + 1},
+        {"value": "a.example", "items": list(range(600)), "zzz_status_code": 403},
+        {"value": "b.example", **{f"field{i:04}": i for i in range(600)}},
+        {"value": "c.example", "items": {"00": None, "0": "403"}, "big": "é" * 513, "x" * 1024: "unindexed"},
+        {"value": "d.example", "items": None, "big": "x" * 1024, "scalar": True},
+        {"value": "e.example", "items": ["first"], "big": "x" * 1025, "scalar": 2**53 + 1},
     ]
     predicates = [
         {"path": path, "op": op, "value": value}
@@ -126,7 +126,7 @@ async def test_storage_classes_sentinels_and_negative_affinity(tmp_path):
                         {
                             "type": "domain",
                             "properties": {
-                                "name": "a.example",
+                                "value": "a.example",
                                 "string": "403",
                                 "number": 403,
                                 "boolean": True,
@@ -158,12 +158,12 @@ async def test_cursor_write_stability_and_filter_binding(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "domain", "properties": {"name": name + ".example"}} for name in ["a", "b", "c"]]}
+                {"nodes": [{"type": "domain", "properties": {"value": name + ".example"}} for name in ["a", "b", "c"]]}
             )
         )
         first = await kb.search(SearchRequest(kind="nodes", limit=1))
         await kb.write(
-            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"name": "d.example"}}]})
+            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "d.example"}}]})
         )
         second = await kb.search(SearchRequest(kind="nodes", cursor=first["cursor"]))
         assert len(second["items"]) == 3
@@ -177,7 +177,8 @@ async def test_type_counts_use_type_index(tmp_path):
         def plan(connection, token):
             return list(
                 connection.execute(
-                    "EXPLAIN QUERY PLAN SELECT count(*) FROM relations WHERE type=? AND lifecycle='ready'", ("aliases",)
+                    "EXPLAIN QUERY PLAN SELECT count(*) FROM relations WHERE type=? AND lifecycle='ready'",
+                    ("cname_to",),
                 )
             )
 
@@ -187,12 +188,17 @@ async def test_type_counts_use_type_index(tmp_path):
 async def test_numeric_sql_precision_and_no_canonical_read_short_circuit(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         documents = [
-            {"name": f"h{index}.example", "value": value, "large": "x" * 1025}
+            {
+                "der_sha256": f"{index:064x}",
+                "name": f"h{index}.example",
+                "value": value,
+                "large": "x" * 1025,
+            }
             for index, value in enumerate([True, 1, 1.0, 2**53 + 1, float(2**53), None, "1", {}, -0.0])
         ]
         created = await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "domain", "properties": document} for document in documents]}
+                {"nodes": [{"type": "certificate", "properties": document} for document in documents]}
             )
         )
         ids = [item["id"] for item in created["nodes"]]
@@ -232,7 +238,7 @@ async def test_fallback_expiry_is_limit_and_never_advances_cursor(tmp_path, monk
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "domain", "properties": {"name": "a.example", "large": "x" * 1025}}]}
+                {"nodes": [{"type": "domain", "properties": {"value": "a.example", "large": "x" * 1025}}]}
             )
         )
         predicate = {"path": "/large", "op": "eq", "value": "x" * 1025}
@@ -258,7 +264,7 @@ async def test_partial_materialized_predicate_does_not_read_canonical_body(tmp_p
                     "nodes": [
                         {
                             "type": "domain",
-                            "properties": {"name": "a.example", "ports": list(range(600)), "status": 403},
+                            "properties": {"value": "a.example", "ports": list(range(600)), "status": 403},
                         }
                     ]
                 }
@@ -292,7 +298,7 @@ async def test_canonical_depth16_exists_depth17_is_missing(tmp_path):
     properties: dict[str, Any] = {"leaf": 42}
     for _ in range(15):
         properties = {"child": properties}
-    properties["name"] = "a.example"
+    properties["value"] = "a.example"
     path = "/child" * 15 + "/leaf"
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         await kb.write(WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": properties}]}))
@@ -308,7 +314,7 @@ async def test_canonical_depth16_exists_depth17_is_missing(tmp_path):
 async def test_property_check_constraints_distinguish_null_and_sentinel(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         await kb.write(
-            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"name": "a.example"}}]})
+            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "a.example"}}]})
         )
         for category, materialized, value in [
             ("null", 0, None),
@@ -333,12 +339,12 @@ async def test_relation_properties_refresh_and_builtin_filters(tmp_path):
             WriteRequest.model_validate(
                 {
                     "nodes": [
-                        {"type": "hostname", "properties": {"name": "a.example"}},
-                        {"type": "hostname", "properties": {"name": "b.example"}},
+                        {"type": "domain", "properties": {"value": "a.example"}},
+                        {"type": "domain", "properties": {"value": "b.example"}},
                     ],
                     "relations": [
                         {
-                            "type": "aliases",
+                            "type": "cname_to",
                             "source_ref": {"node_index": 0},
                             "target_ref": {"node_index": 1},
                             "properties": {"vantage": "test", "status": 403},
@@ -353,7 +359,7 @@ async def test_relation_properties_refresh_and_builtin_filters(tmp_path):
         result = await kb.search(
             SearchRequest(
                 kind="relations",
-                type="aliases",
+                type="cname_to",
                 source="scanner",
                 source_id=written["nodes"][0]["id"],
                 target_id=written["nodes"][1]["id"],
@@ -380,18 +386,18 @@ async def test_relation_words_intersect_direct_and_single_linked_evidence_units(
             WriteRequest.model_validate(
                 {
                     "nodes": [
-                        {"type": "hostname", "properties": {"name": "first.example"}},
-                        {"type": "hostname", "properties": {"name": "second.example"}},
+                        {"type": "domain", "properties": {"value": "first.example"}},
+                        {"type": "domain", "properties": {"value": "second.example"}},
                     ],
                     "relations": [
                         {
-                            "type": "aliases",
+                            "type": "cname_to",
                             "source_ref": {"node_index": 0},
                             "target_ref": {"node_index": 1},
                             "properties": {"vantage": "common", "second": "obscureneedle"},
                         },
                         {
-                            "type": "aliases",
+                            "type": "cname_to",
                             "source_ref": {"node_index": 1},
                             "target_ref": {"node_index": 0},
                             "properties": {"vantage": "unrelated"},
@@ -415,10 +421,13 @@ async def test_relation_words_intersect_direct_and_single_linked_evidence_units(
 async def test_maximum_accepted_ast_executes_with_exact_result(tmp_path):
     predicate = {"all": [{"path": "/value", "op": "in", "value": list(range(100))} for _ in range(32)]}
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
-        documents = [{"name": "a.example", "value": 42}, {"name": "b.example", "value": "42"}]
+        documents = [
+            {"der_sha256": "a" * 64, "name": "a.example", "value": 42},
+            {"der_sha256": "b" * 64, "name": "b.example", "value": "42"},
+        ]
         written = await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "domain", "properties": document} for document in documents]}
+                {"nodes": [{"type": "certificate", "properties": document} for document in documents]}
             )
         )
         result = await kb.search(SearchRequest(kind="nodes", properties=predicate))
@@ -433,7 +442,7 @@ async def test_maximum_accepted_ast_executes_with_exact_result(tmp_path):
 async def test_empty_cursor_is_invalid_while_omitted_or_null_starts_first_page(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         written = await kb.write(
-            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"name": "a.example"}}]})
+            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "a.example"}}]})
         )
         expected_ids = [written["nodes"][0]["id"]]
         for request in ({"kind": "nodes"}, {"kind": "nodes", "cursor": None}):

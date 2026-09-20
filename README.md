@@ -8,8 +8,11 @@ and local files, without an LLM, embedding service, or separate database server.
 
 ## Features
 
-- **Recon graph:** typed nodes and relations, server-generated identities,
-    required property validation, and flexible additional properties.
+- **Catalog v2 recon graph:** domains, subdomains, IP addresses and CIDRs, ASNs,
+    DNS records, technologies, TLS cipher suites and fingerprints, registrars, organizations, weaknesses,
+    parent-scoped
+    ports/services/findings/DKIM selectors/parameters, certificates, endpoints,
+    and CVEs with server-generated identities and strict required properties.
 - **Raw evidence:** store exact file, text, or base64 content and link it to
     graph records; read evidence back in bounded byte ranges.
 - **Search and traversal:** full-text search across records and eligible text
@@ -55,6 +58,9 @@ Call `kb_types` to discover the available schemas. Start with the [graph workflo
 [tool reference](docs/tools/index.md). See [workspace operations](docs/guides/workspace.md)
 for concurrency, backups, and upgrades, and [telemetry](docs/guides/telemetry.md)
 for exporter configuration.
+
+Catalog v2 rejects catalog v1 workspaces at startup. Create a new workspace
+rather than pointing this version at v1 data.
 
 ## Development
 

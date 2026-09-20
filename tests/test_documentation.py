@@ -83,7 +83,7 @@ def test_public_json_examples_parse_and_match_request_schemas():
     search = next(example for example in examples if example.get("kind") == "nodes" and "properties" in example)
     assert TypesRequest.model_validate(discovery).type == "endpoint"
     assert IngestRequest.model_validate(ingest).effective_media_type == "application/x-ndjson"
-    assert WriteRequest.model_validate(write).nodes[1].properties["name"] == "api.example.com"
+    assert WriteRequest.model_validate(write).nodes[1].properties["value"] == "api.example.com"
     assert SearchRequest.model_validate(search).properties is not None
 
 

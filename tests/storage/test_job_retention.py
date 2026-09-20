@@ -12,6 +12,7 @@ import pytest
 from justpen_knowledgebase_mcp import jobs
 from justpen_knowledgebase_mcp.config import ServerConfig, WorkspacePolicy
 from justpen_knowledgebase_mcp.errors import BusyError, ConflictError, NotFoundError
+from justpen_knowledgebase_mcp.identity import identity_key
 from justpen_knowledgebase_mcp.models import GetRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.connection import SQLiteRuntime
@@ -82,9 +83,16 @@ async def test_pending_owner_and_live_lease_are_protected_and_keyset_progresses(
     def populate(c, _t):
         ids = [terminal(c, "failed") for _ in range(101)]
         for identifier in ids[:100]:
+            properties = {"value": f"pending-{identifier}.example"}
             c.execute(
-                "insert into nodes(uuid,type,key,properties,lifecycle,delete_job_id,delete_cascade,delete_requested_at) values(?,'hostname',?,'{}','delete_pending',?,1,1)",
-                (str(uuid4()), identifier, identifier),
+                "insert into nodes(uuid,type,key,properties,lifecycle,delete_job_id,delete_cascade,delete_requested_at) "
+                "values(?,'domain',?,?,'delete_pending',?,1,1)",
+                (
+                    str(uuid4()),
+                    identity_key("nodes", "domain", properties),
+                    json.dumps(properties),
+                    identifier,
+                ),
             )
         c.execute("update jobs set lease_expires_at=1000 where uuid=?", (ids[-1],))
         last = terminal(c, "cancelled", 2)
@@ -136,7 +144,15 @@ async def test_real_short_purge_preserves_blob_links_and_removes_recorded_files(
     identifier = result["evidence_id"]
     graph = await kb.write(
         WriteRequest.model_validate(
-            {"nodes": [{"type": "hostname", "properties": {"name": "retained"}, "evidence_add": [identifier]}]}
+            {
+                "nodes": [
+                    {
+                        "type": "domain",
+                        "properties": {"value": "retained.example"},
+                        "evidence_add": [identifier],
+                    }
+                ]
+            }
         )
     )
     node_id = graph["nodes"][0]["id"]

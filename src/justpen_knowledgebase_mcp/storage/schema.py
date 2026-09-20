@@ -1,4 +1,4 @@
-"""Atomic v1 schema initialization and transaction-local compatibility guard."""
+"""Atomic v2 schema initialization and transaction-local compatibility guard."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     from ..workspace import WorkspacePaths
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 INDEX_FORMAT_VERSION = 1
 
 REQUIRED_INDEXES = {
@@ -67,7 +67,7 @@ CREATE TABLE relations (
  target_id INTEGER NOT NULL REFERENCES nodes(id), key TEXT NOT NULL,
  properties TEXT NOT NULL CHECK(json_valid(properties)), metadata TEXT NOT NULL DEFAULT '{}',
  lifecycle TEXT NOT NULL DEFAULT 'ready', delete_job_id TEXT, delete_cascade INTEGER, delete_requested_at INTEGER,
- created_at INTEGER, updated_at INTEGER, observed_at INTEGER, CHECK(source_id != target_id),
+ created_at INTEGER, updated_at INTEGER, observed_at INTEGER,
  CHECK((lifecycle='ready' AND delete_job_id IS NULL AND delete_cascade IS NULL AND delete_requested_at IS NULL) OR
  (lifecycle='delete_pending' AND delete_job_id IS NOT NULL AND delete_cascade IS NOT NULL AND delete_cascade IN (0,1) AND typeof(delete_cascade)='integer' AND typeof(delete_requested_at)='integer')),
  UNIQUE(source_id,type,target_id,key)
@@ -136,7 +136,7 @@ END;
 
 
 def _intent_ddl() -> str:
-    """Build immutable owner intents and sparse recovery indexes in sole v1 DDL."""
+    """Build immutable owner intents and sparse recovery indexes in sole v2 DDL."""
     return "".join(
         f"""
 CREATE INDEX {owner}_pending_owner ON {owner}(id) WHERE lifecycle='delete_pending';

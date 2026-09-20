@@ -157,6 +157,15 @@ async def validate_nodes(
     return ordinal
 
 
+_REDIRECT_STATUSES = (301, 302, 303, 307, 308)
+
+
+def _edge_properties(measure: Measurements, ordinal: int) -> dict[str, Any]:
+    """Mirror the generator's canonical `redirects_to` properties for one edge ordinal."""
+    status = _REDIRECT_STATUSES[ordinal % len(_REDIRECT_STATUSES)]
+    return {"status": status, "context": f"seed{measure.report['seed']}-edge{ordinal}"}
+
+
 async def validate_relations(measure: Measurements, kb: KnowledgeBase, nodes: int) -> int:
     """Validate every relation batch against its original canonical target page."""
     ordinal = after = 0
@@ -188,7 +197,7 @@ async def validate_relations(measure: Measurements, kb: KnowledgeBase, nodes: in
                     or key != identity_key("relations", "redirects_to", json.loads(raw))
                     or source != measure.hub
                     or target != targets[index % len(targets)][0]
-                    or json.loads(raw) != {"context": f"seed{measure.report['seed']}-edge{ordinal}"}
+                    or json.loads(raw) != _edge_properties(measure, ordinal)
                     or lifecycle != "ready"
                 ):
                     raise RuntimeError(f"foreign/mismatched canonical relation at ordinal{ordinal}")

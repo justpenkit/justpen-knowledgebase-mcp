@@ -24,8 +24,10 @@ async def test_depth_direction_and_node_budget(tmp_path):
             WriteRequest.model_validate(
                 {
                     "nodes": [
-                        {"type": "domain", "properties": {"name": name}}
-                        for name in ["example.com", "a.example.com", "b.a.example.com", "c.b.a.example.com"]
+                        {"type": "domain", "properties": {"value": "example.com"}},
+                        {"type": "subdomain", "properties": {"value": "a.example.com"}},
+                        {"type": "subdomain", "properties": {"value": "b.a.example.com"}},
+                        {"type": "subdomain", "properties": {"value": "c.b.a.example.com"}},
                     ]
                 }
             )
@@ -36,9 +38,9 @@ async def test_depth_direction_and_node_budget(tmp_path):
                 {
                     "relations": [
                         {
-                            "type": "subdomain_of",
-                            "source_ref": {"id": ids[i + 1]},
-                            "target_ref": {"id": ids[i]},
+                            "type": "has_subdomain",
+                            "source_ref": {"id": ids[i]},
+                            "target_ref": {"id": ids[i + 1]},
                             "properties": {},
                         }
                         for i in range(3)
@@ -49,10 +51,10 @@ async def test_depth_direction_and_node_budget(tmp_path):
         zero = await kb.neighbors(NeighborsRequest(seed_ids=[ids[0]], depth=0))
         assert [node["id"] for node in zero["nodes"]] == ids[:1]
         incoming = await kb.neighbors(NeighborsRequest(seed_ids=[ids[0]], direction="in", depth=3))
-        assert [node["id"] for node in incoming["nodes"]] == ids
-        assert len(incoming["edges"]) == 3
+        assert [node["id"] for node in incoming["nodes"]] == ids[:1]
         outgoing = await kb.neighbors(NeighborsRequest(seed_ids=[ids[0]], direction="out", depth=3))
-        assert len(outgoing["nodes"]) == 1
+        assert [node["id"] for node in outgoing["nodes"]] == ids
+        assert len(outgoing["edges"]) == 3
         bounded = await kb.neighbors(NeighborsRequest(seed_ids=[ids[0]], depth=3, max_nodes=2))
         assert len(bounded["nodes"]) == 2
         assert bounded["truncated"]
@@ -64,7 +66,7 @@ async def test_cycles_multiple_seeds_types_and_edge_budget(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "hostname", "properties": {"name": f"h{i}.example"}} for i in range(3)]}
+                {"nodes": [{"type": "subdomain", "properties": {"value": f"h{i}.example.com"}} for i in range(3)]}
             )
         )
         ids = [item["id"] for item in result["nodes"]]
@@ -73,7 +75,7 @@ async def test_cycles_multiple_seeds_types_and_edge_budget(tmp_path):
                 {
                     "relations": [
                         {
-                            "type": "aliases",
+                            "type": "cname_to",
                             "source_ref": {"id": ids[i]},
                             "target_ref": {"id": ids[(i + 1) % 3]},
                             "properties": {"vantage": "test"},
@@ -91,7 +93,7 @@ async def test_cycles_multiple_seeds_types_and_edge_budget(tmp_path):
         assert limited["reason"] == "max_edges"
         empty = await kb.neighbors(NeighborsRequest(seed_ids=ids[:1], relation_types=["resolves_to"]))
         assert empty["edges"] == []
-        selected = await kb.neighbors(NeighborsRequest(seed_ids=ids[:1], relation_types=["aliases"]))
+        selected = await kb.neighbors(NeighborsRequest(seed_ids=ids[:1], relation_types=["cname_to"]))
         assert len(selected["edges"]) == 2
         with pytest.raises(InvalidParamsError):
             await kb.write(
@@ -99,7 +101,7 @@ async def test_cycles_multiple_seeds_types_and_edge_budget(tmp_path):
                     {
                         "relations": [
                             {
-                                "type": "aliases",
+                                "type": "has_subdomain",
                                 "source_ref": {"id": ids[0]},
                                 "target_ref": {"id": ids[0]},
                                 "properties": {"vantage": "test"},
@@ -114,7 +116,7 @@ async def test_high_degree_reads_bounded_adjacency_and_deadlines(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "hostname", "properties": {"name": f"h{i}.example"}} for i in range(100)]}
+                {"nodes": [{"type": "subdomain", "properties": {"value": f"h{i}.example.com"}} for i in range(100)]}
             )
         )
         ids = [item["id"] for item in result["nodes"]]
@@ -123,7 +125,7 @@ async def test_high_degree_reads_bounded_adjacency_and_deadlines(tmp_path):
                 {
                     "relations": [
                         {
-                            "type": "aliases",
+                            "type": "cname_to",
                             "source_ref": {"id": ids[0]},
                             "target_ref": {"id": other},
                             "properties": {"vantage": "test"},
@@ -152,7 +154,7 @@ async def test_high_degree_reads_bounded_adjacency_and_deadlines(tmp_path):
             connection.set_row_trace(trace_row)
             try:
                 result = neighbors(
-                    connection, token, NeighborsRequest(seed_ids=ids[:1], max_nodes=2, relation_types=["aliases"])
+                    connection, token, NeighborsRequest(seed_ids=ids[:1], max_nodes=2, relation_types=["cname_to"])
                 )
             finally:
                 connection.set_row_trace(None)
@@ -166,7 +168,7 @@ async def test_high_degree_reads_bounded_adjacency_and_deadlines(tmp_path):
         bounded, query_count, rows = await kb.workers.read(run)
         assert query_count == 2  # One selective stream per direction, no per-edge restarts.
         assert len(rows) == 2  # One accepted edge and one proving the node budget is exhausted.
-        assert all(row[2] == "aliases" for row in rows)
+        assert all(row[2] == "cname_to" for row in rows)
         assert [node["id"] for node in bounded["nodes"]] == ids[:2]
         assert len(bounded["edges"]) == 1
         assert bounded["truncated"]
@@ -195,7 +197,7 @@ async def test_response_budget_keeps_frontier_and_visited_bounded(tmp_path):
                 WriteRequest.model_validate(
                     {
                         "nodes": [
-                            {"type": "hostname", "properties": {"name": f"h{i}.example"}}
+                            {"type": "subdomain", "properties": {"value": f"h{i}.example.com"}}
                             for i in range(start, start + 100)
                         ]
                     }
@@ -204,10 +206,10 @@ async def test_response_budget_keeps_frontier_and_visited_bounded(tmp_path):
             ids.extend(item["id"] for item in result["nodes"])
         relations = [
             {
-                "type": "aliases",
+                "type": "has_mail_exchange",
                 "source_ref": {"id": ids[0]},
                 "target_ref": {"id": other},
-                "properties": {"vantage": str(vantage)},
+                "properties": {"preference": vantage},
             }
             for other in ids[1:]
             for vantage in range(3)
@@ -227,7 +229,7 @@ async def test_pending_visibility_matches_graph_readiness(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
             WriteRequest.model_validate(
-                {"nodes": [{"type": "hostname", "properties": {"name": f"h{i}.example"}} for i in range(3)]}
+                {"nodes": [{"type": "subdomain", "properties": {"value": f"h{i}.example.com"}} for i in range(3)]}
             )
         )
         ids = [item["id"] for item in result["nodes"]]
@@ -236,7 +238,7 @@ async def test_pending_visibility_matches_graph_readiness(tmp_path):
                 {
                     "relations": [
                         {
-                            "type": "aliases",
+                            "type": "cname_to",
                             "source_ref": {"id": ids[0]},
                             "target_ref": {"id": other},
                             "properties": {"vantage": "test"},

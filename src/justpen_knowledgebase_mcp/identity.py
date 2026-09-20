@@ -5,12 +5,13 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from uuid import UUID
 
 from pydantic import AfterValidator
 
 from .catalog import catalog_manifest, validate_record
+from .errors import ExpectedValidationError
 from .mutations import canonical_json
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -19,19 +20,50 @@ _TIMESTAMP = re.compile(
 )
 
 
-def identity_json(kind: str, type_name: str, properties: dict[str, Any]) -> str:
-    """Return the catalog-selected scalar identity, preserving JSON types."""
+def _order_independent_hash(properties: dict[str, Any], rule: dict[str, Any]) -> tuple[str, str]:
+    """Return one catalog-declared collection property as a canonical digest."""
+    field = cast("str", rule["property"])
+    values = cast("list[Any]", properties[field])
+    projection = rule.get("projection")
+    if isinstance(projection, list):
+        fields = cast("list[str]", projection)
+        normalized = [{name: value[name] for name in fields} for value in values]
+        normalized.sort(key=lambda value: tuple(value[name] for name in cast("list[str]", rule["sort"])))
+    else:
+        normalized = sorted(values)
+    digest = hashlib.sha256(canonical_json(normalized).encode("utf-8")).hexdigest()
+    return field, digest
+
+
+def identity_json(kind: str, type_name: str, properties: dict[str, Any], parent_id: str | None = None) -> str:
+    """Return catalog-selected identity JSON, including a scoped parent UUID when declared."""
     validate_record(kind, type_name, properties)
-    fields = catalog_manifest()[kind][type_name]["identity"]
+    identity = cast("dict[str, Any]", catalog_manifest()[kind][type_name]["identity"])
+    fields = cast("list[str]", identity["properties"])
     selected = {field: properties[field] for field in fields}
+    scope = identity.get("scope")
+    if scope is not None:
+        if type(parent_id) is not str:
+            raise ExpectedValidationError("scoped identity requires a parent node id")
+        try:
+            parsed_parent = UUID(parent_id)
+        except (TypeError, ValueError) as exc:
+            raise ExpectedValidationError("scoped identity requires a valid parent node id") from exc
+        if str(parsed_parent) != parent_id:
+            raise ExpectedValidationError("scoped identity requires a canonical parent node id")
+        selected["parent"] = parent_id
+    order_independent = identity.get("order_independent")
+    if isinstance(order_independent, dict):
+        field, digest = _order_independent_hash(properties, cast("dict[str, Any]", order_independent))
+        selected[field] = digest
     if any(type(value) not in (str, bool, int) for value in selected.values()):
         raise ValueError("identity only supports string, boolean and signed64")
     return canonical_json(selected)
 
 
-def identity_key(kind: str, type_name: str, properties: dict[str, Any]) -> str:
-    """Generate the read-only key independently of metadata and neighbors."""
-    content = identity_json(kind, type_name, properties)
+def identity_key(kind: str, type_name: str, properties: dict[str, Any], parent_id: str | None = None) -> str:
+    """Generate the read-only key from properties and any declared parent scope."""
+    content = identity_json(kind, type_name, properties, parent_id)
     return "" if content == "{}" else hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 

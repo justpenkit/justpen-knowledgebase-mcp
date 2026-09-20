@@ -7,6 +7,7 @@ from fastmcp import Client, Context
 
 from justpen_knowledgebase_mcp import app
 from justpen_knowledgebase_mcp.config import ServerConfig
+from justpen_knowledgebase_mcp.storage.schema import SCHEMA_VERSION
 
 from .tools import envelope
 
@@ -45,7 +46,7 @@ async def test_tool_wrapper_resolves_own_lifespan_service(tmp_path):
 
     async with Client(server) as client:
         result = await client.call_tool("probe", {})
-        assert result.data == 1
+        assert result.data == SCHEMA_VERSION
 
 
 @pytest.mark.integration
