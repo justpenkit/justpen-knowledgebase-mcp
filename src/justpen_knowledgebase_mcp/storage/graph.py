@@ -5,11 +5,12 @@ from __future__ import annotations
 import ipaddress
 import json
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
-from ..catalog import catalog_manifest, catalog_schema, scope_order, validate_record
+from ..catalog import catalog_manifest, catalog_schema, catalog_view, scope_order, validate_record
 from ..cursors import CursorBinding
 from ..errors import ConflictError, ExpectedValidationError, InvalidParamsError, NotFoundError, RecordConflictError
 from ..identity import format_timestamp, identity_json, identity_key, parse_timestamp
@@ -104,15 +105,15 @@ def _ref(connection: apsw.Connection, ref: NodeRef, nodes: list[dict[str, Any]])
     return row
 
 
-def _identity_definition(kind: str, type_name: str) -> dict[str, Any]:
-    """Return one copied identity declaration from the fixed catalog."""
-    return cast("dict[str, Any]", catalog_manifest()[kind][type_name]["identity"])
+def _identity_definition(kind: str, type_name: str) -> Mapping[str, Any]:
+    """Return one shared read-only identity declaration from the fixed catalog."""
+    return cast("Mapping[str, Any]", catalog_view()[kind][type_name]["identity"])
 
 
-def _scope(type_name: str) -> dict[str, str] | None:
+def _scope(type_name: str) -> Mapping[str, str] | None:
     """Return the parent-scope declaration for a node type, when present."""
     value = _identity_definition("nodes", type_name).get("scope")
-    return cast("dict[str, str]", value) if isinstance(value, dict) else None
+    return cast("Mapping[str, str]", value) if isinstance(value, Mapping) else None
 
 
 def _scope_parent(connection: apsw.Connection, child: dict[str, Any], relation_type: str) -> dict[str, Any]:
@@ -154,7 +155,7 @@ def _prepared_ref(
 
 
 def _validate_endpoints(type_name: str, source: dict[str, Any], target: dict[str, Any]) -> None:
-    definition = catalog_manifest()["relations"].get(type_name)
+    definition = catalog_view()["relations"].get(type_name)
     if definition is None or source["type"] not in definition["sources"] or target["type"] not in definition["targets"]:
         raise InvalidParamsError("relation endpoint types are not allowed")
     if source["id"] == target["id"] and not definition["self_edge"]:
@@ -188,7 +189,7 @@ def _node_header(connection: apsw.Connection, mutation: NodeWrite) -> tuple[dict
         raise InvalidParamsError("type required")
     if mutation.type is not None and mutation.type != type_name:
         raise ConflictError("type is immutable")
-    definition = catalog_manifest()["nodes"].get(type_name)
+    definition = catalog_view()["nodes"].get(type_name)
     if definition is None:
         raise ExpectedValidationError("unknown catalog type")
     return existing, type_name
@@ -876,6 +877,9 @@ def _associations(connection: apsw.Connection, request: GetRequest) -> dict[str,
 
 def graph_types(connection: apsw.Connection, token: OperationToken, request: TypesRequest) -> dict[str, Any]:
     """Discover catalog definitions, including identity properties/scope, and ready-only counts."""
+    # Deliberately not the shared read view: this hands `common`, `formats` and every definition
+    # straight into the response, so it needs a tree it owns. It is also one call per request rather
+    # than several per record, so the parse it keeps is not the cost the shared view exists to save.
     manifest = catalog_manifest()
     definitions = manifest[request.kind]
     if request.type is not None and request.type not in definitions:

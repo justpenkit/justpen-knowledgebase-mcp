@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, cast
 from uuid import UUID
 
 from pydantic import AfterValidator
 
-from .catalog import catalog_manifest, validate_record
+from .catalog import catalog_view, validate_record
 from .errors import ExpectedValidationError
 from .mutations import canonical_json
 
@@ -20,15 +21,19 @@ _TIMESTAMP = re.compile(
 )
 
 
-def _order_independent_hash(properties: dict[str, Any], rule: dict[str, Any]) -> tuple[str, str]:
-    """Return one catalog-declared collection property as a canonical digest."""
+def _order_independent_hash(properties: dict[str, Any], rule: Mapping[str, Any]) -> tuple[str, str]:
+    """Return one catalog-declared collection property as a canonical digest.
+
+    `rule` is read from the shared catalog view, so its arrays arrive as tuples; the sequence checks
+    accept either spelling so a rule taken from `catalog_manifest()` behaves identically.
+    """
     field = cast("str", rule["property"])
     values = cast("list[Any]", properties[field])
     projection = rule.get("projection")
-    if isinstance(projection, list):
-        fields = cast("list[str]", projection)
+    if isinstance(projection, (list, tuple)):
+        fields = cast("Sequence[str]", projection)
         normalized = [{name: value[name] for name in fields} for value in values]
-        normalized.sort(key=lambda value: tuple(value[name] for name in cast("list[str]", rule["sort"])))
+        normalized.sort(key=lambda value: tuple(value[name] for name in cast("Sequence[str]", rule["sort"])))
     else:
         normalized = sorted(values)
     digest = hashlib.sha256(canonical_json(normalized).encode("utf-8")).hexdigest()
@@ -38,8 +43,8 @@ def _order_independent_hash(properties: dict[str, Any], rule: dict[str, Any]) ->
 def identity_json(kind: str, type_name: str, properties: dict[str, Any], parent_id: str | None = None) -> str:
     """Return catalog-selected identity JSON, including a scoped parent UUID when declared."""
     validate_record(kind, type_name, properties)
-    identity = cast("dict[str, Any]", catalog_manifest()[kind][type_name]["identity"])
-    fields = cast("list[str]", identity["properties"])
+    identity = cast("Mapping[str, Any]", catalog_view()[kind][type_name]["identity"])
+    fields = cast("Sequence[str]", identity["properties"])
     selected = {field: properties[field] for field in fields}
     scope = identity.get("scope")
     if scope is not None:
@@ -53,8 +58,8 @@ def identity_json(kind: str, type_name: str, properties: dict[str, Any], parent_
             raise ExpectedValidationError("scoped identity requires a canonical parent node id")
         selected["parent"] = parent_id
     order_independent = identity.get("order_independent")
-    if isinstance(order_independent, dict):
-        field, digest = _order_independent_hash(properties, cast("dict[str, Any]", order_independent))
+    if isinstance(order_independent, Mapping):
+        field, digest = _order_independent_hash(properties, cast("Mapping[str, Any]", order_independent))
         selected[field] = digest
     if any(type(value) not in (str, bool, int) for value in selected.values()):
         raise ValueError("identity only supports string, boolean and signed64")

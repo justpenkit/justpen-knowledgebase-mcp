@@ -62,7 +62,10 @@ def test_measurement_failure_is_io_error(monkeypatch):
 def test_copy_fault_cleans_only_its_stage_and_preserves_source_and_published_blob(tmp_path, monkeypatch, failure):
     config = ServerConfig(workspace_dir=tmp_path)
     with WorkspacePaths(config) as workspace:
-        store = EvidenceStore(workspace, WorkspacePolicy())
+        # The fault fires on the third measurement, so the interval must be
+        # small enough for this source to reach it; the assertions are about
+        # stage cleanup, not about how often the check runs.
+        store = EvidenceStore(workspace, WorkspacePolicy(disk_check_interval_bytes=65536))
         existing = store.stage_inline(b"ready", str(uuid4()), str(uuid4()))
         store.publish(existing)
         source = tmp_path / "source.bin"

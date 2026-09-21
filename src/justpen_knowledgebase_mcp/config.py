@@ -113,10 +113,10 @@ class ServerConfig(BaseModel):
         values: dict[str, object] = {
             name: env[PREFIX + name.upper()] for name in cls.model_fields if PREFIX + name.upper() in env
         }
-        if "log_level" in values:
-            values["log_level"] = str(values["log_level"]).strip().upper()
         if overrides:
             values.update({key: value for key, value in overrides.items() if value is not None})
+        if "log_level" in values:
+            values["log_level"] = str(values["log_level"]).strip().upper()
         try:
             return cls.model_validate(values)
         except ValidationError as error:
