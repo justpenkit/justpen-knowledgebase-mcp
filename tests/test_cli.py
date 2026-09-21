@@ -19,6 +19,13 @@ def test_cli_overrides_env(monkeypatch):
     assert (config.host, config.port, config.log_level) == ("127.0.0.1", 1234, "DEBUG")
 
 
+@pytest.mark.parametrize("spelling", ["debug", "DEBUG", "Debug"])
+def test_cli_log_level_accepts_same_case_spellings_as_environment(monkeypatch, spelling):
+    monkeypatch.setenv("JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR", "/workspace")
+    config = parse_config(["--log-level", spelling])
+    assert config.log_level == "DEBUG"
+
+
 def test_cli_temp_context_restores_environment(monkeypatch):
     monkeypatch.setenv("TMPDIR", "original")
     monkeypatch.delenv("SQLITE_TMPDIR", raising=False)

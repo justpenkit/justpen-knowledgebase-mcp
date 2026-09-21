@@ -65,6 +65,26 @@ def test_invalid_settings(key, value):
         ServerConfig.from_env({PREFIX + "WORKSPACE_DIR": "/workspace", PREFIX + key: value})
 
 
+@pytest.mark.parametrize("spelling", ["debug", "DEBUG", "Debug"])
+def test_log_level_case_insensitive_from_environment(spelling):
+    cfg = ServerConfig.from_env({PREFIX + "WORKSPACE_DIR": "/workspace", PREFIX + "LOG_LEVEL": spelling})
+    assert cfg.log_level == "DEBUG"
+
+
+@pytest.mark.parametrize("spelling", ["debug", "DEBUG", "Debug"])
+def test_log_level_case_insensitive_from_cli_override(spelling):
+    cfg = ServerConfig.from_env({PREFIX + "WORKSPACE_DIR": "/workspace"}, overrides={"log_level": spelling})
+    assert cfg.log_level == "DEBUG"
+
+
+def test_log_level_cli_override_normalizes_after_replacing_environment_value():
+    cfg = ServerConfig.from_env(
+        {PREFIX + "WORKSPACE_DIR": "/workspace", PREFIX + "LOG_LEVEL": "ERROR"},
+        overrides={"log_level": "debug"},
+    )
+    assert cfg.log_level == "DEBUG"
+
+
 def test_cli_override_guard_applies_before_server_launch(monkeypatch):
     monkeypatch.setenv(PREFIX + "WORKSPACE_DIR", "/workspace")
     with pytest.raises(ConfigurationError):
