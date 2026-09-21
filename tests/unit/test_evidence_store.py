@@ -235,3 +235,10 @@ def test_source_stat_reports_unexpected_value_errors_as_io_error(store):
     with pytest.raises(StorageIOError, match="source unavailable") as failure:
         store.source_stat("input")
     assert failure.value.error_type == "IO_ERROR"
+
+
+def test_inline_staging_checks_disk_reserve_once(store):
+    # _stage already checked the same size; a second call only costs an fstatvfs.
+    store.stage_inline(b"abc", NODE, OTHER)
+    assert isinstance(evidence.CheckSpace, Mock)
+    evidence.CheckSpace.assert_called_once_with(store.directory_fds, 3, store.policy)

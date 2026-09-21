@@ -156,7 +156,6 @@ class EvidenceStore:
             raise InvalidParamsError("inline decoded byte limit")
         try:
             with self._stage(job_id, token, len(content)) as (name, fd):
-                CheckSpace(self.directory_fds, len(content), self.policy)
                 _write_all(fd, content)
                 return StagedEvidence(name, hashlib.sha256(content).hexdigest(), len(content))
         except OSError as exc:
