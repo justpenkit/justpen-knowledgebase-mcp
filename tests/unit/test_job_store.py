@@ -17,9 +17,11 @@ def test_claim_empty_and_reclaim_fresh_capability(monkeypatch):
     row = job(
         payload='{"source":"secret"}', progress='{"bytes":8}', result='{"evidence_id":"existing"}', cancel_requested=1
     )
-    db = database(cursor(rows=[(NODE,)]), cursor(record=row), cursor())
+    db = database(cursor(rows=[(1, NODE, "queued", None)]), cursor(record=row), cursor())
     selected = jobs.JobStore.claim(db, "short", "ingest", now=10)
     assert selected is not None
+    # The lane scan carries no lease predicate; expiry is compared in Python.
+    assert db.execute.call_args_list[0].args[1] == ("short", "ingest", 0, 2**63 - 1, 100)
     assert selected.job_id == NODE
     assert selected.token != OTHER
     assert selected.expires_at == 40

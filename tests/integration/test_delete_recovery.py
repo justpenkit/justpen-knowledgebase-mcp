@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from functools import partial
 from uuid import uuid4
 
 import pytest
@@ -9,12 +10,74 @@ import pytest
 from justpen_knowledgebase_mcp.catalog import validate_record
 from justpen_knowledgebase_mcp.errors import ConflictError, RecordConflictError
 from justpen_knowledgebase_mcp.identity import identity_key
+from justpen_knowledgebase_mcp.jobs import JobRunner
 from justpen_knowledgebase_mcp.models import DeleteRequest
 from justpen_knowledgebase_mcp.storage.graph import _validate_endpoints, row_by_id
 from justpen_knowledgebase_mcp.storage.job_recovery import recover_intents
 from justpen_knowledgebase_mcp.storage.jobs import JobStore
 
 pytestmark = pytest.mark.integration
+
+
+def claim_scan(connection, _token):
+    """Capture the statements JobStore.claim issues, then plan its lane scan."""
+    statements = []
+
+    def trace(_cursor, sql, bindings):
+        statements.append((sql, bindings))
+        return True
+
+    connection.exec_trace = trace
+    try:
+        claim = JobStore.claim(connection, "short", "delete")
+    finally:
+        connection.exec_trace = None
+    scan, bindings = next((sql, values) for sql, values in statements if "FROM jobs" in sql and "lane=?" in sql)
+    return claim, [row[3] for row in connection.execute("explain query plan " + scan, bindings)]
+
+
+async def test_delete_claim_scans_the_active_lane_without_a_sort(kb):
+    # JobStore.claim has exactly one production caller, the delete cleanup step.
+    await kb.job_runner.close()
+    await kb.workers.write(
+        lambda c, t: JobStore.insert(c, str(uuid4()), "delete", "short", {"kind": "nodes", "ids": []})
+    )
+    claim, plan = await kb.workers.control(claim_scan)
+    assert claim is not None
+    assert claim.kind == "delete"
+    assert any("USING INDEX jobs_active_lane" in step for step in plan), plan
+    assert not any("TEMP B-TREE" in step for step in plan), plan
+
+
+async def test_expired_lease_mid_flight_still_releases_the_delete_waiter(kb, monkeypatch):
+    # kb_delete blocks on JobRunner.wait, and its work is claimed through the
+    # single JobStore.claim caller. A lease that expires mid-flight ends one
+    # _run_claim without a terminal transition; the waiter must not hang until
+    # its deadline while a later owner finishes the job.
+    created = await kb.write({"nodes": [{"type": "domain", "properties": {"value": "waiter.example"}}]})
+    node = created["nodes"][0]["id"]
+    select, expired, signals = JobStore._claim_selected, [], []
+
+    def expiring(connection, value, now):
+        claim = select(connection, value, now)
+        if claim is not None and claim.kind == "delete" and not expired:
+            expired.append(value)
+            connection.execute("update jobs set lease_expires_at=? where uuid=?", (now - 1, value))
+            claim.expires_at = now - 1
+        return claim
+
+    def signalled(self, job_id):
+        signals.append(job_id)
+        JobRunner._signal(self, job_id)
+
+    monkeypatch.setattr(JobStore, "_claim_selected", expiring)
+    monkeypatch.setattr(kb.job_runner, "_signal", partial(signalled, kb.job_runner))
+    result = await kb.delete({"kind": "nodes", "ids": [node]})
+    assert result["status"] == "completed"
+    assert len(expired) == 1
+    # Once for the attempt the expired lease aborted, once for the one that finished.
+    assert signals.count(expired[0]) >= 2
+    assert (await kb.get({"kind": "nodes", "ids": [node]}))["missing_ids"] == [node]
 
 
 async def test_two_parent_jobs_lost_metadata_cancel_and_bounded_completion(kb):

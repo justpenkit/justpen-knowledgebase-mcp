@@ -40,13 +40,13 @@ from .storage.graph import require_ready, row_by_id
 from .storage.job_ownership import failure_object, row_progress
 from .storage.job_recovery import StageScan, recover_intents, staging_disposable
 from .storage.job_retention import JobRetention
-from .storage.jobs import HEARTBEAT_SECONDS, TERMINAL, Claim, JobStore
+from .storage.jobs import HEARTBEAT_SECONDS, TERMINAL, Claim, JobStore, pending_owners
 from .storage.worker import OperationToken, OwnerOutcome
 from .telemetry.context import capture_job_context
 from .telemetry.events import TelemetryEvents
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
     from typing import Self
 
     import apsw
@@ -56,6 +56,15 @@ if TYPE_CHECKING:
     from .workspace import WorkspacePaths
 
 T = TypeVar("T")
+
+IDLE_POLL_SECONDS = 0.1
+# A lane that found no work doubles its poll interval up to this ceiling. wake()
+# covers every in-process admission, so the interval only bounds work a peer
+# process queued durably without reaching this process's wake queue.
+IDLE_POLL_CEILING_SECONDS = 2.0
+# A waiter is released by its completion event. The backstop bounds the one case
+# no in-process event covers: a peer process finishing this job.
+WAIT_BACKSTOP_SECONDS = 1.0
 
 
 class _IOCall(Generic[T]):
@@ -122,6 +131,7 @@ class JobRunner:
         self._stopping = False
         self._stop_event = asyncio.Event()
         self._claims: dict[str, Claim] = {}
+        self._completions: dict[str, list[asyncio.Event]] = {}
         self._claim_after: dict[tuple[str, str], int] = {}
         self._recovery_after = dict.fromkeys(("nodes", "relations", "evidence"), 0)
         self.last_error: str | None = None
@@ -286,19 +296,43 @@ class JobRunner:
         self.wake("short")
         return await self.wait(job_id, deadline, accepted)
 
+    @contextlib.contextmanager
+    def _completion(self, job_id: str) -> Generator[asyncio.Event]:
+        """Register one waiter for the signal _run_claim raises on every exit."""
+        event = asyncio.Event()
+        waiters = self._completions.setdefault(job_id, [])
+        waiters.append(event)
+        try:
+            yield event
+        finally:
+            waiters.remove(event)
+            if not waiters:
+                self._completions.pop(job_id, None)
+
+    def _signal(self, job_id: str) -> None:
+        """Release this job's waiters; a signal without a waiter is a no-op."""
+        for event in self._completions.get(job_id, ()):
+            event.set()
+
     async def wait(self, job_id: str, deadline: float, accepted: dict[str, Any] | None = None) -> dict[str, Any]:
         """Return the latest observed metadata without fresh admission after expiry."""
-        while time.monotonic() < deadline:
-            try:
-                result = await self.workers.read(lambda c, _t: JobStore.get(c, job_id), OperationToken(deadline))
-            except (BusyError, LimitError):
-                if accepted is None:
-                    raise
-            else:
-                if result["state"] in TERMINAL:
-                    return {**result, "status": result["state"]}
-                accepted = {**result, "status": "accepted"}
-            await asyncio.sleep(min(0.01, max(0, deadline - time.monotonic())))
+        with self._completion(job_id) as completed:
+            while time.monotonic() < deadline:
+                completed.clear()
+                try:
+                    result = await self.workers.read(lambda c, _t: JobStore.get(c, job_id), OperationToken(deadline))
+                except (BusyError, LimitError):
+                    if accepted is None:
+                        raise
+                else:
+                    if result["state"] in TERMINAL:
+                        return {**result, "status": result["state"]}
+                    accepted = {**result, "status": "accepted"}
+                # The deadline loop remains the backstop: a peer process can finish
+                # this job without any in-process owner reaching _run_claim here.
+                remaining = max(0.0, deadline - time.monotonic())
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(completed.wait(), timeout=min(WAIT_BACKSTOP_SECONDS, remaining))
         if accepted is None:
             raise LimitError("job waiter deadline exceeded")
         return accepted
@@ -316,6 +350,8 @@ class JobRunner:
         callback = JobStore.cancel if request.action == "cancel" else JobStore.retry
         result = await self.workers.control(lambda c, _t: callback(c, request.job_id or ""), OperationToken(deadline))
         self.wake(result["lane"])
+        # A cancel can make a queued job terminal without any owner running it.
+        self._signal(request.job_id or "")
         self._retention_event.set()
         return result
 
@@ -393,6 +429,7 @@ class JobRunner:
 
     async def _lane(self, lane: str) -> None:
         previous = "cleanup"
+        idle = IDLE_POLL_SECONDS
         while not self._stopping:
             classes = (
                 (["ingest", "reindex"] if previous != "ingest" else ["reindex", "ingest"])
@@ -413,9 +450,15 @@ class JobRunner:
                 handled = False
                 if not isinstance(outcome.error, (BusyError, LimitError)) and not self._stopping:
                     self._failure_cache("IO_ERROR: background job admission failed")
-            if not handled:
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(self._wake[lane].get(), timeout=0.1)
+            idle = IDLE_POLL_SECONDS if handled else await self._idle_wait(lane, idle)
+
+    async def _idle_wait(self, lane: str, interval: float) -> float:
+        """Double an idle lane's poll interval; a wake restores the responsive one."""
+        try:
+            await asyncio.wait_for(self._wake[lane].get(), timeout=interval)
+        except TimeoutError:
+            return min(IDLE_POLL_CEILING_SECONDS, interval * 2)
+        return IDLE_POLL_SECONDS
 
     async def _category_step(self, lane: str, category: str) -> bool:
         if category == "cleanup":
@@ -643,6 +686,9 @@ class JobRunner:
                     await heart
             finally:
                 self._claims.pop(claim.token, None)
+                # Every exit signals, including a deferral and a lease-expiry
+                # re-claim, so no waiter blocks silently until its deadline.
+                self._signal(claim.job_id)
                 self._retention_event.set()
 
     async def _defer_claim(self, claim: Claim, error: BusyError | LimitError) -> None:
@@ -723,10 +769,16 @@ class JobRunner:
             await self.workers.control(lambda c, _t: JobStore.checkpoint(c, claim, progress))
         bucket = await self.acquire_bucket(claim.lane, digest, exclusive=True)
         try:
-            await self.workers.write(lambda c, _t: EvidenceRecords.check_existing(c, claim, digest))
+            existing = await self.workers.write(lambda c, _t: EvidenceRecords.check_existing(c, claim, digest))
             claim.check()
             if staged is not None:
-                await self.io(claim.lane, lambda: self.store.publish(staged))
+                # A ready canonical row proves the blob is already published. Renaming
+                # identical bytes over it changes the inode a peer's verify_blob is
+                # holding, so that peer's recheck_blob would raise EVIDENCE_CHANGED.
+                if existing is None:
+                    await self.io(claim.lane, lambda: self.store.publish(staged))
+                else:
+                    await self.io(claim.lane, lambda: self.store.discard_stage(claim.job_id, claim.token))
                 claim.stage_created = False
             elif verified is not None:
                 await self.io(claim.lane, lambda: self.store.recheck_blob(verified))
@@ -845,7 +897,7 @@ class JobRunner:
 
 
 def _list_jobs(connection: apsw.Connection, request: JobsRequest) -> dict[str, Any]:
-    workspace, epoch = connection.execute("SELECT workspace_id,query_epoch FROM settings").get
+    workspace, epoch, policy = connection.execute("SELECT workspace_id,query_epoch,policy FROM settings").get
     binding = CursorBinding(workspace, epoch, "jobs", None, "list", {"state": request.state})
     try:
         after = binding.decode(request.cursor) if request.cursor is not None else 0
@@ -857,11 +909,14 @@ def _list_jobs(connection: apsw.Connection, request: JobsRequest) -> dict[str, A
             (after, request.state, request.state, request.limit + 1),
         )
     )
+    # One policy read and three owner probes for the page, not per row.
+    retention = json.loads(policy)
+    owners = pending_owners(connection, [row[1] for row in rows])
     items: list[dict[str, Any]] = []
     size, last_id = 4096, after
     more = False
     for row in rows:
-        item = JobStore.get(connection, row[1])
+        item = JobStore.get(connection, row[1], policy=retention, owners=owners)
         size += len(canonical_json(item).encode("utf-8"))
         if len(items) == request.limit or size > 250000:
             if not items:

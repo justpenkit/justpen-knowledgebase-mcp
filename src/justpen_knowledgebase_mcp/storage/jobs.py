@@ -37,6 +37,11 @@ INTENT_SQL = {
     "relations": "SELECT id,uuid,delete_job_id,delete_cascade,delete_requested_at FROM relations WHERE lifecycle='delete_pending' AND delete_job_id=? ORDER BY id LIMIT 100",
     "evidence": "SELECT id,uuid,delete_job_id,delete_cascade,delete_requested_at FROM evidence WHERE lifecycle='delete_pending' AND delete_job_id=? ORDER BY id LIMIT 100",
 }
+PENDING_OWNER_SQL = {
+    "nodes": "SELECT DISTINCT delete_job_id FROM nodes WHERE lifecycle='delete_pending' AND delete_job_id IN (SELECT value FROM json_each(?))",
+    "relations": "SELECT DISTINCT delete_job_id FROM relations WHERE lifecycle='delete_pending' AND delete_job_id IN (SELECT value FROM json_each(?))",
+    "evidence": "SELECT DISTINCT delete_job_id FROM evidence WHERE lifecycle='delete_pending' AND delete_job_id IN (SELECT value FROM json_each(?))",
+}
 
 
 @dataclass
@@ -103,6 +108,16 @@ def protected(connection: apsw.Connection, job_id: str) -> bool:
     return any(connection.execute(INTENT_SQL[kind], (job_id,)).fetchone() is not None for kind in INTENT_SQL)
 
 
+def pending_owners(connection: apsw.Connection, job_ids: list[str]) -> frozenset[str]:
+    """Probe each retained owner table once for a whole page, never once per job."""
+    if not job_ids:
+        return frozenset()
+    candidates = json.dumps(job_ids)
+    return frozenset(
+        str(value) for sql in PENDING_OWNER_SQL.values() for (value,) in connection.execute(sql, (candidates,))
+    )
+
+
 def _invalid_metadata_result(row: dict[str, Any]) -> dict[str, Any]:
     """Expose no corrupted cells, including otherwise valid fields beside corruption."""
     return JobResult(
@@ -136,19 +151,12 @@ class JobStore:
 
     @staticmethod
     def claim(connection: apsw.Connection, lane: str, kind: str, *, now: float | None = None) -> Claim | None:
-        """Atomically claim queued/expired work using a fresh fencing capability."""
-        now = time.time() if now is None else now
-        rows = list(
-            connection.execute(
-                "SELECT uuid FROM jobs WHERE lane=? AND kind=? AND purge_pending=0 AND (state='queued' OR (state='running' AND lease_expires_at<=?)) ORDER BY id LIMIT 100",
-                (lane, kind, now),
-            )
-        )
-        for (value,) in rows:
-            claim = JobStore._claim_selected(connection, value, now)
-            if claim is not None:
-                return claim
-        return None
+        """Atomically claim queued/expired work using a fresh fencing capability.
+
+        The lease-expiry test is a Python comparison rather than a SQL predicate,
+        so the scan stays on jobs_active_lane instead of sorting a temp B-tree.
+        """
+        return JobStore.claim_batch(connection, lane, kind, 0, now=now)[0]
 
     @staticmethod
     def claim_batch(
@@ -288,8 +296,18 @@ class JobStore:
         )
 
     @staticmethod
-    def get(connection: apsw.Connection, job_id: str) -> dict[str, Any]:
-        """Materialize bounded public metadata, excluding source/staging locators."""
+    def get(
+        connection: apsw.Connection,
+        job_id: str,
+        *,
+        policy: dict[str, Any] | None = None,
+        owners: frozenset[str] | None = None,
+    ) -> dict[str, Any]:
+        """Materialize bounded public metadata, excluding source/staging locators.
+
+        A page caller supplies the retention policy and the batched pending-owner
+        set it already read, so a listing reads neither once per row.
+        """
         row = job_row(connection, job_id)
         try:
             payload, decoded, result = row_metadata(row)
@@ -300,17 +318,23 @@ class JobStore:
         progress = JobProgress.model_validate(
             {key: value for key, value in decoded.items() if key in JobProgress.model_fields}
         ).model_dump()
-        pending_owner = row["state"] in TERMINAL and protected(connection, job_id)
+        pending_owner = row["state"] in TERMINAL and (
+            job_id in owners if owners is not None else protected(connection, job_id)
+        )
         retention_protected = (
             row["state"] not in TERMINAL
             or pending_owner
             or (row["lease_expires_at"] is not None and row["lease_expires_at"] > time.time())
         )
-        policy = json.loads(connection.execute("SELECT policy FROM settings WHERE singleton=1").get)
+        retention: dict[str, Any] = (
+            policy
+            if policy is not None
+            else json.loads(connection.execute("SELECT policy FROM settings WHERE singleton=1").get)
+        )
         expiry = None
         if row["state"] in TERMINAL and row["finished_at"] is not None:
             group = "completed" if row["state"] == "completed" else "failed_cancelled"
-            expiry = format_timestamp(int((row["finished_at"] + policy[group + "_retention_seconds"]) * 1000000))
+            expiry = format_timestamp(int((row["finished_at"] + retention[group + "_retention_seconds"]) * 1000000))
         output = {
             "expires_at": expiry,
             "retention_protected": retention_protected,

@@ -772,8 +772,8 @@ async def test_first_oversized_job_list_item_raises_limit(kb, monkeypatch):
     await kb.workers.write(lambda c, t: jobs.JobStore.insert(c, job_id, "ingest", "bulk", {}))
     real_get = jobs.JobStore.get
 
-    def oversized(connection, identifier):
-        result = real_get(connection, identifier)
+    def oversized(connection, identifier, **options):
+        result = real_get(connection, identifier, **options)
         result["warnings"] = ["\x00" * 256] * 200
         return result
 

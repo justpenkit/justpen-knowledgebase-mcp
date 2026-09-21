@@ -134,6 +134,34 @@ async def test_delete_controls_and_wait_preserve_accepted_metadata(runner, monke
         await runner.wait(NODE, float("inf"))
 
 
+async def test_wait_parks_on_the_completion_signal_instead_of_polling(runner, monkeypatch):
+    reads = []
+
+    def observe(_connection, job_id):
+        reads.append(job_id)
+        return {"state": "completed" if len(reads) > 1 else "running"}
+
+    monkeypatch.setattr(jobs.JobStore, "get", Mock(side_effect=observe))
+    waiter = asyncio.create_task(runner.wait(NODE, float("inf")))
+    await asyncio.sleep(0.05)
+    # Five hundredths of a second used to be five reads on the two-thread read lane.
+    assert reads == [NODE]
+    runner._signal(NODE)
+    assert (await waiter)["status"] == "completed"
+    assert reads == [NODE, NODE]
+    assert not runner._completions
+
+
+@pytest.mark.parametrize("failing", [False, True])
+async def test_run_claim_signals_its_waiters_on_every_exit(runner, failing):
+    runner._ingest_step = AsyncMock(side_effect=StorageIOError("private") if failing else None)
+    runner._fail_claim = AsyncMock()
+    with runner._completion(NODE) as completed:
+        await runner._run_claim(claim())
+        assert completed.is_set()
+    assert runner._fail_claim.await_count == int(failing)
+
+
 async def test_read_holds_bucket_through_metadata_and_slice(runner, monkeypatch):
     monkeypatch.setattr(jobs, "row_by_id", Mock(return_value=owner(byte_size=3, encoding="utf-8")))
     runner.store.read_slice.return_value = {"text": "abc"}
@@ -252,6 +280,24 @@ async def test_ingest_publication_orders_blob_before_canonical_metadata(runner, 
     assert calls == ["check", "recheck", "record"]
 
 
+async def test_existing_canonical_blob_discards_the_stage_instead_of_republishing(runner, monkeypatch):
+    calls = []
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job()))
+    monkeypatch.setattr(jobs.JobStore, "checkpoint", Mock())
+    runner._copy_input = AsyncMock(return_value=SimpleNamespace(sha256="a" * 64, byte_size=3))
+    monkeypatch.setattr(jobs.EvidenceRecords, "check_existing", Mock(return_value=owner(sha256="a" * 64)))
+    monkeypatch.setattr(jobs.EvidenceRecords, "publish_record", Mock(side_effect=lambda *_args: calls.append("record")))
+    runner.store.publish.side_effect = lambda *_args: calls.append("blob")
+    runner.store.discard_stage.side_effect = lambda *_args: calls.append("discard")
+    capability = claim(payload={"input_token": OTHER})
+    await runner._ingest_step(capability)
+    # Republishing identical bytes would change the inode a concurrent owner
+    # verified, so its recheck_blob would raise EVIDENCE_CHANGED.
+    assert calls == ["discard", "record"]
+    assert runner.store.discard_stage.call_args.args == (NODE, OTHER)
+    assert not capability.stage_created
+
+
 async def test_copy_source_and_input_ownership(runner, monkeypatch):
     capability = claim(payload={"path": "source", "source_stat": (1, 2, 3)})
     runner.store.copy_path.return_value = "staged"
@@ -311,12 +357,25 @@ async def test_failure_sanitizes_io_and_preserves_input(runner, monkeypatch, cap
 
 
 def test_list_jobs_binds_filter_and_paginates(monkeypatch):
-    monkeypatch.setattr(jobs.JobStore, "get", Mock(side_effect=[{"job_id": NODE}, {"job_id": OTHER}]))
-    db = database(cursor(value=(NODE, 1)), cursor(rows=[(1, NODE), (2, OTHER)]))
+    get = Mock(side_effect=[{"job_id": NODE}, {"job_id": OTHER}])
+    monkeypatch.setattr(jobs.JobStore, "get", get)
+    db = database(
+        cursor(value=(NODE, 1, '{"completed_retention_seconds":10}')),
+        cursor(rows=[(1, NODE), (2, OTHER)]),
+        cursor(rows=[(NODE,)]),
+        cursor(rows=[]),
+        cursor(rows=[]),
+    )
     result = jobs._list_jobs(db, jobs.JobsRequest(limit=1, state="failed"))
     assert result["jobs"] == [{"job_id": NODE}]
     assert result["next_cursor"]
-    assert db.execute.call_args.args[1] == (0, "failed", "failed", 2)
+    assert db.execute.call_args_list[1].args[1] == (0, "failed", "failed", 2)
+    # One settings read and one probe per owner table serve the whole page.
+    assert db.execute.call_count == 5
+    assert get.call_args.kwargs == {
+        "policy": {"completed_retention_seconds": 10},
+        "owners": frozenset({NODE}),
+    }
 
 
 async def test_cancelled_queued_io_keeps_capacity_until_executor_consumes(monkeypatch):
@@ -488,6 +547,35 @@ async def test_lane_alternates_ready_work_classes(runner, lane, expected):
     runner._category_step = AsyncMock(side_effect=step)
     await runner._lane(lane)
     assert categories == expected
+
+
+async def test_idle_lane_doubles_its_poll_until_a_ceiling_or_a_wake(runner, monkeypatch):
+    monkeypatch.setattr(jobs, "IDLE_POLL_CEILING_SECONDS", 0.004)
+    assert await runner._idle_wait("short", 0.001) == 0.002
+    assert await runner._idle_wait("short", 0.002) == 0.004
+    assert await runner._idle_wait("short", 0.004) == 0.004
+    # wake() keeps admitted work responsive, so the interval collapses to the floor.
+    runner.wake("short")
+    assert await runner._idle_wait("short", 0.004) == jobs.IDLE_POLL_SECONDS
+
+
+async def test_lane_carries_its_backoff_forward_and_resets_it_on_work(runner):
+    waits, outcomes = [], [False, False, False, False, True, False]
+
+    async def idle_wait(_lane, interval):
+        waits.append(interval)
+        return min(jobs.IDLE_POLL_CEILING_SECONDS, interval * 2)
+
+    async def step(_lane, _category):
+        if not outcomes:
+            runner._stopping = True
+            return False
+        return outcomes.pop(0)
+
+    runner._idle_wait = AsyncMock(side_effect=idle_wait)
+    runner._category_step = AsyncMock(side_effect=step)
+    await runner._lane("bulk")
+    assert waits == [0.1, 0.2, 0.1]
 
 
 async def test_background_admission_failure_is_sanitized_and_loop_recovers(runner):
