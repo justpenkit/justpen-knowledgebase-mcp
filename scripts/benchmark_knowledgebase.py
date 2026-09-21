@@ -49,6 +49,17 @@ def edge_properties(ordinal: int) -> dict[str, Any]:
     return {"status": REDIRECT_STATUSES[ordinal % len(REDIRECT_STATUSES)], "context": f"seed{SEED}-edge{ordinal}"}
 
 
+def edge_target_rank(ordinal: int) -> int:
+    """One canonical target authority: `redirects_to` identity is one edge per target and status.
+
+    `catalog.py` gives `redirects_to` `identity=_identity(["status"])`, so a hub carries exactly
+    `len(REDIRECT_STATUSES)` distinct edges to any one target. Ordinals therefore walk the whole
+    (target, status) product instead of cycling targets, which would restate an identity already used.
+    Rank r is node id r+1, so rank 0 is the hub's permitted self-edge (`self_edge=True`).
+    """
+    return ordinal // len(REDIRECT_STATUSES)
+
+
 def node_properties(index: int) -> dict[str, Any]:
     """One canonical node authority shared by generation and resume verification."""
     properties: dict[str, Any] = {
@@ -132,6 +143,8 @@ class Measurements:
                 "asset_type_count": 1,
                 "asset_types": ["endpoint"],
                 "relation_type": "redirects_to",
+                "relation_identity": "one edge per (target, status); the hub's own self-edge is rank 0",
+                "relation_ceiling": self.nodes * len(REDIRECT_STATUSES),
                 "batch_records": 100,
                 "hub": "first endpoint",
                 "paths": ["/url", "/method", "/status", "/array", "/value1024", "/value1025"],
@@ -213,8 +226,17 @@ class Measurements:
                 self.latencies.setdefault("graph_retry_wait", []).append((time.perf_counter() - before) * 1000)
                 self.report["last_retry_status"] = await kb.status()
 
+    def relation_ceiling(self) -> int:
+        """State how many distinct hub relations this node count can actually represent."""
+        return self.nodes * len(REDIRECT_STATUSES)
+
     async def graph(self, kb: KnowledgeBase) -> None:
         """Generate strict canonical graph batches through product mutations."""
+        if self.edges > self.relation_ceiling():
+            raise ValueError(
+                f"scale {self.scale} requests {self.edges} hub relations, but {self.nodes} nodes admit at most "
+                f"{self.relation_ceiling()}: `redirects_to` identity is one edge per target and status"
+            )
         begin = time.perf_counter()
         prior_nodes = self.report["completed"]["nodes"]
         prior_edges = self.report["completed"]["relations"]
@@ -235,22 +257,23 @@ class Measurements:
         for first in range(prior_edges, self.edges, 100):
             self.check()
             # Fetch a bounded ID page; the entire graph/ID working set is never retained in RAM.
-            offset = (first % (self.nodes - 1)) + 1
+            base = edge_target_rank(first)
+            size = min(100, self.edges - first)
             targets = await kb.workers.read(
-                lambda c, _t, offset=offset: c.execute(
-                    "select uuid from nodes where id>? order by id limit 100", (offset,)
+                lambda c, _t, base=base: c.execute(
+                    "select uuid from nodes where id>? order by id limit 100", (base,)
                 ).fetchall()
             )
-            if not targets:
-                raise AssertionError("bounded target page unexpectedly empty")
+            if len(targets) <= edge_target_rank(first + size - 1) - base:
+                raise AssertionError("bounded target page is shorter than its batch of distinct identities needs")
             batch = [
                 {
                     "type": "redirects_to",
                     "source_ref": {"id": self.hub},
-                    "target_ref": {"id": targets[index % len(targets)][0]},
+                    "target_ref": {"id": targets[edge_target_rank(first + index) - base][0]},
                     "properties": edge_properties(first + index),
                 }
-                for index in range(min(100, self.edges - first))
+                for index in range(size)
             ]
             await self.write_batch(kb, {"relations": batch}, "relation_batch_attempt")
             self.report["completed"]["relations"] += len(batch)
