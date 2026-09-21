@@ -94,7 +94,8 @@ class EvidenceStore:
         try:
             with self.workspace.open_import(path) as fd:
                 return stat_identity(os.fstat(fd))
-        except OSError as exc:
+        # ValueError is not an OSError; an unclassified one would reach the client as INTERNAL.
+        except (OSError, ValueError) as exc:
             raise StorageIOError("IO_ERROR: source unavailable") from exc
 
     @staticmethod

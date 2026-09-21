@@ -34,6 +34,9 @@ cooldown while other cleanup and ingest work can continue.
 `CONFLICT` for incompatible metadata on existing bytes or `RECORD_DELETING`;
 `IO_ERROR`, `BUSY`, `LIMIT`, or `INDEX_ERROR` for bounded runtime failure.
 
+A `path` containing a NUL byte breaks a source rule and is rejected with
+`INVALID`. Releases up to v0.2.0 reported `INTERNAL` for that spelling.
+
 Missing media on text defaults to `text/plain`. Missing media on path/base64
 defaults to `application/octet-stream`, emits
 `MEDIA_TYPE_DEFAULTED_TEXT_INDEX_SKIPPED`, and stores raw-only evidence. A path

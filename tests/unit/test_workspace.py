@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from justpen_knowledgebase_mcp import workspace
-from justpen_knowledgebase_mcp.errors import PathDeniedError, StorageIOError
+from justpen_knowledgebase_mcp.errors import InvalidParamsError, PathDeniedError, StorageIOError
 
 
 @pytest.fixture
@@ -45,6 +45,9 @@ def test_relative_and_managed_boundaries(paths):
     assert paths.relative("/workspace/input") == Path("input")
     for path in ("../input", "/outside/input"):
         with pytest.raises(PathDeniedError):
+            paths.relative(path)
+    for path in ("", "in\x00put", "/alias/in\x00put"):
+        with pytest.raises(InvalidParamsError):
             paths.relative(path)
     assert paths._is_managed(paths.evidence / "blob")
     assert paths._is_managed(Path(str(paths.db) + "-wal"))

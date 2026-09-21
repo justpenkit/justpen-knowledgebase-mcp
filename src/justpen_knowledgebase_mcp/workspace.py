@@ -79,8 +79,13 @@ class WorkspacePaths:
 
     def relative(self, value: str | Path) -> Path:
         """Strip only root prefixes, without resolving child symlinks."""
-        if not str(value):
+        name = str(value)
+        if not name:
             raise InvalidParamsError("empty path")
+        # os.open raises ValueError for an embedded NUL, which no descriptor
+        # handler classifies, so the spelling is rejected before any traversal.
+        if "\x00" in name:
+            raise InvalidParamsError("NUL byte in path")
         path = Path(value)
         if ".." in path.parts:
             raise PathDeniedError("PATH_DENIED: PARENT_COMPONENT")

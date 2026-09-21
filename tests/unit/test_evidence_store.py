@@ -226,3 +226,12 @@ def test_evidence_sync_requires_device_cache_flush_on_darwin(monkeypatch):
     monkeypatch.setattr(evidence.fcntl, "F_FULLFSYNC", None)
     with pytest.raises(StorageIOError, match="F_FULLFSYNC unavailable"):
         evidence.sync_evidence(9)
+
+
+def test_source_stat_reports_unexpected_value_errors_as_io_error(store):
+    # ValueError is not an OSError; without the widened handler it reaches the
+    # client as INTERNAL rather than a documented evidence failure.
+    store.workspace.open_import.side_effect = ValueError("open: embedded null character in path")
+    with pytest.raises(StorageIOError, match="source unavailable") as failure:
+        store.source_stat("input")
+    assert failure.value.error_type == "IO_ERROR"

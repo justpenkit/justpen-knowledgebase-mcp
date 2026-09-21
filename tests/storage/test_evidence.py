@@ -12,6 +12,7 @@ import pytest
 from justpen_knowledgebase_mcp.config import ServerConfig, WorkspacePolicy
 from justpen_knowledgebase_mcp.errors import BusyError, InvalidParamsError, LimitError, PathDeniedError, StorageIOError
 from justpen_knowledgebase_mcp.evidence import ReadEvidenceRequest
+from justpen_knowledgebase_mcp.responses import exception_response
 from justpen_knowledgebase_mcp.storage import evidence
 from justpen_knowledgebase_mcp.storage.job_recovery import StageScan
 from justpen_knowledgebase_mcp.workspace import WorkspacePaths
@@ -231,3 +232,13 @@ def test_json_escaped_exact_text_range_limit_and_base64(store):
     result = store.read_slice(staged.sha256, len(raw), "auto", request)
     assert base64.b64decode(result["content"]) == raw
     assert result["returned_range"] == {"offset": 0, "length": len(raw)}
+
+
+@pytest.mark.parametrize("path", ["nmap\x00.xml", "re\x00con/nmap.xml"])
+def test_nul_byte_source_path_is_invalid_not_internal(store, path):
+    # A bare ValueError from os.open would leave the client with INTERNAL, which
+    # docs/tools/evidence.md does not offer for a source rule.
+    with pytest.raises(InvalidParamsError) as failure:
+        store.source_stat(path)
+    assert failure.value.error_type == "INVALID"
+    assert exception_response(failure.value)["error"].startswith("INVALID: ")

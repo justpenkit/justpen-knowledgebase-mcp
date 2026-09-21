@@ -1,3 +1,13 @@
+## Unreleased
+
+### Fix
+
+- **evidence**: reject a NUL byte in an ingest `path` with `INVALID` instead of
+    `INTERNAL`. `WorkspacePaths.relative` now refuses the spelling before
+    traversal, and `EvidenceStore.source_stat` classifies any remaining
+    `ValueError` as `IO_ERROR`. This changes the error code `kb_ingest_evidence`
+    returns for such a path; no accepted path is newly rejected.
+
 ## v0.2.0 (2026-09-21)
 
 ### Feat
