@@ -219,3 +219,28 @@ async def test_variants_accepts_provenanced_complete_corpus_only(tmp_path, monke
     if status == "completed":
         with pytest.raises(RuntimeError, match="source changed" if mismatch == "source" else "partial"):
             benchmark.previous_attempt(source, "smoke", benchmark.SEED)
+
+
+@pytest.mark.integration
+async def test_hub_relations_exhaust_the_identity_product_and_refuse_to_exceed_it(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPT_ROOT))
+    benchmark = load_script("benchmark_knowledgebase")
+    measure = benchmark.Measurements(tmp_path, "smoke", 60, "corpus")
+    measure.nodes, measure.edges, measure.raw_bytes = 20, 100, 0
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=workspace)) as kb:
+        await measure.graph(kb)
+        assert measure.report["completed"]["relations"] == 100
+        # Every ordinal claims its own (target, status); nothing collapses onto a used identity.
+        assert await kb.workers.read(
+            lambda c, _t: (
+                c.execute("select count(*) from relations").get,
+                c.execute("select count(distinct source_id||'/'||target_id||'/'||key) from relations").get,
+                c.execute("select count(*) from relations where source_id=target_id").get,
+            )
+        ) == (100, 100, len(benchmark.REDIRECT_STATUSES))
+        assert await resume.validate_relations(measure, kb, measure.nodes) == 100
+        measure.edges = 101
+        with pytest.raises(ValueError, match="one edge per target and status"):
+            await measure.graph(kb)

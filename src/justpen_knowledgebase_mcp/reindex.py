@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import time
 from typing import TYPE_CHECKING, Any, Self, TypeVar
 
 from pydantic import Field, model_validator
@@ -15,12 +16,13 @@ from .identity import EvidenceID, validate_record_id
 from .models import ClosedModel, Kind, MediaType, RecordID
 from .storage.fulltext import IndexOwner, append_chunk, claim_item, clear_item_batch, finish_item, refresh_record_text
 from .storage.graph import require_ready, row_by_id
+from .storage.job_ownership import checkpoint_ownership
 from .storage.jobs import JobStore
 from .storage.properties import refresh_properties
 from .text import TextChunk, iter_chunks
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
+    from collections.abc import Callable, Generator, Iterator
 
     import apsw
 
@@ -31,6 +33,11 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
+# One guarded write transaction per roughly this many bytes of published text.
+# Chunks are cut at CHUNK_BYTES of UTF-8, so a batch is about sixteen of them,
+# and one synchronous=full commit replaces sixteen.
+BATCH_BYTES = 1024 * 1024
+
 
 def _live_job(connection: apsw.Connection, claim: Claim) -> dict[str, Any]:
     row = JobStore.fence(connection, claim)
@@ -39,10 +46,11 @@ def _live_job(connection: apsw.Connection, claim: Claim) -> dict[str, Any]:
     return row
 
 
-async def _guarded(runner: JobRunner, claim: Claim, callback: Callable[[apsw.Connection], T]) -> T:
+async def _guarded(runner: JobRunner, claim: Claim, callback: Callable[[apsw.Connection, dict[str, Any]], T]) -> T:
+    """Fence the job once per transaction and hand that one row to the callback."""
+
     def commit(connection: apsw.Connection, _token: OperationToken) -> T:
-        _live_job(connection, claim)
-        return callback(connection)
+        return callback(connection, _live_job(connection, claim))
 
     return await runner.workers.write(commit)
 
@@ -57,14 +65,15 @@ async def _index_stream(runner: JobRunner, claim: Claim, owner: IndexOwner) -> t
     incomplete, count = False, 0
     try:
         while True:
-            chunk = await runner.io(claim.lane, lambda: next(stream, None))
-            if chunk is None:
+            batch = await runner.io(claim.lane, lambda: _next_batch(stream))
+            if not batch:
                 break
-            incomplete = incomplete or chunk.gap
-            await _guarded(
-                runner, claim, lambda c, chunk=chunk, count=count: _publish_chunk(c, claim, owner, chunk, count)
+            incomplete = incomplete or any(chunk.gap for chunk in batch)
+            count = await _guarded(
+                runner,
+                claim,
+                lambda c, job, batch=batch, count=count: _publish_batch(c, claim, job, owner, batch, count),
             )
-            count += not chunk.gap
     finally:
         await runner.close_io_owner(claim.lane, stream.close)
     return incomplete, count
@@ -72,15 +81,15 @@ async def _index_stream(runner: JobRunner, claim: Claim, owner: IndexOwner) -> t
 
 async def index_evidence(runner: JobRunner, claim: Claim, evidence_id: str) -> dict[str, Any]:
     """Rebuild immutable raw bytes under both job and item-generation fences."""
-    owner = await _guarded(runner, claim, lambda c: claim_item(c, evidence_id, _live_job(c, claim)["id"], claim.token))
+    owner = await _guarded(runner, claim, lambda c, job: claim_item(c, evidence_id, job["id"], claim.token))
     incomplete, count = False, 0
     state = "ready" if is_text_candidate(owner.media_type) else "not_applicable"
     try:
-        while not await _guarded(runner, claim, lambda c: clear_item_batch(c, owner)):
+        while not await _guarded(runner, claim, lambda c, _job: clear_item_batch(c, owner)):
             claim.check()
         if state == "ready":
             incomplete, count = await _index_stream(runner, claim, owner)
-        await _guarded(runner, claim, lambda c: finish_item(c, owner, state, incomplete=incomplete))
+        await _guarded(runner, claim, lambda c, _job: finish_item(c, owner, state, incomplete=incomplete))
     except (BusyError, LimitError):
         # Retain generation ownership and committed chunks until this job resumes.
         raise
@@ -277,6 +286,38 @@ async def _reindex_evidence_item(runner: JobRunner, claim: Claim, uuid: str, res
         result["sample_ids"] = sample
 
 
-def _publish_chunk(connection: apsw.Connection, claim: Claim, owner: IndexOwner, chunk: TextChunk, count: int) -> None:
-    append_chunk(connection, owner, chunk)
-    JobStore.checkpoint(connection, claim, {**claim.progress, "chunks": count + int(not chunk.gap)})
+def _next_batch(stream: Iterator[TextChunk]) -> list[TextChunk]:
+    """Collect roughly BATCH_BYTES of text so one transaction carries many chunks."""
+    batch: list[TextChunk] = []
+    pending = 0
+    while pending < BATCH_BYTES:
+        chunk = next(stream, None)
+        if chunk is None:
+            break
+        batch.append(chunk)
+        pending += len(chunk.text.encode("utf-8"))
+    return batch
+
+
+def _publish_batch(
+    connection: apsw.Connection,
+    claim: Claim,
+    job: dict[str, Any],
+    owner: IndexOwner,
+    batch: list[TextChunk],
+    count: int,
+) -> int:
+    """Append one batch and checkpoint once under the row already fenced here.
+
+    This is JobStore.checkpoint without its own fence: the caller supplies the
+    row it read in this transaction, so the guard runs once rather than twice.
+    """
+    for chunk in batch:
+        append_chunk(connection, owner, chunk)
+        count += not chunk.gap
+    progress, digest = checkpoint_ownership(job, {**claim.progress, "chunks": count})
+    connection.execute(
+        "UPDATE jobs SET progress=?,blob_sha256=?,updated_at=? WHERE uuid=?",
+        (json.dumps(progress), digest, time.time(), claim.job_id),
+    )
+    return count
