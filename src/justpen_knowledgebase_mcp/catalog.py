@@ -6,6 +6,7 @@ import hashlib
 import ipaddress
 import json
 import re
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 from .errors import ExpectedValidationError
@@ -14,7 +15,7 @@ from .psl import classify_dns_name
 from .service_names import is_service_name, secure_required
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 CATALOG_VERSION = 2
 
@@ -552,6 +553,32 @@ def catalog_manifest() -> dict[str, Any]:
     return cast("dict[str, Any]", json.loads(CATALOG_JSON))
 
 
+def _read_only(value: object) -> object:
+    """Rebuild one parsed catalog subtree out of containers that refuse in-place mutation."""
+    if isinstance(value, dict):
+        return MappingProxyType({key: _read_only(item) for key, item in cast("dict[str, object]", value).items()})
+    if isinstance(value, list):
+        return tuple(_read_only(item) for item in cast("list[object]", value))
+    return value
+
+
+# `catalog_manifest()` re-parses `CATALOG_JSON` on every call, and the write path reaches it several
+# times per record inside `BEGIN IMMEDIATE`. This is the same parse performed once at import, for
+# callers that only read. The wrapping goes all the way down rather than proxying the top mapping
+# alone: a shallow proxy would still let a reader mutate one type definition in place and corrupt
+# the catalog for the rest of the process, which is the exact failure this handle must not enable.
+_CATALOG_VIEW: Mapping[str, Any] = cast("Mapping[str, Any]", _read_only(json.loads(CATALOG_JSON)))
+
+
+def catalog_view() -> Mapping[str, Any]:
+    """Return the shared read-only catalog; callers that mutate use `catalog_manifest()` instead.
+
+    Mappings are `MappingProxyType` and JSON arrays are tuples, at every depth, so the structure
+    cannot be edited by accident and cannot be handed onward into a response that edits it.
+    """
+    return _CATALOG_VIEW
+
+
 def canonicalize_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
     """Rewrite the declared non-canonical spellings in place before identity and storage.
 
@@ -566,20 +593,27 @@ def canonicalize_record(kind: str, type_name: str, properties: dict[str, Any]) -
         properties["url"] = url.split("?", 1)[0]
 
 
+def _published_rule(rule: str | list[str] | tuple[str, ...]) -> str | list[str]:
+    """Spell one required rule the way clients already receive it, whatever container holds it."""
+    return list(rule) if isinstance(rule, tuple) else rule
+
+
 def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
     """Canonicalize declared spellings, then enforce required properties and cross-field rules."""
     canonicalize_record(kind, type_name, properties)
     validate_properties(properties)
-    manifest = catalog_manifest()
+    manifest = catalog_view()
     if kind not in ("nodes", "relations"):
         raise ExpectedValidationError("unknown catalog type")
-    definitions = cast("dict[str, dict[str, Any]]", manifest[kind])
+    definitions = cast("Mapping[str, Mapping[str, Any]]", manifest[kind])
     if type_name not in definitions:
         raise ExpectedValidationError("unknown catalog type")
-    required = cast("dict[str, str | list[str]]", definitions[type_name]["required"])
+    required = cast("Mapping[str, str | list[str] | tuple[str, ...]]", definitions[type_name]["required"])
     for field, rule in required.items():
         if field not in properties or not _valid_field(properties[field], rule):
-            raise ExpectedValidationError(f"/properties/{field}: expected {rule}")
+            # The shared view spells a JSON array as a tuple; the published message keeps the list
+            # spelling clients already receive, so routing this read changes no client-visible text.
+            raise ExpectedValidationError(f"/properties/{field}: expected {_published_rule(rule)}")
     _validate_cross_fields(kind, type_name, properties)
 
 
@@ -768,8 +802,10 @@ _CPE_COMPONENT = r"(?:[*\-]|\?*\*?(?:[a-z0-9._\-~]|\\[!-~])+\*?\?*)"
 _CPE23 = re.compile(r"cpe:2\.3:[aho*\-]:" + ":".join([_CPE_COMPONENT] * 10))
 
 
-def _valid_field(value: object, rule: str | list[str]) -> bool:
-    if isinstance(rule, list):
+def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool:
+    # An enum rule arrives as a list from `catalog_manifest()` and as a tuple from the shared view;
+    # `str` is a Sequence too, so the check names the two containers rather than the protocol.
+    if isinstance(rule, (list, tuple)):
         return type(value) is str and value in rule
     integer_validators: dict[str, Callable[[int], bool]] = {
         "asn": lambda item: 0 <= item <= 4294967295,
