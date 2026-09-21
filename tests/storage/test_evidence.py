@@ -242,3 +242,18 @@ def test_nul_byte_source_path_is_invalid_not_internal(store, path):
         store.source_stat(path)
     assert failure.value.error_type == "INVALID"
     assert exception_response(failure.value)["error"].startswith("INVALID: ")
+
+
+@pytest.mark.parametrize(("interval", "checks"), [(65536, 4), (131072, 2), (8 * 1024**2, 0)])
+def test_copy_checks_disk_reserve_once_per_configured_interval(store, tmp_path, monkeypatch, interval, checks):
+    # The interval governs how often free space is re-measured, never how much
+    # of the source is read at a time.
+    sized = evidence.EvidenceStore(store.workspace, WorkspacePolicy(disk_check_interval_bytes=interval))
+    (tmp_path / "source.bin").write_bytes(b"z" * 262144)
+    identity = sized.source_stat("source.bin")
+    sizes = []
+    monkeypatch.setattr(evidence, "CheckSpace", lambda _fds, size, _policy: sizes.append(size))
+    copied = sized.copy_path("source.bin", identity, str(uuid4()), str(uuid4()), lambda: None)
+    assert copied.byte_size == 262144
+    assert sizes[0] == 262144
+    assert sizes[1:] == [interval] * checks

@@ -242,3 +242,12 @@ def test_inline_staging_checks_disk_reserve_once(store):
     store.stage_inline(b"abc", NODE, OTHER)
     assert isinstance(evidence.CheckSpace, Mock)
     evidence.CheckSpace.assert_called_once_with(store.directory_fds, 3, store.policy)
+
+
+@pytest.mark.parametrize("interval", [4096, 8 * 1024**2])
+def test_copy_read_size_is_independent_of_the_disk_check_interval(store, monkeypatch, interval):
+    sized = evidence.EvidenceStore(store.workspace, WorkspacePolicy(disk_check_interval_bytes=interval))
+    read = Mock(side_effect=[b"abc", b""])
+    monkeypatch.setattr(evidence.os, "read", read)
+    sized.copy_path("source", [1, 2, 3, 4, 5], NODE, OTHER, Mock(), short=True)
+    assert [call.args[1] for call in read.call_args_list] == [65536, 65536]

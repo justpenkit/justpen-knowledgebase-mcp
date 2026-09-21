@@ -2,6 +2,21 @@
 
 ### Fix
 
+- **evidence**: make `disk_check_interval_bytes` a real free-space check
+    interval. It previously only capped the copy read size, so at its 8 MiB
+    default it could not change behaviour, and every 64 KiB read re-measured the
+    device. Reads now use a fixed 64 KiB chunk and the free-space check runs
+    once per configured interval of copied bytes. The field is published to
+    clients through `policy` in `kb_status`, and it now actually controls
+    something, so its meaning has changed: during an evidence copy, a device
+    filling up is detected at the configured interval instead of every 64 KiB.
+    A copy smaller than the interval is checked once, when the stage is created
+    for the full expected size, rather than repeatedly mid-copy. At the 8 MiB
+    default that means most copies are checked once. The check runs after the
+    write that crosses the interval rather than before each write, so up to one
+    interval of bytes can reach the device between two measurements. Lower the
+    field to detect a filling device sooner, at the cost of one `fstatvfs` per
+    interval.
 - **evidence**: reject a NUL byte in an ingest `path` with `INVALID` instead of
     `INTERNAL`. `WorkspacePaths.relative` now refuses the spelling before
     traversal, and `EvidenceStore.source_stat` classifies any remaining
