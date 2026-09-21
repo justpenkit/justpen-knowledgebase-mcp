@@ -769,10 +769,16 @@ class JobRunner:
             await self.workers.control(lambda c, _t: JobStore.checkpoint(c, claim, progress))
         bucket = await self.acquire_bucket(claim.lane, digest, exclusive=True)
         try:
-            await self.workers.write(lambda c, _t: EvidenceRecords.check_existing(c, claim, digest))
+            existing = await self.workers.write(lambda c, _t: EvidenceRecords.check_existing(c, claim, digest))
             claim.check()
             if staged is not None:
-                await self.io(claim.lane, lambda: self.store.publish(staged))
+                # A ready canonical row proves the blob is already published. Renaming
+                # identical bytes over it changes the inode a peer's verify_blob is
+                # holding, so that peer's recheck_blob would raise EVIDENCE_CHANGED.
+                if existing is None:
+                    await self.io(claim.lane, lambda: self.store.publish(staged))
+                else:
+                    await self.io(claim.lane, lambda: self.store.discard_stage(claim.job_id, claim.token))
                 claim.stage_created = False
             elif verified is not None:
                 await self.io(claim.lane, lambda: self.store.recheck_blob(verified))

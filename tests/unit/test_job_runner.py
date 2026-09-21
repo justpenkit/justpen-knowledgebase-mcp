@@ -280,6 +280,24 @@ async def test_ingest_publication_orders_blob_before_canonical_metadata(runner, 
     assert calls == ["check", "recheck", "record"]
 
 
+async def test_existing_canonical_blob_discards_the_stage_instead_of_republishing(runner, monkeypatch):
+    calls = []
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job()))
+    monkeypatch.setattr(jobs.JobStore, "checkpoint", Mock())
+    runner._copy_input = AsyncMock(return_value=SimpleNamespace(sha256="a" * 64, byte_size=3))
+    monkeypatch.setattr(jobs.EvidenceRecords, "check_existing", Mock(return_value=owner(sha256="a" * 64)))
+    monkeypatch.setattr(jobs.EvidenceRecords, "publish_record", Mock(side_effect=lambda *_args: calls.append("record")))
+    runner.store.publish.side_effect = lambda *_args: calls.append("blob")
+    runner.store.discard_stage.side_effect = lambda *_args: calls.append("discard")
+    capability = claim(payload={"input_token": OTHER})
+    await runner._ingest_step(capability)
+    # Republishing identical bytes would change the inode a concurrent owner
+    # verified, so its recheck_blob would raise EVIDENCE_CHANGED.
+    assert calls == ["discard", "record"]
+    assert runner.store.discard_stage.call_args.args == (NODE, OTHER)
+    assert not capability.stage_created
+
+
 async def test_copy_source_and_input_ownership(runner, monkeypatch):
     capability = claim(payload={"path": "source", "source_stat": (1, 2, 3)})
     runner.store.copy_path.return_value = "staged"
