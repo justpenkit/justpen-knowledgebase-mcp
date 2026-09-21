@@ -112,9 +112,10 @@ def _rule(rule: str | list[str]) -> str:
 
 
 def _required(required: dict[str, str | list[str]]) -> str:
+    """One property per line. A GFM cell cannot hold a newline, so the break is `<br>`."""
     if not required:
         return EMPTY
-    return "; ".join(f"`{name}`: {_rule(rule)}" for name, rule in required.items())
+    return "<br>".join(f"`{name}`: {_rule(rule)}" for name, rule in required.items())
 
 
 def _scope(identity: dict[str, Any]) -> str:

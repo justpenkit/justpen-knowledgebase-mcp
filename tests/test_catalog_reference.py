@@ -57,7 +57,7 @@ def _required(cell: str) -> dict[str, str | list[str]]:
     if cell == EMPTY:
         return {}
     required: dict[str, str | list[str]] = {}
-    for item in cell.split("; "):
+    for item in cell.split("<br>"):
         name, _, rule = item.partition(": ")
         values = _names(rule)
         required[_names(name)[0]] = values if rule.startswith("one of ") else values[0]
