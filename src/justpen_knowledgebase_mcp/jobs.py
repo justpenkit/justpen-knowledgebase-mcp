@@ -355,7 +355,8 @@ class JobRunner:
         digest = request.evidence_id[2:]
         fd = await self.acquire_bucket("short", digest, exclusive=False, deadline=deadline)
         try:
-
+            # Named: tests/storage/test_jobs.py selects this callback by __name__ to observe the
+            # deadline it is handed. Renaming it fails those tests rather than weakening them.
             def metadata(connection: apsw.Connection, _token: OperationToken) -> tuple[int, str]:
                 row = row_by_id(connection, "evidence", request.evidence_id)
                 if row is None:

@@ -21,7 +21,7 @@ from justpen_knowledgebase_mcp.errors import (
     RecordConflictError,
     StorageIOError,
 )
-from justpen_knowledgebase_mcp.evidence import IngestRequest
+from justpen_knowledgebase_mcp.evidence import IngestRequest, ReadEvidenceRequest
 from justpen_knowledgebase_mcp.identity import identity_key
 from justpen_knowledgebase_mcp.models import DeleteRequest, GetRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
@@ -927,32 +927,123 @@ async def test_post_acceptance_native_db_timeout_returns_snapshot(tmp_path, monk
         )
 
 
+async def settled_evidence(kb, payload):
+    """Return the terminal ingest record, which is the first one guaranteed to carry evidence_id.
+
+    `ingest_evidence` bounds its own wait by `query_timeout_ms`, and a wait that expires returns
+    the last non-terminal snapshot, which has no evidence_id at all. Under load that is rare rather
+    than impossible, so reading the accept-time record would make every caller intermittent.
+    """
+    accepted = await kb.ingest_evidence(payload)
+    settled = await kb.job_runner.wait(accepted["job_id"], time.monotonic() + 5)
+    assert settled["state"] == "completed"
+    return settled
+
+
 async def test_raw_read_bucket_and_database_share_deadline(tmp_path, monkeypatch):
+    """Both steps of a raw read must receive the one budget the read was given.
 
+    A step that minted its own would let a slow read run for several times the configured timeout.
+    Observing the deadline each step is handed proves that directly. The earlier version of this
+    test inferred it from elapsed wall-clock time, which is why it was unreliable: its 0.27s bound
+    decided the result on a loaded machine, and the delay it injected made the bucket retry loop,
+    not the database read, consume the budget - so the step named in the title never ran at all.
+    """
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=200)) as kb:
-        result = await kb.ingest_evidence({"base64": "AA=="})
-        acquire, read = kb.job_runner.store.acquire_bucket, kb.workers.read
+        result = await settled_evidence(kb, {"base64": "AA=="})
+        digest = result["evidence_id"][2:]
+        budget = time.monotonic() + 5
+        observed: list[tuple[str, float | None]] = []
+        acquire_bucket, database_read = kb.job_runner.acquire_bucket, kb.workers.read
 
-        def delayed_bucket(*args, **kwargs):
-            time.sleep(0.14)
-            return acquire(*args, **kwargs)
+        async def record_bucket(lane, bucket, *, exclusive, deadline=None):
+            if bucket == digest:
+                observed.append(("bucket", deadline))
+            return await acquire_bucket(lane, bucket, exclusive=exclusive, deadline=deadline)
 
-        async def delayed_metadata(callback, token=None):
+        async def record_database(callback, token=None):
+            if getattr(callback, "__name__", "") == "metadata":
+                observed.append(("metadata", None if token is None else token.deadline))
+            return await database_read(callback, token)
+
+        # Scoped, so the stubs are restored before KnowledgeBase shutdown rather than at teardown.
+        with monkeypatch.context() as patch:
+            patch.setattr(kb.job_runner, "acquire_bucket", record_bucket)
+            patch.setattr(kb.workers, "read", record_database)
+            await kb.job_runner.read(ReadEvidenceRequest(evidence_id=result["evidence_id"]), budget)
+
+        assert observed == [("bucket", budget), ("metadata", budget)]
+
+
+async def test_raw_read_database_read_refuses_an_exhausted_shared_deadline(tmp_path, monkeypatch):
+    """The consequence of sharing: once the budget is gone the database read must not start.
+
+    The bucket is acquired on a budget of its own so the request reaches the database read with the
+    caller's deadline already spent. Nothing is timed; the deadline is expired by construction.
+    """
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=200)) as kb:
+        result = await settled_evidence(kb, {"base64": "AA=="})
+        digest = result["evidence_id"][2:]
+        acquire_bucket, database_read = kb.job_runner.acquire_bucket, kb.workers.read
+        acquired: list[str] = []
+        submitted: list[str] = []
+        executed: list[str] = []
+
+        async def acquire_within_its_own_budget(lane, bucket, *, exclusive, deadline=None):
+            descriptor = await acquire_bucket(lane, bucket, exclusive=exclusive, deadline=time.monotonic() + 5)
+            if bucket == digest:
+                acquired.append(bucket)
+            return descriptor
+
+        async def record_database(callback, token=None):
             if getattr(callback, "__name__", "") != "metadata":
-                return await read(callback, token)
+                return await database_read(callback, token)
+            submitted.append("metadata")
 
-            def delayed(connection, operation):
-                time.sleep(0.14)
+            def watched(connection, operation):
+                executed.append("metadata")
                 return callback(connection, operation)
 
-            return await read(delayed, token)
+            return await database_read(watched, token)
 
-        monkeypatch.setattr(kb.job_runner.store, "acquire_bucket", delayed_bucket)
-        monkeypatch.setattr(kb.workers, "read", delayed_metadata)
-        start = time.monotonic()
-        with pytest.raises(LimitError):
+        request = ReadEvidenceRequest(evidence_id=result["evidence_id"])
+        with monkeypatch.context() as patch:
+            patch.setattr(kb.job_runner, "acquire_bucket", acquire_within_its_own_budget)
+            patch.setattr(kb.workers, "read", record_database)
+            with pytest.raises(LimitError):
+                await kb.job_runner.read(request, time.monotonic() - 1)
+
+        assert acquired == [digest]
+        # Both halves matter: `submitted` proves the read really reached the database step, so a
+        # rename of the inner callback cannot turn this into a test that passes by observing
+        # nothing, and `executed` proves the step was refused before it touched the database.
+        assert submitted == ["metadata"]
+        assert executed == [], "an expired budget must stop the read before the database is touched"
+
+
+async def test_raw_read_budget_comes_from_the_configured_query_timeout(tmp_path, monkeypatch):
+    """The shared deadline is only worth sharing if it is the configured one.
+
+    The timeout is deliberately not a round number and not the 10000ms default, so a budget that
+    ignores the configuration cannot land inside the bracket by coincidence.
+    """
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=337)) as kb:
+        result = await settled_evidence(kb, {"base64": "AA=="})
+        read = kb.job_runner.read
+        budgets: list[float] = []
+
+        async def record(request, deadline):
+            budgets.append(deadline)
+            return await read(request, deadline)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(kb.job_runner, "read", record)
+            before = time.monotonic()
             await kb.read_evidence({"evidence_id": result["evidence_id"]})
-        assert time.monotonic() - start < 0.27
+            after = time.monotonic()
+
+        assert len(budgets) == 1
+        assert before + 0.337 <= budgets[0] <= after + 0.337
 
 
 async def test_cancelled_native_raw_read_retains_bucket_until_drain(kb, monkeypatch):
