@@ -57,6 +57,12 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
+IDLE_POLL_SECONDS = 0.1
+# A lane that found no work doubles its poll interval up to this ceiling. wake()
+# covers every in-process admission, so the interval only bounds work a peer
+# process queued durably without reaching this process's wake queue.
+IDLE_POLL_CEILING_SECONDS = 2.0
+
 
 class _IOCall(Generic[T]):
     """Atomically abandon a queued callback without freeing its executor queue slot."""
@@ -393,6 +399,7 @@ class JobRunner:
 
     async def _lane(self, lane: str) -> None:
         previous = "cleanup"
+        idle = IDLE_POLL_SECONDS
         while not self._stopping:
             classes = (
                 (["ingest", "reindex"] if previous != "ingest" else ["reindex", "ingest"])
@@ -413,9 +420,15 @@ class JobRunner:
                 handled = False
                 if not isinstance(outcome.error, (BusyError, LimitError)) and not self._stopping:
                     self._failure_cache("IO_ERROR: background job admission failed")
-            if not handled:
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(self._wake[lane].get(), timeout=0.1)
+            idle = IDLE_POLL_SECONDS if handled else await self._idle_wait(lane, idle)
+
+    async def _idle_wait(self, lane: str, interval: float) -> float:
+        """Double an idle lane's poll interval; a wake restores the responsive one."""
+        try:
+            await asyncio.wait_for(self._wake[lane].get(), timeout=interval)
+        except TimeoutError:
+            return min(IDLE_POLL_CEILING_SECONDS, interval * 2)
+        return IDLE_POLL_SECONDS
 
     async def _category_step(self, lane: str, category: str) -> bool:
         if category == "cleanup":

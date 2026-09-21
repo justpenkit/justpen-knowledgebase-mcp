@@ -490,6 +490,35 @@ async def test_lane_alternates_ready_work_classes(runner, lane, expected):
     assert categories == expected
 
 
+async def test_idle_lane_doubles_its_poll_until_a_ceiling_or_a_wake(runner, monkeypatch):
+    monkeypatch.setattr(jobs, "IDLE_POLL_CEILING_SECONDS", 0.004)
+    assert await runner._idle_wait("short", 0.001) == 0.002
+    assert await runner._idle_wait("short", 0.002) == 0.004
+    assert await runner._idle_wait("short", 0.004) == 0.004
+    # wake() keeps admitted work responsive, so the interval collapses to the floor.
+    runner.wake("short")
+    assert await runner._idle_wait("short", 0.004) == jobs.IDLE_POLL_SECONDS
+
+
+async def test_lane_carries_its_backoff_forward_and_resets_it_on_work(runner):
+    waits, outcomes = [], [False, False, False, False, True, False]
+
+    async def idle_wait(_lane, interval):
+        waits.append(interval)
+        return min(jobs.IDLE_POLL_CEILING_SECONDS, interval * 2)
+
+    async def step(_lane, _category):
+        if not outcomes:
+            runner._stopping = True
+            return False
+        return outcomes.pop(0)
+
+    runner._idle_wait = AsyncMock(side_effect=idle_wait)
+    runner._category_step = AsyncMock(side_effect=step)
+    await runner._lane("bulk")
+    assert waits == [0.1, 0.2, 0.1]
+
+
 async def test_background_admission_failure_is_sanitized_and_loop_recovers(runner):
     calls = []
 
