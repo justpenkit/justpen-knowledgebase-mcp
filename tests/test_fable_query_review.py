@@ -25,6 +25,21 @@ search_module = importlib.import_module("justpen_knowledgebase_mcp.storage.searc
 pytestmark = pytest.mark.integration
 
 
+# The owner column drives the join and fts5 receives the resulting rowid equality: the "="
+# in the fts5 index string. Reversing the operands drops that "=", which replaces the
+# per-document doclist seek with one scan of the term's whole global doclist per owner
+# document, so whole-search work becomes quadratic in corpus size.
+_MATCH_PLAN = (
+    "SEARCH d USING INDEX search_documents_evidence (evidence_id=?)",
+    "SCAN search_fts VIRTUAL TABLE INDEX 0:=M1",
+    "SEARCH e EXISTS USING INTEGER PRIMARY KEY (rowid=?)",
+)
+
+
+def _plan_shape(plan):
+    return tuple(row[3] for row in plan)
+
+
 @pytest.mark.parametrize(
     ("query", "mode", "sort"), [("common uniqueLAST", "words", "id"), ("common", "literal", "relevance")]
 )
@@ -81,6 +96,61 @@ async def test_whole_search_vm_work_scales_with_candidates(tmp_path, query, mode
     (tmp_path / "query-work.json").write_text(json.dumps(measurements))
     assert measurements[1]["vm"] < 3 * measurements[0]["vm"], measurements
     assert all(item["candidate_statements"] == 1 for item in measurements), measurements
+    assert all(_plan_shape(item["plan"]) == _MATCH_PLAN for item in measurements), measurements
+
+
+@pytest.mark.parametrize("owner_docs", [2, 8])
+async def test_owner_match_reads_one_owner_not_the_global_doclist(tmp_path, owner_docs):
+    """Vary owner documents independently of the corpus the term appears across.
+
+    Only evidence 1 holds ``owner_docs`` chunks; every other owner holds two. Growing the
+    corpus therefore multiplies the term's global frequency while leaving the owner under
+    test unchanged, which is the dimension a whole-corpus scaling bound cannot observe.
+    """
+    measurements = []
+    for owners in (64, 1024):
+        workspace = tmp_path / f"owners{owners}"
+        workspace.mkdir()
+        async with KnowledgeBase.open(ServerConfig(workspace_dir=workspace)) as kb:
+
+            def populate(connection, _token, owners=owners):
+                for index in range(owners):
+                    digest = f"{index:064x}"
+                    connection.execute(
+                        "INSERT INTO evidence(uuid,sha256,byte_size,blob_path,index_state,incomplete) VALUES(?,?,0,'fixture','ready',0)",
+                        ("e_" + digest, digest),
+                    )
+                for identifier in range(1, owners + 1):
+                    for chunk in range(owner_docs if identifier == 1 else 2):
+                        connection.execute(
+                            "INSERT INTO search_documents(evidence_id,text,index_generation,encoding) VALUES(?,?,0,'utf-8')",
+                            (identifier, f"common chunk{chunk}"),
+                        )
+
+            await kb.workers.write(populate)
+
+            def probe(connection, _token, owners=owners):
+                vm = 0
+
+                def progress():
+                    nonlocal vm
+                    vm += 1
+                    return False
+
+                connection.set_progress_handler(progress, 1, id="query-review")
+                try:
+                    documents = list(connection.execute(DOCUMENT_MATCH["evidence"], ('"common"', 1)))
+                finally:
+                    connection.set_progress_handler(None, id="query-review")
+                plan = list(connection.execute("EXPLAIN QUERY PLAN " + DOCUMENT_MATCH["evidence"], ('"common"', 1)))
+                corpus = connection.execute("SELECT count(*) FROM search_documents").get
+                return {"owners": owners, "corpus": corpus, "vm": vm, "documents": len(documents), "plan": plan}
+
+            measurements.append(await kb.workers.read(probe))
+    assert all(item["documents"] == owner_docs for item in measurements), measurements
+    assert all(_plan_shape(item["plan"]) == _MATCH_PLAN for item in measurements), measurements
+    # A 16x corpus leaves this owner's documents untouched, so its match work must not follow.
+    assert measurements[1]["vm"] < 2 * measurements[0]["vm"], measurements
 
 
 async def test_traversal_streams_each_selective_adjacency_once(tmp_path):
