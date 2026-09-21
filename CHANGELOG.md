@@ -6,6 +6,13 @@
 - bundle a versioned ICANN Public Suffix List snapshot and Nmap-derived service-name registry
 - add parent-scoped port, service, and finding identity with atomic scoped batch writes
 - guard scoped children by rejecting scope-relation or parent deletion until the child is deleted
+- add HTTP fingerprint and SSH host key pivots for cross-host clustering
+- add cloud storage bucket, identity tenant, repository and exposed secret types
+- add email, phone and domain-scoped MTA-STS policy types for the mail and registration surfaces
+- accept scoped, cloud and source-control nodes as finding sources, CDN detection at the DNS layer,
+    and endpoint-level CVE matches
+- derive the parent-scope order, relation set and delete guard from the catalog manifest
+- publish a catalog reference page generated from the manifest, with a node-to-relation matrix
 
 ### Breaking
 

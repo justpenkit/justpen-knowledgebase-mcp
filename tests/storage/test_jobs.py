@@ -538,8 +538,11 @@ async def test_full_database_is_io_error_and_failure_commit_never_reports_succes
     monkeypatch.setattr(jobs.JobStore, "finish", staticmethod(fail_finish))
     accepted = await kb.ingest_evidence({"path": "disk.bin"})
     await asyncio.wait_for(failed.wait(), 2)
-    for _ in range(100):
-        if kb.job_runner.last_error:
+    # The reporting hop is a thread handoff, so a fixed number of loop turns is a race:
+    # the same spin needed 3 turns in one run and 2362 in the next on unchanged code.
+    deadline = time.monotonic() + 2
+    for _ in range(1000000):
+        if kb.job_runner.last_error is not None or time.monotonic() > deadline:
             break
         await asyncio.sleep(0)
     assert kb.job_runner.last_error == "IO_ERROR: job failure could not be committed"

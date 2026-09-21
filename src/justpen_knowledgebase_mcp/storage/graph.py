@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
-from ..catalog import catalog_manifest, catalog_schema, validate_record
+from ..catalog import catalog_manifest, catalog_schema, scope_order, validate_record
 from ..cursors import CursorBinding
 from ..errors import ConflictError, ExpectedValidationError, InvalidParamsError, NotFoundError, RecordConflictError
 from ..identity import format_timestamp, identity_json, identity_key, parse_timestamp
@@ -27,7 +27,9 @@ if TYPE_CHECKING:
 
 
 KINDS = frozenset(("nodes", "relations", "evidence"))
-_SCOPED_NODE_ORDER = ("port", "service", "finding", "dkim_record", "parameter")
+# Derived parent-first from the catalog: a scoped type that is itself a scope-relation source
+# must be resolved before its child, and deriving it keeps that true without a manual reorder.
+_SCOPED_NODE_ORDER = scope_order()
 
 
 @dataclass
