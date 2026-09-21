@@ -166,3 +166,15 @@ def test_empty_import_has_invalid_code(tmp_path):
     cfg = ServerConfig(workspace_dir=tmp_path)
     with WorkspacePaths(cfg) as workspace, pytest.raises(InvalidParamsError), workspace.open_import(""):
         pass
+
+
+@pytest.mark.parametrize("path", ["nmap\x00.xml", "recon/nmap\x00.xml", "re\x00con/nmap.xml"])
+def test_nul_byte_import_has_invalid_code(tmp_path, path):
+    # os.open raises ValueError rather than OSError, so containment must reject
+    # the spelling before any descriptor handler can be asked to classify it.
+    with workspace(tmp_path) as ws:
+        with pytest.raises(InvalidParamsError) as failure:
+            ws.relative(path)
+        assert failure.value.error_type == "INVALID"
+        with pytest.raises(InvalidParamsError), ws.open_import(path):
+            pass

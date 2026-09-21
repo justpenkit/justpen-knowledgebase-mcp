@@ -162,15 +162,44 @@ async def test_full_reindex_bounded_partial_failure_samples(monkeypatch, reason)
         assert result["coverage_incomplete"]
 
 
-def test_publish_chunk_only_counts_non_gap(monkeypatch):
-    append, checkpoint = Mock(), Mock()
+def test_publish_batch_counts_non_gap_and_checkpoints_once_without_refencing(monkeypatch):
+    append, fence = Mock(), Mock()
     monkeypatch.setattr(reindex, "append_chunk", append)
-    monkeypatch.setattr(reindex.JobStore, "checkpoint", checkpoint)
-    for gap, count in [(True, 3), (False, 4)]:
-        reindex._publish_chunk(
-            database(), claim(progress={"bytes": 8}), Mock(), TextChunk("", "utf-8", 0, 1, 0, gap=gap), 3
-        )
-        assert checkpoint.call_args.args[2] == {"bytes": 8, "chunks": count}
+    monkeypatch.setattr(reindex.JobStore, "fence", fence)
+    db = database()
+    batch = [
+        TextChunk("alpha", "utf-8", 0, 1, 0),
+        TextChunk("", "utf-8", 5, 1, 5, gap=True),
+        TextChunk("omega", "utf-8", 5, 1, 5),
+    ]
+    assert reindex._publish_batch(db, claim(progress={"bytes": 8}), job(), Mock(), batch, 3) == 5
+    assert append.call_count == 3
+    # The caller already fenced this transaction; the checkpoint must not repeat it.
+    fence.assert_not_called()
+    assert db.execute.call_count == 1
+    statement, parameters = db.execute.call_args.args
+    assert statement.startswith("UPDATE jobs SET progress=?")
+    assert json.loads(parameters[0]) == {"bytes": 8, "chunks": 5}
+
+
+def test_publish_batch_preserves_an_outstanding_blob_locator(monkeypatch):
+    # Bypassing JobStore.checkpoint must keep its ownership rules. Ingest clears
+    # the locator before indexing today, so this pins the equivalence, not a live path.
+    monkeypatch.setattr(reindex, "append_chunk", Mock())
+    digest = "b" * 64
+    row = job(progress=json.dumps({"bytes": 8, "chunks": 1, "verified_sha256": digest, "stage_token": OTHER}))
+    row["blob_sha256"] = digest
+    db = database()
+    reindex._publish_batch(db, claim(progress={"chunks": 1}), row, Mock(), [TextChunk("alpha", "utf-8", 0, 1, 0)], 1)
+    parameters = db.execute.call_args.args[1]
+    assert json.loads(parameters[0]) == {"bytes": 8, "chunks": 2, "verified_sha256": digest, "stage_token": OTHER}
+    assert parameters[1] == digest
+
+
+def test_next_batch_bounds_one_transaction_by_published_bytes():
+    size = reindex.BATCH_BYTES // 4
+    stream = iter([TextChunk("x" * size, "utf-8", index * size, 1, index * size) for index in range(9)])
+    assert [len(reindex._next_batch(stream)) for _ in range(4)] == [4, 4, 1, 0]
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -188,8 +217,8 @@ async def test_index_stream_closes_file_generator_on_publish_failure(monkeypatch
     chunks = [TextChunk("abc", "utf-8", 0, 1, 0), TextChunk("", "utf-8", 3, 1, 3, gap=True)]
     monkeypatch.setattr(reindex, "iter_chunks", Mock(return_value=iter(chunks)))
     monkeypatch.setattr(reindex.JobStore, "fence", Mock(return_value=job()))
-    publish = Mock(side_effect=ConflictError("INDEX_GENERATION_CHANGED") if fail else None)
-    monkeypatch.setattr(reindex, "_publish_chunk", publish)
+    publish = Mock(side_effect=ConflictError("INDEX_GENERATION_CHANGED") if fail else None, return_value=1)
+    monkeypatch.setattr(reindex, "_publish_batch", publish)
 
     async def io(_lane, callback):
         return callback()
@@ -202,7 +231,9 @@ async def test_index_stream_closes_file_generator_on_publish_failure(monkeypatch
             await reindex._index_stream(runner, claim(), index_owner)
     else:
         assert await reindex._index_stream(runner, claim(), index_owner) == (True, 1)
-        assert [call.args[-1] for call in publish.call_args_list] == [0, 1]
+        # Both chunks, gap included, reach one transaction that starts from count zero.
+        assert [chunk.gap for chunk in publish.call_args.args[-2]] == [False, True]
+        assert [call.args[-1] for call in publish.call_args_list] == [0]
     runner.close_io_owner.assert_awaited_once()
     stream_context.__exit__.assert_called_once()
 

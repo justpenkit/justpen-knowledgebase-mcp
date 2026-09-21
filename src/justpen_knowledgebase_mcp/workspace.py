@@ -79,8 +79,13 @@ class WorkspacePaths:
 
     def relative(self, value: str | Path) -> Path:
         """Strip only root prefixes, without resolving child symlinks."""
-        if not str(value):
+        name = str(value)
+        if not name:
             raise InvalidParamsError("empty path")
+        # os.open raises ValueError for an embedded NUL, which no descriptor
+        # handler classifies, so the spelling is rejected before any traversal.
+        if "\x00" in name:
+            raise InvalidParamsError("NUL byte in path")
         path = Path(value)
         if ".." in path.parts:
             raise PathDeniedError("PATH_DENIED: PARENT_COMPONENT")
@@ -254,7 +259,9 @@ class WorkspacePaths:
     def stage(self) -> Generator[tuple[str, int]]:
         """Create a private staging file and remove it on every exit path."""
         name = uuid4().hex
-        fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self._fds[self.tmp])
+        fd = os.open(
+            name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=self._fds[self.tmp]
+        )
         try:
             yield name, fd
         finally:

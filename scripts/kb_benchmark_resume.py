@@ -166,6 +166,11 @@ def _edge_properties(measure: Measurements, ordinal: int) -> dict[str, Any]:
     return {"status": status, "context": f"seed{measure.report['seed']}-edge{ordinal}"}
 
 
+def _edge_target_rank(ordinal: int) -> int:
+    """Mirror `benchmark_knowledgebase.edge_target_rank`; rank r is node id r+1."""
+    return ordinal // len(_REDIRECT_STATUSES)
+
+
 async def validate_relations(measure: Measurements, kb: KnowledgeBase, nodes: int) -> int:
     """Validate every relation batch against its original canonical target page."""
     ordinal = after = 0
@@ -180,15 +185,15 @@ async def validate_relations(measure: Measurements, kb: KnowledgeBase, nodes: in
         if not rows:
             break
         for first in range(0, len(rows), 100):
-            offset = (ordinal % (measure.nodes - 1)) + 1
+            base = _edge_target_rank(ordinal)
             targets = await kb.workers.read(
-                lambda c, _t, offset=offset: c.execute(
-                    "select id from nodes where id>? order by id limit 100", (offset,)
+                lambda c, _t, base=base: c.execute(
+                    "select id from nodes where id>? order by id limit 100", (base,)
                 ).fetchall()
             )
-            if not targets:
+            if len(targets) <= _edge_target_rank(ordinal + len(rows[first : first + 100]) - 1) - base:
                 raise RuntimeError("resume relation page has no canonical target prefix")
-            for index, (identifier, kind, raw, source, target, lifecycle, key) in enumerate(rows[first : first + 100]):
+            for identifier, kind, raw, source, target, lifecycle, key in rows[first : first + 100]:
                 if not isinstance(identifier, int) or not isinstance(raw, str):
                     raise TypeError("invalid canonical relation storage types")
                 if (
@@ -196,7 +201,7 @@ async def validate_relations(measure: Measurements, kb: KnowledgeBase, nodes: in
                     or kind != "redirects_to"
                     or key != identity_key("relations", "redirects_to", json.loads(raw))
                     or source != measure.hub
-                    or target != targets[index % len(targets)][0]
+                    or target != targets[_edge_target_rank(ordinal) - base][0]
                     or json.loads(raw) != _edge_properties(measure, ordinal)
                     or lifecycle != "ready"
                 ):
