@@ -134,6 +134,34 @@ async def test_delete_controls_and_wait_preserve_accepted_metadata(runner, monke
         await runner.wait(NODE, float("inf"))
 
 
+async def test_wait_parks_on_the_completion_signal_instead_of_polling(runner, monkeypatch):
+    reads = []
+
+    def observe(_connection, job_id):
+        reads.append(job_id)
+        return {"state": "completed" if len(reads) > 1 else "running"}
+
+    monkeypatch.setattr(jobs.JobStore, "get", Mock(side_effect=observe))
+    waiter = asyncio.create_task(runner.wait(NODE, float("inf")))
+    await asyncio.sleep(0.05)
+    # Five hundredths of a second used to be five reads on the two-thread read lane.
+    assert reads == [NODE]
+    runner._signal(NODE)
+    assert (await waiter)["status"] == "completed"
+    assert reads == [NODE, NODE]
+    assert not runner._completions
+
+
+@pytest.mark.parametrize("failing", [False, True])
+async def test_run_claim_signals_its_waiters_on_every_exit(runner, failing):
+    runner._ingest_step = AsyncMock(side_effect=StorageIOError("private") if failing else None)
+    runner._fail_claim = AsyncMock()
+    with runner._completion(NODE) as completed:
+        await runner._run_claim(claim())
+        assert completed.is_set()
+    assert runner._fail_claim.await_count == int(failing)
+
+
 async def test_read_holds_bucket_through_metadata_and_slice(runner, monkeypatch):
     monkeypatch.setattr(jobs, "row_by_id", Mock(return_value=owner(byte_size=3, encoding="utf-8")))
     runner.store.read_slice.return_value = {"text": "abc"}
@@ -311,12 +339,25 @@ async def test_failure_sanitizes_io_and_preserves_input(runner, monkeypatch, cap
 
 
 def test_list_jobs_binds_filter_and_paginates(monkeypatch):
-    monkeypatch.setattr(jobs.JobStore, "get", Mock(side_effect=[{"job_id": NODE}, {"job_id": OTHER}]))
-    db = database(cursor(value=(NODE, 1)), cursor(rows=[(1, NODE), (2, OTHER)]))
+    get = Mock(side_effect=[{"job_id": NODE}, {"job_id": OTHER}])
+    monkeypatch.setattr(jobs.JobStore, "get", get)
+    db = database(
+        cursor(value=(NODE, 1, '{"completed_retention_seconds":10}')),
+        cursor(rows=[(1, NODE), (2, OTHER)]),
+        cursor(rows=[(NODE,)]),
+        cursor(rows=[]),
+        cursor(rows=[]),
+    )
     result = jobs._list_jobs(db, jobs.JobsRequest(limit=1, state="failed"))
     assert result["jobs"] == [{"job_id": NODE}]
     assert result["next_cursor"]
-    assert db.execute.call_args.args[1] == (0, "failed", "failed", 2)
+    assert db.execute.call_args_list[1].args[1] == (0, "failed", "failed", 2)
+    # One settings read and one probe per owner table serve the whole page.
+    assert db.execute.call_count == 5
+    assert get.call_args.kwargs == {
+        "policy": {"completed_retention_seconds": 10},
+        "owners": frozenset({NODE}),
+    }
 
 
 async def test_cancelled_queued_io_keeps_capacity_until_executor_consumes(monkeypatch):

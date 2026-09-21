@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import AsyncExitStack
+from unittest.mock import patch
 
 import pytest
 
@@ -9,6 +10,36 @@ from ..tools import envelope
 from .mcp_client import client_for
 
 pytestmark = pytest.mark.integration
+
+WAITERS = 8
+
+
+async def test_concurrent_waiters_do_not_poll_the_lanes(kb):
+    """Waiters are released by a completion signal, not by a 100 Hz JobStore.get poll."""
+    counts = dict.fromkeys(("read", "control"), 0)
+    originals = {lane: getattr(kb.workers, lane) for lane in counts}
+
+    def counting(lane):
+        async def issued(callback, token=None):
+            counts[lane] += 1
+            return await originals[lane](callback, token)
+
+        return issued
+
+    with patch.object(kb.workers, "read", counting("read")), patch.object(kb.workers, "control", counting("control")):
+        results = await asyncio.gather(
+            *(
+                kb.ingest_evidence({"text": f"waiter probe {index}", "media_type": "text/plain"})
+                for index in range(WAITERS)
+            )
+        )
+    assert [result["status"] for result in results] == ["completed"] * WAITERS
+    # Measured on this fixture: 334 reads while wait() polled at 100 Hz, 40 once a
+    # completion signal releases it. The read lane has two threads (config.py:39).
+    assert counts["read"] <= 6 * WAITERS, counts
+    # A ceiling, not a target: under load the lanes are handling work, so the
+    # control count is dominated by durable steps rather than by idle polling.
+    assert counts["control"] <= 15 * WAITERS, counts
 
 
 @pytest.mark.parametrize("count", [1, 4, 8])
