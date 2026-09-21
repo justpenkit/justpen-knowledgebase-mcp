@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import apsw
 from kb_benchmark_instrumentation import Instrumentation
+from kb_benchmark_lanes import run_lanes
 from kb_benchmark_lifecycle import run_lifecycle
 from kb_benchmark_resume import archive_attempt, benchmark_owner, previous_attempt, reconcile, source_attempt
 from kb_benchmark_variants import checkpoint_worker_comparison, run_variants
@@ -36,6 +37,7 @@ SCALES = {
     "large": (1000000, 5000000, 53687091200),
 }
 SEED = 20260916
+TRAVERSAL_MAX_EDGES = [100, 300]
 Result = TypeVar("Result")
 
 
@@ -138,6 +140,7 @@ class Measurements:
                 "lexical_rare_token_every_evidence": 97,
                 "evidence_links_per_blob": 1,
                 "text_chunk_bytes": 1048576,
+                "traversal_max_edges": TRAVERSAL_MAX_EDGES,
             },
             "claim_boundaries": [
                 "cold means reopened connections, not flushed operating-system caches",
@@ -313,11 +316,13 @@ class Measurements:
                     self.errors[error.error_type] = self.errors.get(error.error_type, 0) + 1
             self.report[f"{temperature}_{name}_canonical_scans"] = scans
             self.save()
-        for _ in range(10):
-            self.check()
-            await self.call(
-                f"{temperature}_traversal", kb.neighbors({"seed_ids": [self.hub], "max_nodes": 100, "max_edges": 100})
-            )
+        for max_edges in TRAVERSAL_MAX_EDGES:
+            for _ in range(10):
+                self.check()
+                await self.call(
+                    f"{temperature}_traversal_max_edges_{max_edges}",
+                    kb.neighbors({"seed_ids": [self.hub], "max_nodes": 100, "max_edges": max_edges}),
+                )
         self.report[temperature + "_status"] = await kb.status()
         self.report[temperature + "_sql_disk"] = await kb.workers.read(
             lambda c, _t: {
@@ -331,8 +336,21 @@ class Measurements:
             }
         )
 
+    async def lanes(self) -> None:
+        """Measure idle control-lane pressure and job-wait observation lag on an empty workspace."""
+        result = await run_lanes(self, self.output / "lanes")
+        waits = result["job_wait"]
+        waits["observation_lag_ms"] = distribution(waits.pop("observation_lag_ms_samples"))
+        waits["wait_ms"] = distribution(waits.pop("wait_ms_samples"))
+        self.report["lanes"] = result
+        self.save()
+
     async def run(self) -> None:
         """Measure product lifecycle before isolated comparison experiments."""
+        if self.phase == "lanes":
+            await self.lanes()
+            self.report["status"] = "completed"
+            return
         if self.phase == "checkpoint":
             self.report["checkpoint_worker_comparison"] = await asyncio.to_thread(
                 checkpoint_worker_comparison, self.output / "checkpoint", self.deadline
@@ -392,6 +410,7 @@ class Measurements:
             run_variants, self.output / "variants", root / ".justpen/knowledgebase/graph.sqlite3", self.deadline
         )
         if self.phase == "all":
+            await self.lanes()
             await run_lifecycle(self)
         self.report["status"] = "completed"
 
@@ -421,7 +440,9 @@ def main() -> None:
     parser.add_argument("--scale", choices=SCALES, default="smoke")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-seconds", type=float, default=600)
-    parser.add_argument("--phase", choices=["corpus", "lifecycle", "variants", "checkpoint", "all"], default="all")
+    parser.add_argument(
+        "--phase", choices=["corpus", "lifecycle", "lanes", "variants", "checkpoint", "all"], default="all"
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--corpus-output", type=Path)
     options = parser.parse_args()
@@ -438,6 +459,7 @@ def main() -> None:
                 "report.json",
                 "variants",
                 "workspace",
+                "lanes",
                 "clients",
                 "hub",
                 "recovery",
@@ -471,6 +493,8 @@ def execute(options: argparse.Namespace, output: Path) -> None:
     reservation = text * 8 + nodes * 8192 + edges * 4096 + 4 * 1073741824
     if options.phase == "lifecycle":
         reservation = 8 * 1073741824
+    elif options.phase == "lanes":
+        reservation = 4 * 1073741824
     elif options.phase == "all":
         reservation += 4 * 1073741824
     measure.report["resource_preflight"] = {
