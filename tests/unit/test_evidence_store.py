@@ -226,3 +226,28 @@ def test_evidence_sync_requires_device_cache_flush_on_darwin(monkeypatch):
     monkeypatch.setattr(evidence.fcntl, "F_FULLFSYNC", None)
     with pytest.raises(StorageIOError, match="F_FULLFSYNC unavailable"):
         evidence.sync_evidence(9)
+
+
+def test_source_stat_reports_unexpected_value_errors_as_io_error(store):
+    # ValueError is not an OSError; without the widened handler it reaches the
+    # client as INTERNAL rather than a documented evidence failure.
+    store.workspace.open_import.side_effect = ValueError("open: embedded null character in path")
+    with pytest.raises(StorageIOError, match="source unavailable") as failure:
+        store.source_stat("input")
+    assert failure.value.error_type == "IO_ERROR"
+
+
+def test_inline_staging_checks_disk_reserve_once(store):
+    # _stage already checked the same size; a second call only costs an fstatvfs.
+    store.stage_inline(b"abc", NODE, OTHER)
+    assert isinstance(evidence.CheckSpace, Mock)
+    evidence.CheckSpace.assert_called_once_with(store.directory_fds, 3, store.policy)
+
+
+@pytest.mark.parametrize("interval", [4096, 8 * 1024**2])
+def test_copy_read_size_is_independent_of_the_disk_check_interval(store, monkeypatch, interval):
+    sized = evidence.EvidenceStore(store.workspace, WorkspacePolicy(disk_check_interval_bytes=interval))
+    read = Mock(side_effect=[b"abc", b""])
+    monkeypatch.setattr(evidence.os, "read", read)
+    sized.copy_path("source", [1, 2, 3, 4, 5], NODE, OTHER, Mock(), short=True)
+    assert [call.args[1] for call in read.call_args_list] == [65536, 65536]

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import apsw
 from kb_benchmark_instrumentation import Instrumentation
+from kb_benchmark_lanes import run_lanes
 from kb_benchmark_lifecycle import run_lifecycle
 from kb_benchmark_resume import archive_attempt, benchmark_owner, previous_attempt, reconcile, source_attempt
 from kb_benchmark_variants import checkpoint_worker_comparison, run_variants
@@ -36,6 +37,7 @@ SCALES = {
     "large": (1000000, 5000000, 53687091200),
 }
 SEED = 20260916
+TRAVERSAL_MAX_EDGES = [100, 300]
 Result = TypeVar("Result")
 
 
@@ -45,6 +47,17 @@ REDIRECT_STATUSES = (301, 302, 303, 307, 308)
 def edge_properties(ordinal: int) -> dict[str, Any]:
     """One canonical `redirects_to` property authority shared by generation and resume verification."""
     return {"status": REDIRECT_STATUSES[ordinal % len(REDIRECT_STATUSES)], "context": f"seed{SEED}-edge{ordinal}"}
+
+
+def edge_target_rank(ordinal: int) -> int:
+    """One canonical target authority: `redirects_to` identity is one edge per target and status.
+
+    `catalog.py` gives `redirects_to` `identity=_identity(["status"])`, so a hub carries exactly
+    `len(REDIRECT_STATUSES)` distinct edges to any one target. Ordinals therefore walk the whole
+    (target, status) product instead of cycling targets, which would restate an identity already used.
+    Rank r is node id r+1, so rank 0 is the hub's permitted self-edge (`self_edge=True`).
+    """
+    return ordinal // len(REDIRECT_STATUSES)
 
 
 def node_properties(index: int) -> dict[str, Any]:
@@ -130,6 +143,8 @@ class Measurements:
                 "asset_type_count": 1,
                 "asset_types": ["endpoint"],
                 "relation_type": "redirects_to",
+                "relation_identity": "one edge per (target, status); the hub's own self-edge is rank 0",
+                "relation_ceiling": self.nodes * len(REDIRECT_STATUSES),
                 "batch_records": 100,
                 "hub": "first endpoint",
                 "paths": ["/url", "/method", "/status", "/array", "/value1024", "/value1025"],
@@ -138,6 +153,7 @@ class Measurements:
                 "lexical_rare_token_every_evidence": 97,
                 "evidence_links_per_blob": 1,
                 "text_chunk_bytes": 1048576,
+                "traversal_max_edges": TRAVERSAL_MAX_EDGES,
             },
             "claim_boundaries": [
                 "cold means reopened connections, not flushed operating-system caches",
@@ -210,8 +226,17 @@ class Measurements:
                 self.latencies.setdefault("graph_retry_wait", []).append((time.perf_counter() - before) * 1000)
                 self.report["last_retry_status"] = await kb.status()
 
+    def relation_ceiling(self) -> int:
+        """State how many distinct hub relations this node count can actually represent."""
+        return self.nodes * len(REDIRECT_STATUSES)
+
     async def graph(self, kb: KnowledgeBase) -> None:
         """Generate strict canonical graph batches through product mutations."""
+        if self.edges > self.relation_ceiling():
+            raise ValueError(
+                f"scale {self.scale} requests {self.edges} hub relations, but {self.nodes} nodes admit at most "
+                f"{self.relation_ceiling()}: `redirects_to` identity is one edge per target and status"
+            )
         begin = time.perf_counter()
         prior_nodes = self.report["completed"]["nodes"]
         prior_edges = self.report["completed"]["relations"]
@@ -232,22 +257,23 @@ class Measurements:
         for first in range(prior_edges, self.edges, 100):
             self.check()
             # Fetch a bounded ID page; the entire graph/ID working set is never retained in RAM.
-            offset = (first % (self.nodes - 1)) + 1
+            base = edge_target_rank(first)
+            size = min(100, self.edges - first)
             targets = await kb.workers.read(
-                lambda c, _t, offset=offset: c.execute(
-                    "select uuid from nodes where id>? order by id limit 100", (offset,)
+                lambda c, _t, base=base: c.execute(
+                    "select uuid from nodes where id>? order by id limit 100", (base,)
                 ).fetchall()
             )
-            if not targets:
-                raise AssertionError("bounded target page unexpectedly empty")
+            if len(targets) <= edge_target_rank(first + size - 1) - base:
+                raise AssertionError("bounded target page is shorter than its batch of distinct identities needs")
             batch = [
                 {
                     "type": "redirects_to",
                     "source_ref": {"id": self.hub},
-                    "target_ref": {"id": targets[index % len(targets)][0]},
+                    "target_ref": {"id": targets[edge_target_rank(first + index) - base][0]},
                     "properties": edge_properties(first + index),
                 }
-                for index in range(min(100, self.edges - first))
+                for index in range(size)
             ]
             await self.write_batch(kb, {"relations": batch}, "relation_batch_attempt")
             self.report["completed"]["relations"] += len(batch)
@@ -313,11 +339,13 @@ class Measurements:
                     self.errors[error.error_type] = self.errors.get(error.error_type, 0) + 1
             self.report[f"{temperature}_{name}_canonical_scans"] = scans
             self.save()
-        for _ in range(10):
-            self.check()
-            await self.call(
-                f"{temperature}_traversal", kb.neighbors({"seed_ids": [self.hub], "max_nodes": 100, "max_edges": 100})
-            )
+        for max_edges in TRAVERSAL_MAX_EDGES:
+            for _ in range(10):
+                self.check()
+                await self.call(
+                    f"{temperature}_traversal_max_edges_{max_edges}",
+                    kb.neighbors({"seed_ids": [self.hub], "max_nodes": 100, "max_edges": max_edges}),
+                )
         self.report[temperature + "_status"] = await kb.status()
         self.report[temperature + "_sql_disk"] = await kb.workers.read(
             lambda c, _t: {
@@ -331,8 +359,21 @@ class Measurements:
             }
         )
 
+    async def lanes(self) -> None:
+        """Measure idle control-lane pressure and job-wait observation lag on an empty workspace."""
+        result = await run_lanes(self, self.output / "lanes")
+        waits = result["job_wait"]
+        waits["observation_lag_ms"] = distribution(waits.pop("observation_lag_ms_samples"))
+        waits["wait_ms"] = distribution(waits.pop("wait_ms_samples"))
+        self.report["lanes"] = result
+        self.save()
+
     async def run(self) -> None:
         """Measure product lifecycle before isolated comparison experiments."""
+        if self.phase == "lanes":
+            await self.lanes()
+            self.report["status"] = "completed"
+            return
         if self.phase == "checkpoint":
             self.report["checkpoint_worker_comparison"] = await asyncio.to_thread(
                 checkpoint_worker_comparison, self.output / "checkpoint", self.deadline
@@ -392,6 +433,7 @@ class Measurements:
             run_variants, self.output / "variants", root / ".justpen/knowledgebase/graph.sqlite3", self.deadline
         )
         if self.phase == "all":
+            await self.lanes()
             await run_lifecycle(self)
         self.report["status"] = "completed"
 
@@ -421,7 +463,9 @@ def main() -> None:
     parser.add_argument("--scale", choices=SCALES, default="smoke")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-seconds", type=float, default=600)
-    parser.add_argument("--phase", choices=["corpus", "lifecycle", "variants", "checkpoint", "all"], default="all")
+    parser.add_argument(
+        "--phase", choices=["corpus", "lifecycle", "lanes", "variants", "checkpoint", "all"], default="all"
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--corpus-output", type=Path)
     options = parser.parse_args()
@@ -438,6 +482,7 @@ def main() -> None:
                 "report.json",
                 "variants",
                 "workspace",
+                "lanes",
                 "clients",
                 "hub",
                 "recovery",
@@ -471,6 +516,8 @@ def execute(options: argparse.Namespace, output: Path) -> None:
     reservation = text * 8 + nodes * 8192 + edges * 4096 + 4 * 1073741824
     if options.phase == "lifecycle":
         reservation = 8 * 1073741824
+    elif options.phase == "lanes":
+        reservation = 4 * 1073741824
     elif options.phase == "all":
         reservation += 4 * 1073741824
     measure.report["resource_preflight"] = {

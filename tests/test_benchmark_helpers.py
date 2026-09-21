@@ -3,17 +3,25 @@
 import threading
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, Mock
 
 import apsw
 import pytest
 
+from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import BusyError, LimitError
+from justpen_knowledgebase_mcp.jobs import JobRunner
+from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.jobs import JobStore
 
 from .test_runtime_validation import load_script
 
+SCRIPT_ROOT = Path(__file__).resolve().parents[1] / "scripts"
+
+lanes = load_script("kb_benchmark_lanes")
 lifecycle = load_script("kb_benchmark_lifecycle")
 
 
@@ -204,3 +212,102 @@ def test_checkpoint_setup_failure_closes_maintenance_on_owner(tmp_path, monkeypa
     assert len(ownership) == 2
     assert len({opener for opener, _ in ownership}) == 2
     assert all(opener == closer for opener, closer in ownership)
+
+
+async def test_lane_counter_separates_lanes_and_restores_every_worker_entry_point():
+    async def original(callback, token=None):
+        return callback("connection", token)
+
+    workers = SimpleNamespace(read=original, write=original, control=original)
+    with lanes.lane_transactions(workers) as counts:
+        for _ in range(3):
+            await workers.control(lambda c, _t: c)
+        await workers.read(lambda c, _t: c)
+        assert await workers.write(lambda c, _t: c) == "connection"
+    assert dict(counts) == {"control": 3, "read": 1, "write": 1}
+    assert (workers.read, workers.write, workers.control) == (original, original, original)
+
+
+@pytest.mark.parametrize("terminal", ["finish", "finish_failure"])
+async def test_wait_observation_pairs_a_terminal_transition_and_never_invents_a_lag(monkeypatch, terminal):
+    stubs = {name: Mock() for name in ["finish", "finish_failure"]}
+    for name, stub in stubs.items():
+        monkeypatch.setattr(JobStore, name, stub)
+
+    async def wait(_runner, job_id, _deadline, _accepted=None):
+        return {"job_id": job_id, "state": "completed"}
+
+    monkeypatch.setattr(JobRunner, "wait", wait)
+    runner = cast("JobRunner", SimpleNamespace())
+    with lanes.wait_observation() as observations:
+        getattr(JobStore, terminal)("connection", SimpleNamespace(job_id="paired"), "completed", {})
+        assert (await JobRunner.wait(runner, "paired", 0.0))["state"] == "completed"
+        await JobRunner.wait(runner, "never-observed", 0.0)
+    stubs[terminal].assert_called_once()
+    assert JobStore.finish is stubs["finish"]
+    assert JobRunner.wait is wait
+    assert observations[0]["observation_lag_ms"] is not None
+    assert observations[0]["observation_lag_ms"] >= 0
+    assert observations[1]["observation_lag_ms"] is None
+    assert all(item["wait_ms"] >= 0 for item in observations)
+
+
+@pytest.mark.integration
+async def test_idle_control_rate_and_job_wait_lag_measure_a_real_idle_server(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        deadline = time.monotonic() + 120
+        idle = await lanes.idle_control_rate(kb, deadline, seconds=1.0, settle=0.5)
+        waits = await lanes.job_wait_samples(kb, deadline, samples=2)
+    assert idle["idle"]
+    assert idle["jobs_by_state_before"] == idle["jobs_by_state_after"] == {}
+    assert idle["transactions"]["control"] > 0
+    assert idle["transactions_per_second"]["control"] == idle["transactions"]["control"] / idle["window_seconds"]
+    assert waits["observed_waits"] == 2
+    assert waits["unpaired_waits"] == 0
+    assert len(waits["observation_lag_ms_samples"]) == 2
+    assert all(value >= 0 for value in waits["observation_lag_ms_samples"])
+
+
+@pytest.mark.integration
+async def test_traversal_scenario_measures_both_documented_edge_budgets(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPT_ROOT))
+    benchmark = load_script("benchmark_knowledgebase")
+    measure = benchmark.Measurements(tmp_path, "smoke", 60, "corpus")
+    measure.hub = "hub-id"
+    requests = []
+    kb = SimpleNamespace(
+        search=AsyncMock(return_value={"canonical_scan_count": 0}),
+        neighbors=AsyncMock(side_effect=lambda request: requests.append(request) or {}),
+        status=AsyncMock(return_value={}),
+        workers=SimpleNamespace(read=AsyncMock(return_value={})),
+    )
+    await measure.queries(kb, "warm")
+    assert [request["max_edges"] for request in requests] == [100] * 10 + [300] * 10
+    assert {request["max_nodes"] for request in requests} == {100}
+    assert measure.report["corpus"]["traversal_max_edges"] == [100, 300]
+    assert len(measure.latencies["warm_traversal_max_edges_100"]) == 10
+    assert len(measure.latencies["warm_traversal_max_edges_300"]) == 10
+
+
+@pytest.mark.integration
+async def test_lane_phase_summarizes_raw_samples_through_the_shared_quantile_authority(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPT_ROOT))
+    benchmark = load_script("benchmark_knowledgebase")
+    measure = benchmark.Measurements(tmp_path, "smoke", 60, "lanes")
+
+    async def measured(_measure, root):
+        assert root == tmp_path / "lanes"
+        return {
+            "idle_control_transactions": {"transactions_per_second": {"control": 49.0}},
+            "job_wait": {"observation_lag_ms_samples": [3.0, 1.0, 2.0], "wait_ms_samples": [6.0, 4.0, 5.0]},
+        }
+
+    monkeypatch.setattr(benchmark, "run_lanes", measured)
+    await measure.run()
+    waits = measure.report["lanes"]["job_wait"]
+    assert measure.report["status"] == "completed"
+    assert measure.report["lanes"]["idle_control_transactions"]["transactions_per_second"]["control"] == 49.0
+    assert waits["observation_lag_ms"] == {"count": 3, "p50": 2.0, "p95": 2.0, "p99": 2.0}
+    assert waits["wait_ms"] == {"count": 3, "p50": 5.0, "p95": 5.0, "p99": 5.0}
+    assert "observation_lag_ms_samples" not in waits
+    assert "wait_ms_samples" not in waits

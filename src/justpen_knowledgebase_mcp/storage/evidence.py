@@ -71,6 +71,9 @@ def job_bucket(job_id: str) -> str:
     return hashlib.sha256(("job:" + str(UUID(job_id))).encode("ascii")).hexdigest()
 
 
+_READ_CHUNK_BYTES = 65536
+
+
 def _write_all(fd: int, content: bytes) -> None:
     remaining = memoryview(content)
     while remaining:
@@ -94,7 +97,8 @@ class EvidenceStore:
         try:
             with self.workspace.open_import(path) as fd:
                 return stat_identity(os.fstat(fd))
-        except OSError as exc:
+        # ValueError is not an OSError; an unclassified one would reach the client as INTERNAL.
+        except (OSError, ValueError) as exc:
             raise StorageIOError("IO_ERROR: source unavailable") from exc
 
     @staticmethod
@@ -155,7 +159,6 @@ class EvidenceStore:
             raise InvalidParamsError("inline decoded byte limit")
         try:
             with self._stage(job_id, token, len(content)) as (name, fd):
-                CheckSpace(self.directory_fds, len(content), self.policy)
                 _write_all(fd, content)
                 return StagedEvidence(name, hashlib.sha256(content).hexdigest(), len(content))
         except OSError as exc:
@@ -172,17 +175,24 @@ class EvidenceStore:
                 with self._stage(job_id, token, expected[2]) as (name, destination):
                     digest = hashlib.sha256()
                     copied = 0
+                    # _stage already reserved the whole expected size; this
+                    # re-measures free space once per policy interval, which the
+                    # read size stays independent of.
+                    unchecked = 0
                     while True:
                         check()
-                        piece = os.read(source, min(65536, self.policy.disk_check_interval_bytes))
+                        piece = os.read(source, _READ_CHUNK_BYTES)
                         if not piece:
                             break
                         copied += len(piece)
                         if copied > expected[2] or (short and copied > INLINE_LIMIT):
                             raise StorageIOError("IO_ERROR: SOURCE_CHANGED")
-                        CheckSpace(self.directory_fds, len(piece), self.policy)
                         _write_all(destination, piece)
                         digest.update(piece)
+                        unchecked += len(piece)
+                        if unchecked >= self.policy.disk_check_interval_bytes:
+                            CheckSpace(self.directory_fds, unchecked, self.policy)
+                            unchecked = 0
                     if copied != expected[2] or stat_identity(os.fstat(source)) != expected:
                         raise StorageIOError("IO_ERROR: SOURCE_CHANGED")
                     check()
