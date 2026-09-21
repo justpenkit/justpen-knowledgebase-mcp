@@ -17,6 +17,36 @@ from justpen_knowledgebase_mcp.storage.jobs import JobStore
 pytestmark = pytest.mark.integration
 
 
+def claim_scan(connection, _token):
+    """Capture the statements JobStore.claim issues, then plan its lane scan."""
+    statements = []
+
+    def trace(_cursor, sql, bindings):
+        statements.append((sql, bindings))
+        return True
+
+    connection.exec_trace = trace
+    try:
+        claim = JobStore.claim(connection, "short", "delete")
+    finally:
+        connection.exec_trace = None
+    scan, bindings = next((sql, values) for sql, values in statements if "FROM jobs" in sql and "lane=?" in sql)
+    return claim, [row[3] for row in connection.execute("explain query plan " + scan, bindings)]
+
+
+async def test_delete_claim_scans_the_active_lane_without_a_sort(kb):
+    # JobStore.claim has exactly one production caller, the delete cleanup step.
+    await kb.job_runner.close()
+    await kb.workers.write(
+        lambda c, t: JobStore.insert(c, str(uuid4()), "delete", "short", {"kind": "nodes", "ids": []})
+    )
+    claim, plan = await kb.workers.control(claim_scan)
+    assert claim is not None
+    assert claim.kind == "delete"
+    assert any("USING INDEX jobs_active_lane" in step for step in plan), plan
+    assert not any("TEMP B-TREE" in step for step in plan), plan
+
+
 async def test_two_parent_jobs_lost_metadata_cancel_and_bounded_completion(kb):
     await kb.job_runner.close()
     created = await kb.write(

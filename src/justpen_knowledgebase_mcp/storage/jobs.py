@@ -136,19 +136,12 @@ class JobStore:
 
     @staticmethod
     def claim(connection: apsw.Connection, lane: str, kind: str, *, now: float | None = None) -> Claim | None:
-        """Atomically claim queued/expired work using a fresh fencing capability."""
-        now = time.time() if now is None else now
-        rows = list(
-            connection.execute(
-                "SELECT uuid FROM jobs WHERE lane=? AND kind=? AND purge_pending=0 AND (state='queued' OR (state='running' AND lease_expires_at<=?)) ORDER BY id LIMIT 100",
-                (lane, kind, now),
-            )
-        )
-        for (value,) in rows:
-            claim = JobStore._claim_selected(connection, value, now)
-            if claim is not None:
-                return claim
-        return None
+        """Atomically claim queued/expired work using a fresh fencing capability.
+
+        The lease-expiry test is a Python comparison rather than a SQL predicate,
+        so the scan stays on jobs_active_lane instead of sorting a temp B-tree.
+        """
+        return JobStore.claim_batch(connection, lane, kind, 0, now=now)[0]
 
     @staticmethod
     def claim_batch(
