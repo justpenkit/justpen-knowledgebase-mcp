@@ -485,7 +485,7 @@ async def test_unlimited_lifetime_links_and_owner_bound_pagination(tmp_path):
         rest = await kb.types(TypesRequest(kind="nodes", cursor=types["next_cursor"]))
         assert rest["next_cursor"] is None
         counts = {item["type"]: item["count"] for item in [*types["types"], *rest["types"]]}
-        assert len(counts) == 22
+        assert len(counts) == 31
         assert counts["ip_address"] == 1
         assert counts["endpoint"] == 0
 
@@ -840,3 +840,207 @@ async def test_cname_cycles_and_self_edges_are_preserved(tmp_path):
             )
         )
         assert self_edge["relations"][0]["created"]
+
+
+async def test_a_finding_scopes_to_a_parameter_that_is_itself_scoped_to_an_endpoint(tmp_path):
+    """The round-4 has_finding widening makes a scoped node a scope-relation source for the first
+    time, so the write has to resolve parameter identity before it can key the finding on it."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        request = {
+            "nodes": [
+                {"type": "endpoint", "properties": {"url": "https://example.com/a", "method": "GET"}},
+                {"type": "endpoint", "properties": {"url": "https://example.com/b", "method": "GET"}},
+                {"type": "parameter", "properties": {"name": "id", "location": "query"}},
+                {"type": "parameter", "properties": {"name": "id", "location": "query"}},
+                {"type": "finding", "properties": {"title": "reflected value", "severity": "medium"}},
+                {"type": "finding", "properties": {"title": "reflected value", "severity": "medium"}},
+            ],
+            "relations": [
+                {
+                    "type": "has_parameter",
+                    "source_ref": {"node_index": 0},
+                    "target_ref": {"node_index": 2},
+                    "properties": {},
+                },
+                {
+                    "type": "has_parameter",
+                    "source_ref": {"node_index": 1},
+                    "target_ref": {"node_index": 3},
+                    "properties": {},
+                },
+                {
+                    "type": "has_finding",
+                    "source_ref": {"node_index": 2},
+                    "target_ref": {"node_index": 4},
+                    "properties": {},
+                },
+                {
+                    "type": "has_finding",
+                    "source_ref": {"node_index": 3},
+                    "target_ref": {"node_index": 5},
+                    "properties": {},
+                },
+            ],
+        }
+        created = await kb.write(write(request))
+        identifiers = [node["id"] for node in created["nodes"]]
+
+        assert identifiers[2] != identifiers[3]
+        assert identifiers[4] != identifiers[5]
+        assert await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get) == 6
+
+
+async def test_round_four_pivot_nodes_write_and_reject_their_cross_field_mismatches(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        created = await kb.write(
+            write(
+                {
+                    "nodes": [
+                        {"type": "endpoint", "properties": {"url": "https://example.com/", "method": "GET"}},
+                        {"type": "http_fingerprint", "properties": {"kind": "favicon_mmh3", "value": "-1752256170"}},
+                        {"type": "storage_bucket", "properties": {"provider": "aws_s3", "name": "example-assets"}},
+                    ],
+                    "relations": [
+                        {
+                            "type": "has_http_fingerprint",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 1},
+                            "properties": {},
+                        },
+                        {
+                            "type": "backed_by_bucket",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 2},
+                            "properties": {},
+                        },
+                    ],
+                }
+            )
+        )
+
+        assert [node["created"] for node in created["nodes"]] == [True, True, True]
+        with pytest.raises(InvalidParamsError, match="favicon_mmh3"):
+            await kb.write(
+                write(
+                    {
+                        "nodes": [
+                            {"type": "http_fingerprint", "properties": {"kind": "favicon_mmh3", "value": "a" * 64}}
+                        ],
+                        "relations": [],
+                    }
+                )
+            )
+        with pytest.raises(InvalidParamsError, match="azure_blob bucket spelling"):
+            await kb.write(
+                write(
+                    {
+                        "nodes": [
+                            {"type": "storage_bucket", "properties": {"provider": "azure_blob", "name": "a-b-c"}}
+                        ],
+                        "relations": [],
+                    }
+                )
+            )
+
+
+async def test_a_host_key_is_shared_by_every_service_that_presents_it(tmp_path):
+    """The pivot is the point: one cloned image serving one key must be one node, not one per host."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        nodes: list[dict[str, object]] = []
+        relations: list[dict[str, object]] = []
+        for index, address in enumerate(("192.0.2.10", "192.0.2.11")):
+            base = index * 3
+            nodes.extend(
+                [
+                    {"type": "ip_address", "properties": {"value": address, "version": 4}},
+                    {"type": "port", "properties": {"transport": "tcp", "number": 22}},
+                    {"type": "service", "properties": {"name": "ssh"}},
+                ]
+            )
+            relations.extend(
+                [
+                    {
+                        "type": "has_open_port",
+                        "source_ref": {"node_index": base},
+                        "target_ref": {"node_index": base + 1},
+                        "properties": {},
+                    },
+                    {
+                        "type": "has_service",
+                        "source_ref": {"node_index": base + 1},
+                        "target_ref": {"node_index": base + 2},
+                        "properties": {},
+                    },
+                    {
+                        "type": "presents_host_key",
+                        "source_ref": {"node_index": base + 2},
+                        "target_ref": {"node_index": 6},
+                        "properties": {},
+                    },
+                ]
+            )
+        nodes.append({"type": "host_key", "properties": {"algorithm": "ssh-ed25519", "fingerprint_sha256": "b" * 64}})
+
+        created = await kb.write(write({"nodes": nodes, "relations": relations}))
+
+        assert [node["created"] for node in created["nodes"]] == [True] * 7
+        assert (
+            await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes where type='host_key'").get) == 1
+        )
+
+
+async def test_the_widened_endpoint_whitelists_accept_the_writes_they_were_widened_for(tmp_path):
+    """dnsx and cdncheck name a CDN from DNS alone, before a port is probed, and a CVE template
+    matches at a URL rather than at a negotiated service."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        written = await kb.write(
+            write(
+                {
+                    "nodes": [
+                        {"type": "domain", "properties": {"value": "example.com"}},
+                        {"type": "subdomain", "properties": {"value": "www.example.com"}},
+                        {"type": "technology", "properties": {"name": "cloudflare"}},
+                        {"type": "endpoint", "properties": {"url": "https://www.example.com/", "method": "GET"}},
+                        {"type": "cve", "properties": {"value": "CVE-2026-1234"}},
+                    ],
+                    "relations": [
+                        {
+                            "type": "protected_by",
+                            "source_ref": {"node_index": 1},
+                            "target_ref": {"node_index": 2},
+                            "properties": {"kind": "cdn"},
+                        },
+                        {
+                            "type": "runs_technology",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 2},
+                            "properties": {},
+                        },
+                        {
+                            "type": "affected_by",
+                            "source_ref": {"node_index": 3},
+                            "target_ref": {"node_index": 4},
+                            "properties": {},
+                        },
+                    ],
+                }
+            )
+        )
+
+        assert [relation["created"] for relation in written["relations"]] == [True, True, True]
+        with pytest.raises(InvalidParamsError, match="endpoint types are not allowed"):
+            await kb.write(
+                write(
+                    {
+                        "nodes": [{"type": "asn", "properties": {"value": 64512}}],
+                        "relations": [
+                            {
+                                "type": "runs_technology",
+                                "source_ref": {"node_index": 0},
+                                "target_ref": {"id": written["nodes"][2]["id"]},
+                                "properties": {},
+                            }
+                        ],
+                    }
+                )
+            )

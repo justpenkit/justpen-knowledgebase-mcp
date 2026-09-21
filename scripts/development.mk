@@ -1,4 +1,4 @@
-.PHONY: help version install setup clean test test-one test-permissions lint lint-fix format format-check format-ruff format-ruff-check format-md format-md-check format-toml format-toml-check format-yaml format-yaml-check format-json format-json-check typecheck audit check docs-build docs-serve bump-patch bump-minor bump-major release-tag changelog pre-commit lock-check format-project-text
+.PHONY: help version install setup clean test test-one test-permissions lint lint-fix format format-check format-ruff format-ruff-check format-md format-md-check format-toml format-toml-check format-yaml format-yaml-check format-json format-json-check typecheck audit check docs-build docs-catalog docs-serve bump-patch bump-minor bump-major release-tag changelog pre-commit lock-check format-project-text
 .PHONY: format-html format-html-check format-css format-css-check
 .PHONY: test-integration check-static check-python
 
@@ -27,6 +27,7 @@ help::
 	@echo "  check-python           Active Python typing and unit tests (CI matrix)"
 	@echo "  pre-commit             Run all pre-commit hooks"
 	@echo "  docs-build             Build MkDocs with strict link and anchor checks"
+	@echo "  docs-catalog           Regenerate the catalog reference page from the manifest"
 	@echo "  docs-serve             Serve MkDocs locally with live reload"
 	@echo "  changelog              Generate the changelog with Commitizen"
 	@echo "  bump-patch|bump-minor|bump-major   Prepare version, changelog and commit for review"
@@ -119,6 +120,10 @@ check: lock-check
 
 docs-build:
 	uv run --group docs mkdocs build --strict
+
+docs-catalog:
+	uv run python -m scripts.catalog_reference
+	$(MAKE) format-md
 
 docs-serve:
 	uv run --group docs mkdocs serve
