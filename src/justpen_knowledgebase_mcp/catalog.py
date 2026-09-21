@@ -752,6 +752,11 @@ def _ensure_cross_field_contract() -> None:
 _ensure_cross_field_contract()
 
 
+def cross_field_types() -> tuple[str, ...]:
+    """Return the node types carrying a cross-field rule, which the manifest does not publish."""
+    return tuple(sorted(_CROSS_FIELDS))
+
+
 def _validate_cross_fields(kind: str, type_name: str, properties: dict[str, Any]) -> None:
     check = _CROSS_FIELDS.get(type_name) if kind == "nodes" else None
     if check is not None:

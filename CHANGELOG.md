@@ -12,6 +12,7 @@
 - accept scoped, cloud and source-control nodes as finding sources, CDN detection at the DNS layer,
     and endpoint-level CVE matches
 - derive the parent-scope order, relation set and delete guard from the catalog manifest
+- publish a catalog reference page generated from the manifest, with a node-to-relation matrix
 
 ### Breaking
 

@@ -15,6 +15,12 @@ high-degree delete can defer counts rather than block discovery.
 **Errors:** `INVALID` for a bad kind/type/page/cursor; `LIMIT` or `BUSY` for
 bounded admission. Listing types is discovery and does not replace `kb_status`.
 
+The same contract is tabulated on
+[Catalog types and formats](../reference/catalog.md): every node and relation
+type with its identity, parent scope, required properties and allowed endpoints,
+plus the format rules, the cross-field rules and a node-to-relation matrix. Read
+this page for the conventions and the reasoning; read that one to look a type up.
+
 ## `kb_write`
 
 **Input:** 1–100 total `nodes` plus `relations`, and at most 100 total

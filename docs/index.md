@@ -23,7 +23,8 @@ telemetry only; it never partitions graph data.
 
 ## Core guarantees
 
-- Node and relation types come from a fixed catalog returned by `kb_types`.
+- Node and relation types come from a fixed catalog returned by `kb_types`, and
+    tabulated in [Catalog types and formats](reference/catalog.md).
 - Required identity properties are strictly validated; additional JSON
     properties remain available for scanner-specific facts.
 - Catalog v2 models domains, subdomains, IP addresses and CIDRs, ASNs, DNS

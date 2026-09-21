@@ -43,6 +43,7 @@ nav:
   - Tool reference:
       - Overview: tools/index.md
       - Graph and search: tools/graph.md
+      - Catalog types and formats: reference/catalog.md
       - Evidence: tools/evidence.md
       - Maintenance: tools/maintenance.md
   - Contributing:
