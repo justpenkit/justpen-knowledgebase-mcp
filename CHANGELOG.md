@@ -1,18 +1,27 @@
-## Unreleased
+## v0.2.0 (2026-09-21)
 
 ### Feat
 
-- replace the recon graph contract with catalog v2 node and relation types
-- bundle a versioned ICANN Public Suffix List snapshot and Nmap-derived service-name registry
-- add parent-scoped port, service, and finding identity with atomic scoped batch writes
-- guard scoped children by rejecting scope-relation or parent deletion until the child is deleted
-- add HTTP fingerprint and SSH host key pivots for cross-host clustering
-- add cloud storage bucket, identity tenant, repository and exposed secret types
-- add email, phone and domain-scoped MTA-STS policy types for the mail and registration surfaces
-- accept scoped, cloud and source-control nodes as finding sources, CDN detection at the DNS layer,
-    and endpoint-level CVE matches
-- derive the parent-scope order, relation set and delete guard from the catalog manifest
-- publish a catalog reference page generated from the manifest, with a node-to-relation matrix
+- **catalog**: add pivot, cloud, source-control and contact types
+- **catalog**: add weakness and registry organization types
+- **catalog**: add SVCB bindings, issuer edges and wildcard coverage
+- **catalog**: add TLS fingerprint and registrar types
+- **catalog**: drop the query string from a stored endpoint URL
+- **catalog**: add scoped DKIM selector and endpoint parameter types
+- **catalog**: add technology, DNS TXT family and TLS cipher types
+- add scoped identity, atomic scoped writes, delete guards
+- replace catalog with v2 recon node and relation contract
+- add bundled PSL and service name registry loaders
+
+### Fix
+
+- **hooks**: ask about writes to protected files, not about reads
+- skip taplo dependency on linux aarch64
+- benchmark corpus redirect status and schema v2 test expectations
+
+### Refactor
+
+- **catalog**: derive the parent-scope order and delete guard
 
 ### Breaking
 
