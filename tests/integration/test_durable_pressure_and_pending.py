@@ -42,16 +42,17 @@ async def admit_under_pressure(kb, monkeypatch, kind, text, evidence_id):
         monkeypatch.setattr(EvidenceRecords, "check_existing", ingest_intercept)
         return await kb.ingest_evidence({"text": text})
     if kind == "reindex":
-        original = reindex._publish_chunk
+        original = reindex._publish_batch
 
-        def index_intercept(connection, claim, owner, chunk, count):
+        def index_intercept(connection, claim, job, owner, batch, count):
             nonlocal fired
-            original(connection, claim, owner, chunk, count)
+            result = original(connection, claim, job, owner, batch, count)
             if not fired:
                 fired = True
                 pressure(connection, "pressure")
+            return result
 
-        monkeypatch.setattr(reindex, "_publish_chunk", index_intercept)
+        monkeypatch.setattr(reindex, "_publish_batch", index_intercept)
         return await kb.reindex({"kind": "evidence", "ids": [evidence_id]})
     original = JobStore.delete_step
 

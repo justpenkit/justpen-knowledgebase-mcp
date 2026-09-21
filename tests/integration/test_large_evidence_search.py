@@ -415,17 +415,21 @@ async def test_failed_decode_retry_and_duplicate_keep_raw_failure_metadata(tmp_p
 
 
 async def test_cancel_after_index_batch_retry_rebuilds_same_raw_blob(tmp_path, monkeypatch):
-    original = indexing_jobs._publish_chunk
+    original = indexing_jobs._publish_batch
     cancelled = []
 
-    def cancel_after_batch(connection, claim, owner, chunk, count):
-        original(connection, claim, owner, chunk, count)
+    def cancel_after_batch(connection, claim, job, owner, batch, count):
+        result = original(connection, claim, job, owner, batch, count)
         if not cancelled:
             cancelled.append(claim.job_id)
             connection.execute("UPDATE jobs SET cancel_requested=1 WHERE uuid=?", (claim.job_id,))
+        return result
 
-    monkeypatch.setattr(indexing_jobs, "_publish_chunk", cancel_after_batch)
+    monkeypatch.setattr(indexing_jobs, "_publish_batch", cancel_after_batch)
     body = "alpha " + "x " * 200000 + " omega"
+    # One transaction carries this whole fixture, so the cancel requested inside it
+    # is observed only at the batch boundary that follows the committed index.
+    assert len(body.encode()) < indexing_jobs.BATCH_BYTES
     (tmp_path / "cancel.txt").write_text(body)
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         accepted = await kb.ingest_evidence(IngestRequest(path="cancel.txt", media_type="text/plain"))
@@ -434,11 +438,13 @@ async def test_cancel_after_index_batch_retry_rebuilds_same_raw_blob(tmp_path, m
         assert stopped["index_state"] == "pending"
         assert stopped["incomplete"]
         before = await kb.workers.read(lambda c, _t: c.execute("SELECT count(*) FROM search_documents").get)
-        assert before == 1
+        assert before > 0
         retry = await kb.jobs({"action": "retry", "job_id": stopped["job_id"]})
         done = await kb.job_runner.wait(retry["job_id"], __import__("time").monotonic() + 5, retry)
         assert done["state"] == "completed"
         assert done["evidence_id"] == stopped["evidence_id"]
+        rebuilt = await kb.workers.read(lambda c, _t: c.execute("SELECT count(*) FROM search_documents").get)
+        assert before == rebuilt
         found = await kb.search(SearchRequest(kind="evidence", query="alpha omega", query_mode="words"))
         assert len(found["items"]) == 1
         assert not found["incomplete"]
