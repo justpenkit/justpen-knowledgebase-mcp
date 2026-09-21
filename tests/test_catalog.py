@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
+from types import MappingProxyType
+from typing import cast
 
 import pytest
 
@@ -12,6 +15,7 @@ from justpen_knowledgebase_mcp.catalog import (
     CATALOG_VERSION,
     catalog_manifest,
     catalog_schema,
+    catalog_view,
     validate_record,
 )
 from justpen_knowledgebase_mcp.errors import ExpectedValidationError
@@ -1004,3 +1008,144 @@ def test_every_required_rule_is_published_and_executable() -> None:
 
     # `cpe23_or_empty` is the one deliberate exception, covered by its own test above.
     assert set(manifest["formats"]) - used == {"cpe23_or_empty"}
+
+
+def _plain(value: object) -> object:
+    """Re-materialize the shared read view as the plain tree `catalog_manifest()` returns."""
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in cast("Mapping[str, object]", value).items()}
+    if isinstance(value, tuple):
+        return [_plain(item) for item in cast("tuple[object, ...]", value)]
+    return value
+
+
+def _serialized_view() -> str:
+    """Serialize the shared read view exactly as `CATALOG_JSON` was serialized."""
+    return json.dumps(_plain(catalog_view()), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def test_catalog_view_is_one_shared_object_matching_the_isolated_manifest() -> None:
+    """The view is the same parse `catalog_manifest()` performs, done once and shared. If these ever
+    disagree, a pure reader and a copying caller would be validating against different catalogs."""
+    assert catalog_view() is catalog_view()
+    assert _plain(catalog_view()) == catalog_manifest()
+    assert _serialized_view() == catalog_module.CATALOG_JSON
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        (),
+        ("nodes",),
+        ("nodes", "domain"),
+        ("nodes", "domain", "required"),
+        ("nodes", "domain", "identity"),
+        ("nodes", "port", "identity", "scope"),
+        ("relations",),
+        ("relations", "caa_issue"),
+        ("relations", "caa_issue", "identity", "order_independent"),
+        ("common",),
+        ("formats",),
+    ],
+)
+def test_catalog_view_mappings_refuse_mutation_at_every_depth(path: tuple[str, ...]) -> None:
+    """MappingProxyType is shallow, so the wrapping has to go all the way down. A seventh caller
+    that writes into any nested member would corrupt the catalog for the rest of the process, not
+    for itself, and the symptom would be an unrelated test failing only when this one ran first."""
+    target = catalog_view()
+    for key in path:
+        target = target[key]
+    assert isinstance(target, MappingProxyType)
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", target)["injected"] = "x"
+    with pytest.raises(TypeError):
+        del cast("dict[str, object]", target)[next(iter(target))]
+    with pytest.raises(AttributeError):
+        cast("dict[str, object]", target).pop(next(iter(target)))
+    with pytest.raises(AttributeError):
+        cast("dict[str, object]", target).update({"injected": "x"})
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("nodes", "domain", "identity", "properties"),
+        ("nodes", "port", "identity", "properties"),
+        ("relations", "has_open_port", "sources"),
+        ("relations", "has_open_port", "targets"),
+        ("relations", "caa_issue", "identity", "order_independent", "projection"),
+        ("nodes", "port", "required", "transport"),
+    ],
+)
+def test_catalog_view_arrays_are_tuples_that_refuse_mutation(path: tuple[str, ...]) -> None:
+    """Every JSON array becomes a tuple, including the enum lists inside `required`, so no reader
+    can append to or reorder a declaration the whole process shares."""
+    target = catalog_view()
+    for key in path:
+        target = target[key]
+    assert isinstance(target, tuple)
+    with pytest.raises(TypeError):
+        cast("list[object]", target)[0] = "injected"
+    with pytest.raises(AttributeError):
+        cast("list[object]", target).append("injected")
+
+
+async def test_catalog_view_is_byte_identical_after_two_full_write_paths(kb) -> None:
+    """Guards pre-mortem scenario 1: the shared handle is routed through the per-record write path,
+    so a caller believed to be pure writing into it would corrupt the catalog for every later
+    caller. Two batches, because the second re-enters the deduplication and merge branches the
+    first creates, and any mutation from the first would already be visible to the second."""
+    before = _serialized_view()
+    assert before == catalog_module.CATALOG_JSON
+
+    for iteration in range(2):
+        result = await kb.write(
+            {
+                "nodes": [
+                    {"type": "ip_address", "properties": {"value": f"192.0.2.{iteration + 1}", "version": 4}},
+                    {"type": "port", "properties": {"transport": "tcp", "number": 443}},
+                    {"type": "domain", "properties": {"value": f"example{iteration}.com"}},
+                ],
+                "relations": [
+                    {
+                        "type": "has_open_port",
+                        "properties": {},
+                        "source_ref": {"node_index": 0},
+                        "target_ref": {"node_index": 1},
+                    },
+                    {
+                        "type": "caa_issue",
+                        "source_ref": {"node_index": 2},
+                        "target_ref": {"node_index": 2},
+                        "properties": {
+                            "flags": 0,
+                            "parameters": [
+                                {"name": "validationmethods", "value": "dns-01"},
+                                {"name": "accounturi", "value": "https://ca.example/account"},
+                            ],
+                        },
+                    },
+                ],
+            }
+        )
+        assert len(result["nodes"]) == 3
+        assert len(result["relations"]) == 2
+        assert _serialized_view() == before, f"the shared catalog handle changed during iteration {iteration}"
+
+    assert _serialized_view() == catalog_module.CATALOG_JSON
+    assert catalog_manifest()["nodes"]["domain"]["required"]["value"] == "dns_name"
+
+
+def test_enum_rule_rejection_keeps_the_published_list_spelling() -> None:
+    """`validate_record` now reads the shared view, where a JSON array is a tuple. The message a
+    client receives has to stay the list spelling it has always been, so routing that read changes
+    no client-visible text. Without `_published_rule` this reads `expected ('info', ...)`."""
+    with pytest.raises(ExpectedValidationError) as failure:
+        validate_record("nodes", "finding", {"title": "t", "severity": "catastrophic"})
+    assert str(failure.value.message) == (
+        "/properties/severity: expected ['info', 'low', 'medium', 'high', 'critical']"
+    )
+
+    with pytest.raises(ExpectedValidationError) as scalar:
+        validate_record("nodes", "domain", {"value": 1})
+    assert str(scalar.value.message) == "/properties/value: expected dns_name"
