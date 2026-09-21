@@ -1,10 +1,19 @@
 """Literal SQL for the closed graph kinds; cursor/input values are only bound data."""
 
-SCOPE_RELATION_TYPES = frozenset(("has_open_port", "has_service", "has_finding", "has_dkim_selector", "has_parameter"))
+import json
+
+from ..catalog import scope_relations
+
+# The catalog is the single declaration of which relation supplies a scoped node its parent.
+SCOPE_RELATION_TYPES = frozenset(scope_relations().values())
+
+# The names travel as one bound JSON array rather than as generated query text, so the statement
+# below stays a fixed literal however many scope relations the catalog grows.
+SCOPED_CHILD_RELATIONS = json.dumps(sorted(SCOPE_RELATION_TYPES))
 
 SCOPED_CHILD_BY_PARENT = (
     "SELECT r.id FROM relations r JOIN nodes child ON child.id=r.target_id "
-    "WHERE r.source_id=? AND r.type IN ('has_open_port','has_service','has_finding','has_dkim_selector','has_parameter') ORDER BY r.id LIMIT 1"
+    "WHERE r.source_id=? AND r.type IN (SELECT value FROM json_each(?)) ORDER BY r.id LIMIT 1"
 )
 
 OWNER_LOOKUP = {
