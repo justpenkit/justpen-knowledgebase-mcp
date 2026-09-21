@@ -259,7 +259,9 @@ class WorkspacePaths:
     def stage(self) -> Generator[tuple[str, int]]:
         """Create a private staging file and remove it on every exit path."""
         name = uuid4().hex
-        fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self._fds[self.tmp])
+        fd = os.open(
+            name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=self._fds[self.tmp]
+        )
         try:
             yield name, fd
         finally:

@@ -211,3 +211,14 @@ def test_orphan_absence_requires_pinned_root_and_durable_safe_traversal(paths, m
 def test_orphan_unlink_rejects_invalid_relative_names(paths, name):
     with pytest.raises(PathDeniedError, match="INVALID_EVIDENCE_PATH"):
         paths.unlink_orphan_evidence(name)
+
+
+def test_stage_creates_a_private_close_on_exec_file(paths, monkeypatch):
+    opened = Mock(return_value=7)
+    monkeypatch.setattr(workspace.os, "open", opened)
+    with paths.stage() as (name, fd):
+        assert len(name) == 32
+        assert fd == 7
+    flags = opened.call_args.args[1]
+    for flag in ("O_CLOEXEC", "O_NOFOLLOW", "O_EXCL", "O_CREAT", "O_RDWR"):
+        assert flags & getattr(workspace.os, flag), flag
