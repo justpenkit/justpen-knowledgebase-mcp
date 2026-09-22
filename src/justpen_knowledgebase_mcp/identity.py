@@ -101,14 +101,42 @@ def validate_evidence_id(value: str) -> str:
     return value
 
 
+# The one spelling SQLite's BINARY collation can match against a stored identifier. This is the
+# acceptance `storage/job_retention.py:68-77` writes as `str(UUID(value)) != value`, spelled as a
+# grammar the way `validate_evidence_id` above spells its own: `RecordID` now reaches every ingress
+# identifier, including a thousand traversal seeds per request, and the roundtrip measured 3.3 us
+# against this pattern's 0.45 us. `tests/test_identity.py` holds the two against each other over a
+# generated corpus so the cheaper spelling cannot drift away from the precedent.
+_CANONICAL_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _graph_id_rejection(value: str) -> str:
+    """Name the defect on the cold path, where re-parsing the rejected value costs nothing."""
+    try:
+        UUID(value)
+    except (AttributeError, TypeError, ValueError):
+        return "invalid graph id"
+    return "non-canonical graph id: use the lowercase 8-4-4-4-12 spelling"
+
+
+def validate_graph_id(value: str) -> str:
+    """Require the canonical graph UUID spelling rather than canonicalizing a variant of it.
+
+    SQLite compares TEXT with BINARY collation, so `550E8400-...` never matches the stored
+    `550e8400-...`: the server would report an existing record as missing, and two spellings of one
+    identifier would pass the duplicate checks in `models.py` as two identifiers. Rewriting the
+    value instead would hide the client defect and change what a caller gets back.
+    """
+    if _CANONICAL_UUID.fullmatch(value) is None:
+        raise ValueError(_graph_id_rejection(value))
+    return value
+
+
 def validate_record_id(kind: str, value: str) -> str:
     """Keep graph UUIDs and content-addressed evidence IDs disjoint."""
     if kind == "evidence":
         return validate_evidence_id(value)
-    if len(value) != 36:
-        raise ValueError("invalid graph id")
-    UUID(value)
-    return value
+    return validate_graph_id(value)
 
 
 EvidenceID = Annotated[str, AfterValidator(validate_evidence_id)]

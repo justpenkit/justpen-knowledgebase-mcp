@@ -223,6 +223,10 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("txt_record", {"value": "x" * 4096}),
         ("txt_record", {"value": "V=SPF1 -all"}),
         ("txt_record", {"value": "V=DMARC1; p=none"}),
+        ("txt_record", {"value": "v=spf1include:_spf.google.com ~all"}),
+        ("txt_record", {"value": "v=spf10"}),
+        ("txt_record", {"value": "v=DMARC1p=none"}),
+        ("txt_record", {"value": "v=STSv1id=1"}),
         ("tls_cipher_suite", {"version": "tls13", "name": "TLS_AES_128_GCM_SHA256"}),
         ("tls_cipher_suite", {"version": "tls12", "name": "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"}),
         ("tls_cipher_suite", {"version": "ssl30", "name": "TLS_RSA_WITH_3DES_EDE_CBC_SHA"}),
@@ -564,6 +568,73 @@ def test_canonicalization_leaves_every_other_type_and_property_untouched() -> No
     untouched: dict[str, object] = {"value": "google-site-verification=a?b"}
     validate_record("nodes", "txt_record", untouched)
     assert untouched["value"] == "google-site-verification=a?b"
+
+
+SUFFIXES = ["", " ", " -all", "; p=none", ";", "p=none", "include:_spf.google.com ~all", "0", " id=1"]
+
+
+def _accepted(type_name: str, value: str) -> bool:
+    properties: dict[str, object] = {"value": value}
+    if type_name == "dkim_record":
+        properties["selector"] = "default"
+    try:
+        validate_record("nodes", type_name, properties)
+    except ExpectedValidationError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize("suffix", SUFFIXES)
+@pytest.mark.parametrize(("tag", "type_name"), sorted(catalog_module._TXT_RECORD_DIVERSIONS))
+def test_every_version_tag_spelling_has_exactly_one_home(tag: str, type_name: str, suffix: str) -> None:
+    """A spelling the dedicated type refuses is a `txt_record`, and never refused by both.
+
+    `v=spf1include:...` used to be refused by `spf_record` for the missing delimiter and by
+    `txt_record` for the bare prefix, so the most common real SPF misconfiguration could not be
+    recorded at all. The tags are read from the diversion table so a new one joins this assertion.
+    """
+    value = tag + suffix
+
+    assert _accepted(type_name, value) is not _accepted("txt_record", value), value
+
+
+def test_the_dedicated_types_keep_every_well_formed_spelling() -> None:
+    """The widening must not also stop diverting a value that really is an SPF or MTA-STS record."""
+    for value in ("v=spf1", "v=spf1 -all", "v=DMARC1", "v=DMARC1; p=none", "v=STSv1", "v=STSv1; id=1"):
+        _invalid("nodes", "txt_record", {"value": value})
+    for value in ("v=DKIM1", "v=DKIM1; k=rsa", "v=DKIM1p=MIGf"):
+        _invalid("nodes", "txt_record", {"value": value})
+
+
+@pytest.mark.parametrize("type_name", ["caa_issue", "caa_issuewild"])
+def test_caa_parameter_names_are_stored_folded_with_their_extras(type_name: str) -> None:
+    """The stored spelling and the identity derived from it stay in agreement, as `endpoint.url` does."""
+    properties: dict[str, object] = {
+        "flags": 0,
+        "parameters": [
+            {"name": "accountURI", "value": "https://ca.example/1", "seen": 2},
+            {"name": "CAA", "value": ""},
+        ],
+    }
+
+    validate_record("relations", type_name, properties)
+
+    assert properties["parameters"] == [
+        {"name": "accounturi", "value": "https://ca.example/1", "seen": 2},
+        {"name": "caa", "value": ""},
+    ]
+
+
+@pytest.mark.parametrize("name", ["\u212a", "ACCOUNTURI\u212a", "acc ount"])
+def test_folding_a_caa_name_never_widens_what_validation_accepts(name: str) -> None:
+    """`"\u212a".lower()` is `"k"`, so a non-ASCII tag is left alone and refused as before."""
+    _invalid("relations", "caa_issue", {"flags": 0, "parameters": [{"name": name, "value": "x"}]})
+
+
+def test_a_malformed_caa_parameter_list_reaches_validation_unchanged() -> None:
+    """Canonicalization runs before validation, so it must survive anything a client can send."""
+    for parameters in ("text", [1], [{"name": 2, "value": "x"}], [{"value": "x"}]):
+        _invalid("relations", "caa_issue", {"flags": 0, "parameters": parameters})
 
 
 def test_extras_survive_and_properties_size_bound_is_retained() -> None:
