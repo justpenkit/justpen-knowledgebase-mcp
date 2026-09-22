@@ -93,11 +93,12 @@ a `_dmarc.example.com` subdomain node to hold it.
 DNS presentation-form quoting, decode escapes, concatenate a multi-string
 RRset's character-strings into one value, and remove surrounding whitespace.
 A value is routed to its dedicated type exactly when that type accepts it, so
-every spelling has one home and no spelling has two. `v=spf1 -all` is an
-`spf_record`; `V=SPF1 -all`, `v=spf1include:_spf.google.com ~all` and a
+no spelling is refused by both `txt_record` and its dedicated type. `v=spf1 -all`
+is an `spf_record`; `V=SPF1 -all`, `v=spf1include:_spf.google.com ~all` and a
 leading-space spelling are `txt_record`s, because `spf_record` requires the
-version tag to be the whole value or to be followed by a space. The same rule
-applies to `v=DMARC1` and `v=STSv1`. `dkim_record` validates its value as
+version tag to be the whole value or to be followed by a space. `v=DMARC1` and
+`v=STSv1` accept a semicolon as well as a space, so `v=DMARC1;p=none` is a
+`dmarc_record`. `dkim_record` validates its value as
 generic TXT text, so every `v=DKIM1` spelling belongs to it. A malformed tag is
 a real misconfiguration: record it as a `txt_record` and report the defect as a
 `finding`. Never write ephemeral
@@ -123,13 +124,11 @@ These are the two places the server rewrites a submitted value. Everything else
 is stored as submitted or rejected, and `coercion` stays false: no JSON type is
 converted, only these declared spellings are canonicalized.
 
-A workspace written before this rule already holds both spellings as two edges,
-and the upgrade does not merge them. The surviving fork is the one whose stored
-`parameters[].name` still carries an upper-case letter: read the `caa_issue` and
-`caa_issuewild` edges with `kb_search` and `kb_get`, delete each such edge with
-`kb_delete`, then write the fact once. Re-writing it without deleting the fork
-leaves the old edge in place, and writing it into a workspace that held only the
-upper-case spelling adds a second edge beside it.
+A workspace written before this rule may hold both spellings as two edges, and
+nothing merges them. No repair procedure is needed, because such a workspace
+predates schema version 3 and is refused at open, so no forked pair reaches a
+readable workspace. Within a workspace this release created, the fold happens on
+every write, so the fork cannot form.
 
 No required map references the `cpe23_or_empty` rule, so a stored `cpe` is
 never validated against it. Produce the spelling the rule describes and

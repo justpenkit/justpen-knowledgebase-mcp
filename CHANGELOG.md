@@ -31,11 +31,9 @@
     `TargetRef.id` enforced nothing but length. Response models carry a separate
     `StoredRecordID` alias with the old width-only rule, so a maximal
     `kb_neighbors` payload is not revalidated; the published tool input and
-    output schemas are byte-identical. For the six paths validated from a tool
-    signature the refusal happens one layer earlier, as `is_error` with no
-    structured envelope, exactly as a wrong-length identifier is refused today;
-    below the signatures it carries `INVALID`. Closing that last inconsistency
-    needs the tool modules and is not done here.
+    output schemas are byte-identical. A refusal carries `INVALID` whichever
+    layer catches it; see the `tools` entry below, which made the
+    signature-validation layer answer with the same envelope.
 - **stdio**: decode transport frames strictly. Invalid UTF-8 inside a JSON
     string value used to be replaced with U+FFFD, which left the document
     parseable, so corrupted text was accepted as data. Such a frame is now
@@ -57,11 +55,13 @@
     version-tag routing, which described the opposite of what the code did. Both
     enumerations are now pinned against `scope_relations()` by a test that
     derives the expected names from the catalog rather than restating them.
-- **graph**: return `LIMIT` instead of `INTERNAL` when the first item of an
-    evidence `links` page exceeds the response budget. Such a page has no
-    returned association kind to put in `next_cursor`, and encoding one raised
-    an unmapped error. No reachable link item is large enough to reach this
-    today, so no client behaviour changes.
+- **graph**: return `LIMIT` when the first item of an association page exceeds
+    the response budget, for every view rather than only evidence `links`. An
+    evidence `links` page has no returned association kind to put in
+    `next_cursor`, and encoding one raised an unmapped `INTERNAL`; the other
+    views returned `truncated: true` with a cursor that did not advance. No
+    reachable association item is large enough to reach either route today, so
+    no client behaviour changes.
 - **storage**: report which part of the stored workspace contract differs. An
     incompatible workspace previously failed to open with
     `CONFIGURATION: maintenance unavailable`, identically for a wrong schema
@@ -79,7 +79,7 @@
 - **tools**: answer a call rejected by its published input schema with the
     `INVALID` application envelope instead of a bare error result. The envelope
     names each rejected argument path and the rule it broke, for example
-    `INVALID: invalid tool request; seed_ids.0: non-canonical graph id: use the   lowercase 8-4-4-4-12 spelling`. This makes one identifier refusal one shape:
+    `INVALID: invalid tool request; seed_ids.0: non-canonical graph id: use the lowercase 8-4-4-4-12 spelling`. This makes one identifier refusal one shape:
     `kb_get.ids` previously answered an evidence ID under `kind=nodes` with an
     envelope and a non-canonical UUID without one, and nothing published let a
     client predict which. The rejection no longer repeats the value the client
@@ -115,7 +115,11 @@
     unchanged. p50 falls from 159.1 ms to 140.3 ms at `limit=100`.
 - **graph**: apply the same running byte counter to `kb_get` record pages
     (250 000 bytes) and association pages (245 000 bytes). Both budgets are
-    unchanged, with the same caveat.
+    unchanged. The record page carries the same caveat as traversal and search.
+    The association page counts its items without the two enclosing bracket
+    bytes the replaced check included, so it stops one byte later rather than
+    earlier; against a 245 000-byte budget under a 262 121-byte bound neither
+    direction is reachable.
 - **maintenance**: reuse the validated WAL name between `allocation()` samples
     instead of revalidating the path on every call. The cost is dominated by
     path normalization, not by syscalls, and falls from 123.8 us to 4.1 us on
@@ -193,9 +197,10 @@
     `settings.evidence_coverage` column and its three `evidence` triggers change
     the stored layout, and `SchemaGuard.check` compares the contract for exact
     equality, so a workspace created by an earlier version is refused at open
-    with `CONFIGURATION: database contract or managed paths differ` rather than
-    upgraded. There is no in-tree upgrade path: create a new workspace and
-    re-ingest.
+    rather than upgraded. A workspace written by v0.2.0 reports `CONFIGURATION`
+    with the schema-version reason described above, that being the first of the
+    five contract dimensions to differ. There is no in-tree upgrade path: create
+    a new workspace and re-ingest.
 
 ## v0.2.0 (2026-09-21)
 

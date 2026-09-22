@@ -59,7 +59,8 @@ managed paths. When several differ the coarsest one is reported. The reason
 names the category only; it never contains a stored value or a filesystem path.
 A managed-paths reason means this process is configured with a different
 managed directory layout than the one the workspace was created with, not that
-a directory is missing.
+a directory is missing. One route stays undifferentiated: a settings row that
+cannot be read at all names no dimension and still reports `maintenance unavailable`.
 
 Unreleased v1 workspaces must also contain the required job scheduling and
 ownership indexes with the expected definitions, plus the checked nullable
