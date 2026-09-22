@@ -1,16 +1,24 @@
 """Retention/recovery selection and ownership; no real files or durable store."""
 
 import json
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
 from justpen_knowledgebase_mcp.config import WorkspacePolicy
-from justpen_knowledgebase_mcp.errors import ConflictError, StorageIOError
+from justpen_knowledgebase_mcp.errors import ConflictError, NotFoundError, StorageIOError
 from justpen_knowledgebase_mcp.storage import job_recovery, job_retention
 from justpen_knowledgebase_mcp.storage.evidence import stage_name
 
 from .helpers import NODE, OTHER, cursor, database, job
+
+
+def records(values):
+    """A cursor over whole named job rows, as the batched page read consumes them."""
+    result = MagicMock()
+    result.__iter__.side_effect = lambda: iter([tuple(value.values()) for value in values])
+    result.get_description.return_value = [(name, None) for name in (values[0] if values else {})]
+    return result
 
 
 def test_retention_batch_prunes_expires_marks_files_and_skips_protection(monkeypatch):
@@ -20,24 +28,25 @@ def test_retention_batch_prunes_expires_marks_files_and_skips_protection(monkeyp
         (3, "protected", "failed", 0, None),
         (4, "fresh", "completed", 100, None),
     ]
-    row_lookup = Mock(
-        side_effect=[
-            job(state="completed", lease_expires_at=None),
-            job(
-                uuid=OTHER,
-                state="failed",
-                lease_expires_at=None,
-                payload=json.dumps({"input_token": NODE, "input_stage": stage_name(OTHER, NODE)}),
-            ),
-            job(uuid="protected", state="failed", lease_expires_at=None),
-        ]
-    )
-    monkeypatch.setattr(job_retention, "job_row", row_lookup)
-    monkeypatch.setattr(job_retention, "protected", Mock(side_effect=[False, False, True]))
+    durable = [
+        job(state="completed", lease_expires_at=None),
+        job(
+            uuid=OTHER,
+            state="failed",
+            lease_expires_at=None,
+            payload=json.dumps({"input_token": NODE, "input_stage": stage_name(OTHER, NODE)}),
+        ),
+        job(uuid="protected", state="failed", lease_expires_at=None),
+        job(uuid="fresh", state="completed", lease_expires_at=None, finished_at=100),
+    ]
     db = database(
         cursor(value='{"completed":2,"failed_cancelled":2}'),
         cursor(rows=[]),
         cursor(rows=rows),
+        records(durable),
+        cursor(rows=[("protected",)]),
+        cursor(rows=[]),
+        cursor(rows=[]),
         cursor(),
         cursor(),
         cursor(),
@@ -47,7 +56,24 @@ def test_retention_batch_prunes_expires_marks_files_and_skips_protection(monkeyp
     result = job_retention.JobRetention.batch(db, policy, (0.0, 0), now=100)
     assert result == {"cursor": (0.0, 0), "examined": 4, "pruned": 1, "marked": 1, "invalid": 0}
     assert json.loads(db.execute.call_args.args[1][0]) == [NODE]
-    assert row_lookup.call_count == 3
+    # One page probe per owner table and one page read, never one pair per candidate.
+    assert json.loads(db.execute.call_args_list[3].args[1][0]) == [NODE, OTHER, "protected", "fresh"]
+
+
+def test_retention_batch_rejects_a_candidate_whose_durable_row_is_absent():
+    rows = [(1, NODE, "completed", 0, None)]
+    db = database(
+        cursor(value='{"completed":2,"failed_cancelled":2}'),
+        cursor(rows=[]),
+        cursor(rows=rows),
+        records([]),
+        cursor(rows=[]),
+        cursor(rows=[]),
+        cursor(rows=[]),
+    )
+    policy = WorkspacePolicy(completed_retention_seconds=10, failed_cancelled_retention_seconds=10)
+    with pytest.raises(NotFoundError):
+        job_retention.JobRetention.batch(db, policy, (0.0, 0), now=100)
 
 
 def test_recorded_tokens_validate_owned_names_and_deduplicate():
