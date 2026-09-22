@@ -1,5 +1,19 @@
 ## Unreleased
 
+### Feat
+
+- **tools**: publish the identifier spelling the server enforces. Every tool
+    argument that names a record now carries an anchored JSON Schema `pattern`
+    beside its 36-character width — the lowercase 8-4-4-4-12 UUID for a graph
+    record, `e_` followed by 64 lowercase hex digits for evidence — so a host
+    can refuse a bad identifier without a round trip. The `kb_get`, `kb_delete`
+    and `kb_reindex` `ids` unions previously published an unconstrained branch
+    and no longer do. The patterns are published metadata: nothing new runs at
+    runtime, the arrival check is the one that already ran, and the patterns are
+    generated from the validators' own expressions so the two cannot drift. The
+    response alias `StoredRecordID` is unchanged and still publishes the width
+    alone, because a stored identifier is server-generated.
+
 ### Fix
 
 - **evidence**: make `disk_check_interval_bytes` a real free-space check
@@ -30,8 +44,9 @@
     share; previously only three of them reached `validate_record_id` and
     `TargetRef.id` enforced nothing but length. Response models carry a separate
     `StoredRecordID` alias with the old width-only rule, so a maximal
-    `kb_neighbors` payload is not revalidated; the published tool input and
-    output schemas are byte-identical. A refusal carries `INVALID` whichever
+    `kb_neighbors` payload is not revalidated; the response alias keeps
+    publishing the width alone, while the input schemas gained the canonical
+    spelling described in the identifier-grammar entry. A refusal carries `INVALID` whichever
     layer catches it; see the `tools` entry below, which made the
     signature-validation layer answer with the same envelope.
 - **stdio**: decode transport frames strictly. Invalid UTF-8 inside a JSON
@@ -84,11 +99,11 @@
     envelope and a non-canonical UUID without one, and nothing published let a
     client predict which. The rejection no longer repeats the value the client
     sent, at most three rules are reported, and an argument name longer than 64
-    bytes is truncated. Clients that parsed the previous validator report text
-    must read the envelope instead. A call that reaches no tool at all — an
+    characters is truncated. Clients that parsed the previous validator report
+    text must read the envelope instead. A call that reaches no tool at all — an
     unknown tool name, or a frame the transport cannot parse — still fails
-    without an envelope. The published input schemas are unchanged; `list_tools()`
-    is byte-identical across this change.
+    without an envelope. This change publishes nothing new: the schemas it
+    leaves are the ones the identifier-grammar entry then adds patterns to.
 - **docs**: state which stored-contract dimensions an incompatible workspace can
     name on open, that the coarsest is reported when several differ, and that a
     managed-paths reason means a different configured managed directory layout

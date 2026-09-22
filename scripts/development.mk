@@ -1,6 +1,6 @@
 .PHONY: help version install setup clean test test-one test-permissions lint lint-fix format format-check format-ruff format-ruff-check format-md format-md-check format-toml format-toml-check format-yaml format-yaml-check format-json format-json-check typecheck audit check docs-build docs-catalog docs-serve bump-patch bump-minor bump-major release-tag changelog pre-commit lock-check format-project-text
 .PHONY: format-html format-html-check format-css format-css-check
-.PHONY: test-integration check-static check-python
+.PHONY: test-integration check-static check-python install-taplo
 
 VENV := .venv
 # Preserve literal test IDs instead of evaluating Make expressions supplied in TEST.
@@ -41,7 +41,10 @@ install:
 	@if [ ! -f uv.lock ]; then uv lock; fi
 	uv sync --locked --group dev --group docs
 
-setup: install
+install-taplo:
+	uv run --group dev python scripts/install_taplo.py
+
+setup: install install-taplo
 	uv run --group dev pre-commit install --install-hooks
 	$(MAKE) format
 
