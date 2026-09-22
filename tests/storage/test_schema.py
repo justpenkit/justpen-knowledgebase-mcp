@@ -8,7 +8,8 @@ import apsw
 import pytest
 
 from justpen_knowledgebase_mcp.config import ServerConfig
-from justpen_knowledgebase_mcp.errors import ConfigurationError, LimitError
+from justpen_knowledgebase_mcp.errors import ConfigurationError, ContractMismatchError, LimitError
+from justpen_knowledgebase_mcp.responses import exception_response
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage import schema
 from justpen_knowledgebase_mcp.storage.connection import SQLiteRuntime
@@ -48,7 +49,7 @@ def test_v2_workspace_without_the_coverage_column_fails_closed(tmp_path):
                 connection.execute(f"drop trigger evidence_coverage_{suffix}")
             connection.execute("alter table settings drop column evidence_coverage")
             connection.execute("update settings set schema_version=2")
-        with pytest.raises(ConfigurationError, match="database contract"):
+        with pytest.raises(ContractMismatchError, match="stored schema version differs"):
             runtime.connect()
 
 
@@ -60,8 +61,49 @@ def test_v1_catalog_workspace_fails_closed(tmp_path):
                 "update settings set schema_version=1,catalog_version=1,catalog_fingerprint=?",
                 ("v1-catalog-fingerprint",),
             )
-        with pytest.raises(ConfigurationError, match="database contract"):
+        with pytest.raises(ContractMismatchError, match="stored schema version differs"):
             runtime.connect()
+
+
+CONTRACT_BREAKS = [
+    ("update settings set schema_version=4", "4", "schema version"),
+    ("update settings set catalog_version=0", "0", "catalog version"),
+    ("update settings set catalog_fingerprint='wrong-fingerprint'", "wrong-fingerprint", "catalog fingerprint"),
+    ("update settings set index_format_version=99", "99", "index format version"),
+    ("""update settings set managed_paths='{"data":"elsewhere"}'""", "elsewhere", "managed paths"),
+]
+
+
+@pytest.mark.parametrize(("break_contract", "stored", "dimension"), CONTRACT_BREAKS)
+def test_reopen_names_which_contract_dimension_differs(tmp_path, break_contract, stored, dimension):
+    config = ServerConfig(workspace_dir=tmp_path)
+    with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
+        with closing(runtime.connect()) as connection:
+            connection.execute(break_contract)
+        with pytest.raises(ContractMismatchError) as rejected:
+            runtime.connect()
+        assert rejected.value.dimension == dimension
+        assert stored not in str(rejected.value)
+
+
+async def test_open_reports_the_differing_dimension_instead_of_maintenance_unavailable(tmp_path):
+    # Checkpoint maintenance is the first thing to touch the database at open, so
+    # a contract mismatch is classified there before any other reader sees it.
+    config = ServerConfig(workspace_dir=tmp_path)
+    async with KnowledgeBase.open(config):
+        pass
+    with (
+        WorkspacePaths(config) as workspace,
+        SQLiteRuntime(workspace, config) as runtime,
+        closing(runtime.connect()) as connection,
+    ):
+        connection.execute("update settings set catalog_fingerprint='wrong-fingerprint'")
+    with pytest.raises(ContractMismatchError) as rejected:
+        async with KnowledgeBase.open(config):
+            pytest.fail("a broken stored contract must not admit a running service")
+    assert rejected.value.dimension == "catalog fingerprint"
+    assert exception_response(rejected.value)["error"] == f"CONFIGURATION: {rejected.value}"
+    assert "maintenance unavailable" not in str(rejected.value)
 
 
 @pytest.mark.parametrize("name", ["jobs_active_lane", "nodes_property_fallback", "relations_property_fallback"])

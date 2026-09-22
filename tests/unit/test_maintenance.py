@@ -12,6 +12,7 @@ from justpen_knowledgebase_mcp.config import WorkspacePolicy
 from justpen_knowledgebase_mcp.errors import (
     BusyError,
     ConfigurationError,
+    ContractMismatchError,
     LimitError,
     StorageIOError,
     UnsupportedLayoutError,
@@ -128,6 +129,26 @@ def test_runtime_failure_is_visible_and_permanent_fault_rejects_admission(monkey
         task.factory.status_cache.check_health()
     assert "maintenance_failed" in caplog.text
     assert "private path" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "dimension", ["schema version", "catalog version", "catalog fingerprint", "index format version", "managed paths"]
+)
+def test_contract_mismatch_keeps_its_dimension_through_maintenance(monkeypatch, dimension):
+    # The authored reason survives classification, and `check_health` rebuilds it
+    # from its dimension rather than from its message, which its constructor
+    # would reject.
+    task, _db = component(monkeypatch)
+    monkeypatch.setattr(task, "_open", Mock(side_effect=ContractMismatchError(dimension)))
+    with pytest.raises(ContractMismatchError) as raised:
+        task.run_once("startup")
+    assert raised.value.dimension == dimension
+    assert task.status()["maintenance_error"] == "CONFIGURATION"
+    assert task.status()["maintenance_failed_permanently"]
+    with pytest.raises(ContractMismatchError) as admitted:
+        task.factory.status_cache.check_health()
+    assert admitted.value.dimension == dimension
+    assert str(admitted.value) == str(raised.value)
 
 
 def test_transient_open_failure_is_visible_and_retried(monkeypatch, caplog):
@@ -361,12 +382,18 @@ def test_nonleader_cannot_report_recovery_from_another_owner_sample(monkeypatch,
     assert "maintenance_recovered" not in caplog.text
 
 
-def test_health_rejections_do_not_accumulate_cached_exception_tracebacks():
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (UnsupportedLayoutError("supporting index"), "offline workspace upgrade required"),
+        (ContractMismatchError("managed paths"), "stored managed paths differ"),
+    ],
+)
+def test_health_rejections_do_not_accumulate_cached_exception_tracebacks(error, expected):
     cache = StatusCache()
-    error = UnsupportedLayoutError("supporting index")
     cache.failed(error, permanent=True)
     for _ in range(3):
-        with pytest.raises(ConfigurationError, match="offline workspace upgrade required"):
+        with pytest.raises(ConfigurationError, match=expected):
             cache.check_health()
     assert error.__traceback__ is None
 

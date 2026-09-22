@@ -13,7 +13,13 @@ import apsw
 import pytest
 
 from justpen_knowledgebase_mcp.config import ServerConfig
-from justpen_knowledgebase_mcp.errors import ConfigurationError, ConflictError, PathDeniedError, StorageIOError
+from justpen_knowledgebase_mcp.errors import (
+    ConfigurationError,
+    ConflictError,
+    ContractMismatchError,
+    PathDeniedError,
+    StorageIOError,
+)
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.connection import ManagedConnection, SQLiteRuntime
 from justpen_knowledgebase_mcp.storage.maintenance import CheckpointMaintenance, StatusCache, WalState
@@ -257,6 +263,25 @@ async def test_permanent_maintenance_failure_blocks_products_but_preserves_contr
         with pytest.raises(expected, match="maintenance unavailable"):
             await operation(lambda _connection, _token: pytest.fail("permanent failure admitted product"))
     assert await kb.workers.control(lambda connection, _token: connection.execute("select 9").get) == 9
+
+
+@pytest.mark.integration
+async def test_permanent_contract_fault_tells_products_which_dimension_differs(kb, monkeypatch):
+    original = kb.workers.factory.guard.check
+
+    def fail_owner(connection):
+        if threading.current_thread().name == "kb-checkpoint":
+            raise ContractMismatchError("catalog fingerprint")
+        return original(connection)
+
+    monkeypatch.setattr(kb.workers.factory.guard, "check", fail_owner)
+    kb.maintenance.request("pressure")
+    await asyncio.to_thread(cast("threading.Thread", kb.maintenance._thread).join, 2)
+    assert (await kb.status())["wal"]["maintenance_failed_permanently"]
+    for operation in (kb.workers.read, kb.workers.write):
+        with pytest.raises(ContractMismatchError, match="stored catalog fingerprint differs") as rejected:
+            await operation(lambda _connection, _token: pytest.fail("permanent failure admitted product"))
+        assert rejected.value.dimension == "catalog fingerprint"
 
 
 @pytest.mark.integration

@@ -7,6 +7,13 @@ if TYPE_CHECKING:
 
 WalBusyReason = Literal["WAL_PRESSURE", "RESET_PENDING", "RESET_IN_PROGRESS", "WAL_RESET_BLOCKED"]
 
+# The stored contract compared at every transaction, in the order the guard reads
+# it. Naming the differing dimension tells an operator which one to fix; the
+# stored and expected values themselves stay out of the message.
+ContractDimension = Literal[
+    "schema version", "catalog version", "catalog fingerprint", "index format version", "managed paths"
+]
+
 VALID_ERROR_TYPES = frozenset(
     {
         "INVALID",
@@ -66,6 +73,26 @@ class UnsupportedLayoutError(ConfigurationError):
         }
         self.layout: Literal["job ownership", "supporting index"] = layout
         super().__init__(messages[layout])
+
+
+class ContractMismatchError(ConfigurationError):
+    """One named stored-contract dimension differs, without its stored value."""
+
+    def __init__(self, dimension: ContractDimension) -> None:
+        """Select a fixed message without interpolating stored or expected values."""
+        recreate = "reopen with the creating build or recreate the workspace"
+        messages = {
+            "schema version": f"stored schema version differs from this build; {recreate}",
+            "catalog version": f"stored catalog version differs from this build; {recreate}",
+            "catalog fingerprint": f"stored catalog fingerprint differs from this build; {recreate}",
+            "index format version": f"stored index format version differs from this build; {recreate}",
+            "managed paths": (
+                "stored managed paths differ from this configuration; "
+                "restore the managed directory layout the workspace was created with"
+            ),
+        }
+        self.dimension: ContractDimension = dimension
+        super().__init__(messages[dimension])
 
 
 class PathDeniedError(McpError):

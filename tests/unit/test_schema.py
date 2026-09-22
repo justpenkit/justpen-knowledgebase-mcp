@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from justpen_knowledgebase_mcp.config import WorkspacePolicy
-from justpen_knowledgebase_mcp.errors import ConfigurationError
+from justpen_knowledgebase_mcp.errors import ConfigurationError, ContractMismatchError
 from justpen_knowledgebase_mcp.storage import properties, schema
 
 from .helpers import cursor, database, owner
@@ -31,22 +31,42 @@ def expected(guard):
     )
 
 
-@pytest.mark.parametrize("field", range(5))
-def test_guard_rejects_every_contract_dimension(field):
+@pytest.mark.parametrize(
+    ("field", "dimension"),
+    list(
+        enumerate(["schema version", "catalog version", "catalog fingerprint", "index format version", "managed paths"])
+    ),
+)
+def test_guard_rejects_and_names_every_contract_dimension(field, dimension):
     value = guard()
     matching = expected(value)
     value.check(database(cursor(rows=[(0, "blob_sha256")]), cursor(value=matching)))
     mismatch = list(matching)
     mismatch[field] = "changed"
-    with pytest.raises(ConfigurationError):
+    with pytest.raises(ContractMismatchError) as rejected:
         value.check(database(cursor(rows=[(0, "blob_sha256")]), cursor(value=tuple(mismatch))))
+    assert rejected.value.dimension == dimension
+    assert dimension in str(rejected.value)
+    assert "changed" not in str(rejected.value)
+
+
+@pytest.mark.parametrize("row", [None, (), (schema.SCHEMA_VERSION,)])
+def test_guard_names_no_dimension_when_the_contract_row_is_unreadable(row):
+    # Without a comparable row there is no dimension to name, and inventing one
+    # would send an operator after the wrong thing.
+    with pytest.raises(ConfigurationError, match="unreadable") as rejected:
+        guard().check(database(cursor(rows=[(0, "blob_sha256")]), cursor(value=row)))
+    assert not isinstance(rejected.value, ContractMismatchError)
 
 
 def test_guard_rejects_v1_catalog_contract():
     value = guard()
     v1 = (1, 1, "v1-catalog-fingerprint", schema.INDEX_FORMAT_VERSION, value.paths)
-    with pytest.raises(ConfigurationError, match="database contract"):
+    # Three dimensions differ at once here; the guard reports the coarsest.
+    with pytest.raises(ContractMismatchError, match="stored schema version differs") as rejected:
         value.check(database(cursor(rows=[(0, "blob_sha256")]), cursor(value=v1)))
+    assert rejected.value.dimension == "schema version"
+    assert "v1-catalog-fingerprint" not in str(rejected.value)
 
 
 @pytest.mark.parametrize("raw", ["{}", "[]", "null", "invalid", '{"wal_low_bytes":true}'])

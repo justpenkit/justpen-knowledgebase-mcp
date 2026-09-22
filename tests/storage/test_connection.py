@@ -55,9 +55,12 @@ def test_same_db_different_evidence_is_configuration_error(tmp_path):
     with (
         WorkspacePaths(changed) as ws,
         SQLiteRuntime(ws, changed) as runtime,
-        pytest.raises(ConfigurationError, match="contract or managed paths"),
+        pytest.raises(ConfigurationError, match="stored managed paths differ") as rejected,
     ):
         runtime.connect()
+    # The reason names the dimension an operator can act on, never the directory.
+    assert "other" not in str(rejected.value)
+    assert str(tmp_path) not in str(rejected.value)
 
 
 def test_native_db_wal_shm_permissions_are_private(tmp_path):
