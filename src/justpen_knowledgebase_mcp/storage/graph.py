@@ -113,17 +113,6 @@ def require_ready(connection: apsw.Connection, kind: str, row: dict[str, Any]) -
         raise RecordConflictError("RECORD_DELETING", BlockerDetails.model_validate(blocker))
 
 
-def _ref(connection: apsw.Connection, ref: NodeRef, nodes: list[dict[str, Any]]) -> dict[str, Any]:
-    if ref.node_index is not None:
-        if ref.node_index >= len(nodes):
-            raise InvalidParamsError("node_index outside batch")
-        return nodes[ref.node_index]
-    row = row_by_id(connection, "nodes", ref.id or "")
-    if row is None:
-        raise NotFoundError("node reference missing")
-    return row
-
-
 def _identity_definition(kind: str, type_name: str) -> Mapping[str, Any]:
     """Return one shared read-only identity declaration from the fixed catalog."""
     return cast("Mapping[str, Any]", catalog_view()[kind][type_name]["identity"])
@@ -550,69 +539,6 @@ def _preflight(
     return node_plans, relation_plans
 
 
-def _endpoints(
-    connection: apsw.Connection,
-    mutation: Mutation,
-    nodes: list[dict[str, Any]],
-    row: dict[str, Any] | None,
-    type_name: str,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    source = target = None
-    if isinstance(mutation, RelationWrite):
-        source = (
-            _ref(connection, mutation.source_ref, nodes)
-            if mutation.source_ref
-            else row_by_id(connection, "nodes", row["source_id"])
-            if row
-            else None
-        )
-        target = (
-            _ref(connection, mutation.target_ref, nodes)
-            if mutation.target_ref
-            else row_by_id(connection, "nodes", row["target_id"])
-            if row
-            else None
-        )
-        if source is None or target is None:
-            raise NotFoundError("relation endpoint missing")
-        if row and (source["id"] != row["source_id"] or target["id"] != row["target_id"]):
-            raise ConflictError("endpoints are immutable")
-        _validate_endpoints(type_name, source, target)
-    return source, target
-
-
-def _deduplicate(
-    connection: apsw.Connection,
-    kind: str,
-    mutation: Mutation,
-    row: dict[str, Any] | None,
-    type_name: str,
-    endpoints: tuple[dict[str, Any] | None, dict[str, Any] | None],
-) -> dict[str, Any] | None:
-    source, target = endpoints
-    if row is None:
-        key = identity_key(kind, type_name, mutation.properties)
-        if kind == "nodes":
-            identifier = connection.execute("SELECT id FROM nodes WHERE type=? AND key=?", (type_name, key)).get
-        else:
-            if source is None or target is None:
-                raise InvalidParamsError("endpoints required")
-            identifier = connection.execute(
-                "SELECT id FROM relations WHERE source_id=? AND type=? AND target_id=? AND key=?",
-                (source["id"], type_name, target["id"], key),
-            ).get
-        if identifier is not None:
-            row = row_by_id(connection, kind, identifier)
-            if row is None:
-                raise NotFoundError("record disappeared")
-            require_ready(connection, kind, row)
-            if identity_json(kind, type_name, json.loads(row["properties"])) != identity_json(
-                kind, type_name, mutation.properties
-            ):
-                raise ConflictError("identity hash collision")
-    return row
-
-
 def _persist(
     connection: apsw.Connection,
     kind: str,
@@ -684,37 +610,6 @@ def _persist(
             raise NotFoundError("record disappeared")
     refresh_properties(connection, kind, row, properties)
     fulltext.refresh_record_text(connection, kind, row)
-    return row, created
-
-
-def _upsert(
-    connection: apsw.Connection, kind: str, mutation: Mutation, nodes: list[dict[str, Any]], seen: set[tuple[str, int]]
-) -> tuple[dict[str, Any], bool]:
-    row = row_by_id(connection, kind, mutation.id) if mutation.id is not None else None
-    if mutation.id is not None and row is None:
-        raise NotFoundError("patch target missing")
-    if row is not None:
-        require_ready(connection, kind, row)
-    type_name = row["type"] if row is not None else mutation.type
-    if type_name is None:
-        raise InvalidParamsError("type required")
-    if mutation.type is not None and mutation.type != type_name:
-        raise ConflictError("type is immutable")
-    source, target = _endpoints(connection, mutation, nodes, row, type_name)
-    row = _deduplicate(connection, kind, mutation, row, type_name, (source, target))
-    for endpoint in (source, target):
-        if endpoint is not None:
-            require_ready(connection, "nodes", endpoint)
-    current: dict[str, Any] = json.loads(row["properties"]) if row else {}
-    properties = merge_properties(current, mutation.properties, mutation.remove_properties)
-    validate_record(kind, type_name, properties)
-    if row and identity_json(kind, type_name, current) != identity_json(kind, type_name, properties):
-        raise ConflictError("identity properties are immutable")
-    if row is not None and (kind, row["id"]) in seen:
-        raise InvalidParamsError("duplicate batch identity")
-    row, created = _persist(connection, kind, mutation, row, properties, (source, target))
-    identity = (kind, row["id"])
-    seen.add(identity)
     return row, created
 
 

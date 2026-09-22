@@ -127,28 +127,32 @@ def test_endpoint_constraints(relation, source_type, source, target_type, target
             graph._validate_endpoints(relation, first, second)
 
 
-def test_upsert_merge_identity_and_duplicate_boundaries(monkeypatch):
-    db = database(cursor(value=None))
-    persisted = Mock(return_value=(owner(properties='{"value":"example.com","extra":2}'), True))
-    monkeypatch.setattr(graph, "_persist", persisted)
-    row, created = graph._upsert(
-        db, "nodes", NodeWrite(type="domain", properties={"value": "example.com", "extra": 2}), [], set()
+def test_node_preparation_merge_identity_and_duplicate_boundaries(monkeypatch):
+    plan = graph._prepare_node(
+        database(cursor(value=None)),
+        NodeWrite(type="domain", properties={"value": "example.com", "extra": 2}),
+        None,
+        "domain",
+        None,
+        -1,
     )
-    assert created
-    assert row["id"] == 1
-    assert persisted.call_args.args[4] == {"value": "example.com", "extra": 2}
-    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner(properties='{"value":"example.com"}')))
+    assert plan.existing is None
+    assert plan.row["id"] == -1
+    assert plan.properties == {"value": "example.com", "extra": 2}
+    existing = owner(properties='{"value":"example.com"}')
     with pytest.raises(ConflictError, match="identity"):
-        graph._upsert(db, "nodes", NodeWrite(id=NODE, properties={"value": "other.com"}), [], set())
+        graph._prepare_node(
+            database(), NodeWrite(id=NODE, properties={"value": "other.com"}), existing, "domain", None, -1
+        )
+    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=existing))
     with pytest.raises(ConflictError, match="type"):
-        graph._upsert(db, "nodes", NodeWrite(id=NODE, type="subdomain", properties={}), [], set())
-    persisted.reset_mock()
+        graph._node_header(database(), NodeWrite(id=NODE, type="subdomain", properties={}))
+    request = WriteRequest(nodes=[NodeWrite(type="domain", properties={"value": "example.com"})] * 2)
     with pytest.raises(InvalidParamsError, match="duplicate"):
-        graph._upsert(db, "nodes", NodeWrite(id=NODE, properties={}), [], {("nodes", 1)})
-    persisted.assert_not_called()
+        graph._prepare_node_plans(database(cursor(value=None), cursor(value=None)), Mock(), request)
     monkeypatch.setattr(graph, "row_by_id", Mock(return_value=None))
     with pytest.raises(NotFoundError):
-        graph._upsert(db, "nodes", NodeWrite(id=NODE, properties={}), [], set())
+        graph._node_header(database(), NodeWrite(id=NODE, properties={}))
 
 
 def test_write_value_error_does_not_expose_validation_payload(monkeypatch):
@@ -283,41 +287,41 @@ def test_relation_references_batch_and_existing_endpoints_are_immutable(monkeypa
 
     source = owner(type="domain", properties='{"value":"example.com"}')
     target = owner(id=2, uuid=OTHER, type="ip_address", properties='{"value":"192.0.2.1","version":4}')
-    assert graph._ref(database(), NodeRef(node_index=0), [source]) is source
+    assert graph._prepared_ref(database(), NodeRef(node_index=0), [source]) is source
     with pytest.raises(InvalidParamsError, match="outside batch"):
-        graph._ref(database(), NodeRef(node_index=1), [source])
+        graph._prepared_ref(database(), NodeRef(node_index=1), [source])
     lookup = Mock(return_value=target)
     monkeypatch.setattr(graph, "row_by_id", lookup)
     relation = RelationWrite(
         type="resolves_to", properties={}, source_ref=NodeRef(node_index=0), target_ref=NodeRef(id=OTHER)
     )
-    assert graph._endpoints(database(), relation, [source], None, "resolves_to") == (source, target)
+    assert graph._relation_endpoints(database(), relation, [source], None) == (source, target)
     with pytest.raises(ConflictError, match="immutable"):
-        graph._endpoints(database(), relation, [source], owner(source_id=3, target_id=2), "resolves_to")
+        graph._relation_endpoints(database(), relation, [source], owner(source_id=3, target_id=2))
     lookup.side_effect = [source, target]
     patch = RelationWrite(id=NODE)
-    assert graph._endpoints(database(), patch, [], owner(source_id=1, target_id=2), "resolves_to") == (
-        source,
-        target,
-    )
+    assert graph._relation_endpoints(database(), patch, [], owner(source_id=1, target_id=2)) == (source, target)
     lookup.side_effect = [None]
     with pytest.raises(NotFoundError):
-        graph._ref(database(), NodeRef(id=OTHER), [])
+        graph._prepared_ref(database(), NodeRef(id=OTHER), [])
 
 
 def test_dedup_uses_canonical_identity_to_reject_hash_collision(monkeypatch):
     mutation = NodeWrite(type="domain", properties={"value": "example.com"})
+    properties = {"value": "example.com"}
     lookup = Mock(return_value=owner(properties='{"value":"example.com"}'))
     monkeypatch.setattr(graph, "row_by_id", lookup)
-    assert graph._deduplicate(database(cursor(value=1)), "nodes", mutation, None, "domain", (None, None)) == owner(
-        properties='{"value":"example.com"}'
+    existing, merged = graph._deduplicate_node(
+        database(cursor(value=1)), mutation, None, "domain", properties, None, "key"
     )
+    assert existing == owner(properties='{"value":"example.com"}')
+    assert merged == properties
     lookup.return_value = owner(properties='{"value":"different.com"}')
     with pytest.raises(ConflictError, match="collision"):
-        graph._deduplicate(database(cursor(value=1)), "nodes", mutation, None, "domain", (None, None))
+        graph._deduplicate_node(database(cursor(value=1)), mutation, None, "domain", properties, None, "key")
     lookup.return_value = None
     with pytest.raises(NotFoundError):
-        graph._deduplicate(database(cursor(value=1)), "nodes", mutation, None, "domain", (None, None))
+        graph._deduplicate_node(database(cursor(value=1)), mutation, None, "domain", properties, None, "key")
 
 
 def test_relation_persistence_binds_endpoint_ids_and_observation(monkeypatch):
