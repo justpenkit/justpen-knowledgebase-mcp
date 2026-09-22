@@ -10,7 +10,8 @@ from justpen_knowledgebase_mcp.errors import InvalidParamsError, LimitError
 from justpen_knowledgebase_mcp.models import NeighborsRequest, SearchRequest, WriteRequest
 from justpen_knowledgebase_mcp.mutations import canonical_json
 from justpen_knowledgebase_mcp.service import KnowledgeBase
-from justpen_knowledgebase_mcp.storage.traversal import neighbors
+from justpen_knowledgebase_mcp.storage import traversal
+from justpen_knowledgebase_mcp.storage.traversal import _member_bytes, neighbors
 from justpen_knowledgebase_mcp.storage.worker import OperationToken
 
 from .graph_fixtures import admit
@@ -223,6 +224,12 @@ async def test_response_budget_keeps_frontier_and_visited_bounded(tmp_path):
         assert len(result["edges"]) <= 3000
         assert len(result["frontier"]) <= 1000
         assert len(canonical_json(result).encode("utf-8")) <= 262144
+        # The running counter necessarily stops earlier than the whole-output check it replaced.
+        # Pin how much earlier instead of letting the ceiling above absorb it: the accounted output
+        # is still within one rejected edge, its endpoint node and one separator per array.
+        accounted = len(canonical_json({**result, "frontier": []}).encode("utf-8"))
+        headroom = max(map(_member_bytes, result["edges"])) + max(map(_member_bytes, result["nodes"])) + 2
+        assert traversal.RESPONSE_BYTES - headroom <= accounted <= traversal.RESPONSE_BYTES
 
 
 async def test_pending_visibility_matches_graph_readiness(tmp_path):
@@ -255,3 +262,63 @@ async def test_pending_visibility_matches_graph_readiness(tmp_path):
         await admit(kb, "nodes", ids[2:])
         assert (await kb.neighbors(NeighborsRequest(seed_ids=ids[:1])))["edges"] == []
         assert (await kb.search(SearchRequest(kind="relations")))["items"] == []
+
+
+def serialization_counter(monkeypatch, module):
+    """Count bytes handed to canonical_json so cost is read as work, not as elapsed time."""
+    total = [0]
+
+    def counted(value):
+        text = canonical_json(value)
+        total[0] += len(text.encode("utf-8"))
+        return text
+
+    monkeypatch.setattr(module, "canonical_json", counted)
+    return lambda: total[0]
+
+
+async def test_edge_budget_serializes_each_appended_item_once(tmp_path, monkeypatch):
+    """P3: the budget re-serialized the whole accumulated output on every appended edge, so the
+    bytes serialized grew with the square of the edge count while the call count stayed linear.
+    Serialized volume is therefore the observable that separates the two shapes; a wall-clock
+    bound would measure the host instead."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        ids = []
+        for start in range(0, 200, 100):
+            written = await kb.write(
+                WriteRequest.model_validate(
+                    {
+                        "nodes": [
+                            {"type": "subdomain", "properties": {"value": f"h{index}.example.com"}}
+                            for index in range(start, start + 100)
+                        ]
+                    }
+                )
+            )
+            ids.extend(item["id"] for item in written["nodes"])
+        relations = [
+            {
+                "type": "has_mail_exchange",
+                "source_ref": {"id": ids[0]},
+                "target_ref": {"id": other},
+                "properties": {"preference": preference},
+            }
+            for other in ids[1:]
+            for preference in range(3)
+        ]
+        for start in range(0, len(relations), 100):
+            await kb.write(WriteRequest.model_validate({"relations": relations[start : start + 100]}))
+        volumes, results = {}, {}
+        for max_edges in (100, 300):
+            serialized = serialization_counter(monkeypatch, traversal)
+            results[max_edges] = await kb.workers.read(
+                lambda connection, token, budget=max_edges: neighbors(
+                    connection, token, NeighborsRequest(seed_ids=ids[:1], max_nodes=1000, max_edges=budget)
+                )
+            )
+            volumes[max_edges] = serialized()
+        assert [len(results[budget]["edges"]) for budget in (100, 300)] == [100, 300]
+        # Three times the edges must not cost more than three times the serialization, with slack
+        # for the fixed envelope; the replaced shape cost fifteen times as much here.
+        assert volumes[300] <= 4 * volumes[100]
+        assert volumes[300] <= 4 * len(canonical_json(results[300]).encode("utf-8"))

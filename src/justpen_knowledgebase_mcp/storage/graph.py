@@ -12,7 +12,14 @@ from uuid import uuid4
 
 from ..catalog import catalog_manifest, catalog_schema, catalog_view, scope_order, validate_record
 from ..cursors import CursorBinding
-from ..errors import ConflictError, ExpectedValidationError, InvalidParamsError, NotFoundError, RecordConflictError
+from ..errors import (
+    ConflictError,
+    ExpectedValidationError,
+    InvalidParamsError,
+    LimitError,
+    NotFoundError,
+    RecordConflictError,
+)
 from ..identity import format_timestamp, identity_json, identity_key, parse_timestamp
 from ..models import GetRequest, Mutation, NodeRef, NodeWrite, RelationWrite, WriteRequest, WriteResult
 from ..mutations import canonical_json, merge_properties
@@ -31,6 +38,18 @@ KINDS = frozenset(("nodes", "relations", "evidence"))
 # Derived parent-first from the catalog: a scoped type that is itself a scope-relation source
 # must be resolved before its child, and deriving it keeps that true without a manual reorder.
 _SCOPED_NODE_ORDER = scope_order()
+# `Graph.get` counts its whole record output, so its remainder below the 262 121-byte serialized
+# data bound of `bounded_response` is only the response envelope. `_associations` counts its items
+# alone, leaving its remainder to carry the view key and a 4096-character `next_cursor`.
+RECORD_RESPONSE_BYTES = 250000
+ASSOCIATION_RESPONSE_BYTES = 245000
+
+
+def _member_bytes(member: object) -> int:
+    # An array member costs its own canonical bytes plus one separator. Charging that separator for
+    # the first member too over-counts a non-empty array by exactly one byte and never under-counts,
+    # so this accounting stays at or below the whole-output size it replaces.
+    return len(canonical_json(member).encode("utf-8")) + 1
 
 
 @dataclass
@@ -92,17 +111,6 @@ def require_ready(connection: apsw.Connection, kind: str, row: dict[str, Any]) -
     blocker = pending_blocker(connection, kind, row)
     if blocker is not None:
         raise RecordConflictError("RECORD_DELETING", BlockerDetails.model_validate(blocker))
-
-
-def _ref(connection: apsw.Connection, ref: NodeRef, nodes: list[dict[str, Any]]) -> dict[str, Any]:
-    if ref.node_index is not None:
-        if ref.node_index >= len(nodes):
-            raise InvalidParamsError("node_index outside batch")
-        return nodes[ref.node_index]
-    row = row_by_id(connection, "nodes", ref.id or "")
-    if row is None:
-        raise NotFoundError("node reference missing")
-    return row
 
 
 def _identity_definition(kind: str, type_name: str) -> Mapping[str, Any]:
@@ -531,69 +539,6 @@ def _preflight(
     return node_plans, relation_plans
 
 
-def _endpoints(
-    connection: apsw.Connection,
-    mutation: Mutation,
-    nodes: list[dict[str, Any]],
-    row: dict[str, Any] | None,
-    type_name: str,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    source = target = None
-    if isinstance(mutation, RelationWrite):
-        source = (
-            _ref(connection, mutation.source_ref, nodes)
-            if mutation.source_ref
-            else row_by_id(connection, "nodes", row["source_id"])
-            if row
-            else None
-        )
-        target = (
-            _ref(connection, mutation.target_ref, nodes)
-            if mutation.target_ref
-            else row_by_id(connection, "nodes", row["target_id"])
-            if row
-            else None
-        )
-        if source is None or target is None:
-            raise NotFoundError("relation endpoint missing")
-        if row and (source["id"] != row["source_id"] or target["id"] != row["target_id"]):
-            raise ConflictError("endpoints are immutable")
-        _validate_endpoints(type_name, source, target)
-    return source, target
-
-
-def _deduplicate(
-    connection: apsw.Connection,
-    kind: str,
-    mutation: Mutation,
-    row: dict[str, Any] | None,
-    type_name: str,
-    endpoints: tuple[dict[str, Any] | None, dict[str, Any] | None],
-) -> dict[str, Any] | None:
-    source, target = endpoints
-    if row is None:
-        key = identity_key(kind, type_name, mutation.properties)
-        if kind == "nodes":
-            identifier = connection.execute("SELECT id FROM nodes WHERE type=? AND key=?", (type_name, key)).get
-        else:
-            if source is None or target is None:
-                raise InvalidParamsError("endpoints required")
-            identifier = connection.execute(
-                "SELECT id FROM relations WHERE source_id=? AND type=? AND target_id=? AND key=?",
-                (source["id"], type_name, target["id"], key),
-            ).get
-        if identifier is not None:
-            row = row_by_id(connection, kind, identifier)
-            if row is None:
-                raise NotFoundError("record disappeared")
-            require_ready(connection, kind, row)
-            if identity_json(kind, type_name, json.loads(row["properties"])) != identity_json(
-                kind, type_name, mutation.properties
-            ):
-                raise ConflictError("identity hash collision")
-    return row
-
-
 def _persist(
     connection: apsw.Connection,
     kind: str,
@@ -668,37 +613,6 @@ def _persist(
     return row, created
 
 
-def _upsert(
-    connection: apsw.Connection, kind: str, mutation: Mutation, nodes: list[dict[str, Any]], seen: set[tuple[str, int]]
-) -> tuple[dict[str, Any], bool]:
-    row = row_by_id(connection, kind, mutation.id) if mutation.id is not None else None
-    if mutation.id is not None and row is None:
-        raise NotFoundError("patch target missing")
-    if row is not None:
-        require_ready(connection, kind, row)
-    type_name = row["type"] if row is not None else mutation.type
-    if type_name is None:
-        raise InvalidParamsError("type required")
-    if mutation.type is not None and mutation.type != type_name:
-        raise ConflictError("type is immutable")
-    source, target = _endpoints(connection, mutation, nodes, row, type_name)
-    row = _deduplicate(connection, kind, mutation, row, type_name, (source, target))
-    for endpoint in (source, target):
-        if endpoint is not None:
-            require_ready(connection, "nodes", endpoint)
-    current: dict[str, Any] = json.loads(row["properties"]) if row else {}
-    properties = merge_properties(current, mutation.properties, mutation.remove_properties)
-    validate_record(kind, type_name, properties)
-    if row and identity_json(kind, type_name, current) != identity_json(kind, type_name, properties):
-        raise ConflictError("identity properties are immutable")
-    if row is not None and (kind, row["id"]) in seen:
-        raise InvalidParamsError("duplicate batch identity")
-    row, created = _persist(connection, kind, mutation, row, properties, (source, target))
-    identity = (kind, row["id"])
-    seen.add(identity)
-    return row, created
-
-
 def _links(connection: apsw.Connection, kind: str, row: dict[str, Any], mutation: Mutation) -> tuple[int, int]:
     added = removed = 0
     for operation, identifiers in (("add", mutation.evidence_add), ("remove", mutation.evidence_remove)):
@@ -763,17 +677,22 @@ class Graph:
         if request.view != "record":
             return _associations(connection, request)
         output: dict[str, Any] = {"records": [], "missing_ids": [], "remaining_ids": []}
+        response_bytes = len(canonical_json(output).encode("utf-8"))
         for identifier in request.ids:
             token.check()
             row = row_by_id(connection, request.kind, identifier)
             if row is None:
                 output["missing_ids"].append(identifier)
+                response_bytes += _member_bytes(identifier)
                 continue
             record = _record(connection, request.kind, row)
-            output["records"].append(record)
-            if len(canonical_json(output).encode("utf-8")) > 250000:
-                output["records"].pop()
+            cost = _member_bytes(record)
+            if response_bytes + cost > RECORD_RESPONSE_BYTES:
                 output["remaining_ids"].append(identifier)
+                response_bytes += _member_bytes(identifier)
+                continue
+            output["records"].append(record)
+            response_bytes += cost
         return output
 
 
@@ -864,10 +783,17 @@ def _associations(connection: apsw.Connection, request: GetRequest) -> dict[str,
     last = after
     last_kind = after_kind
     truncated = False
+    item_bytes = 0
     for index, row in enumerate(rows):
-        if index == request.limit or len(canonical_json([*items, row[1]]).encode("utf-8")) > 245000:
+        cost = _member_bytes(row[1])
+        if index == request.limit or item_bytes + cost > ASSOCIATION_RESPONSE_BYTES:
+            # A first item over the budget leaves no position to encode: an evidence `links` cursor
+            # carries the association kind of the last returned item, and there is none.
+            if not items:
+                raise LimitError("association item exceeds response budget")
             truncated = True
             break
+        item_bytes += cost
         last = row[0]
         if request.kind == "evidence" and request.view == "links":
             last_kind = row[1]["kind"]
