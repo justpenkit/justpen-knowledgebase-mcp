@@ -1,7 +1,7 @@
 """Every published argument that names a record publishes the spelling the server enforces.
 
 `validate_graph_id` is an `AfterValidator` with no JSON Schema spelling, so `list_tools()` used to
-promise a record identifier's 36-byte width and nothing else: a host validating against the
+promise a record identifier's 36-character width and nothing else: a host validating against the
 published schema accepted `79693361-7CAE-4DD2-B8E2-101320F37A0E` and the server refused it, one
 round trip later. `kb_get.ids`, `kb_delete.ids` and `kb_reindex.ids` were worse than silent. They
 publish `RecordID | EvidenceID`, and the evidence branch was an unconstrained string, so the
@@ -147,7 +147,7 @@ def test_the_enumerated_paths_are_every_constrained_identifier_the_schemas_publi
 
 
 def test_no_published_argument_still_constrains_a_record_identifier_by_width_alone(published):
-    """The 36-byte width without the spelling is exactly what let a bad request be worth sending."""
+    """The width alone, without the spelling, is what let a bad request still be worth sending."""
     width_only = [
         path
         for tool, schema in sorted(published.items())
