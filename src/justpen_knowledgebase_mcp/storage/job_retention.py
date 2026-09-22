@@ -158,10 +158,13 @@ class JobRetention:
         rows = list(connection.execute(CANDIDATES_SQL, cursor * 3))
         pruned = marked = invalid = 0
         examined = [job_id for _id, job_id, _state, _finished, code in rows if code != "JOB_METADATA_INVALID"]
-        # Both probes read only tables this loop never writes, and `BEGIN IMMEDIATE`
-        # excludes every other writer, so one page-wide probe returns exactly what a
-        # probe per candidate returned. Candidate identifiers are unique across the
-        # page because a job holds one state and the three arms are disjoint.
+        # `BEGIN IMMEDIATE` excludes every other writer, so one page-wide probe returns
+        # exactly what a probe per candidate returned. `pending_owners` reads only
+        # tables this loop never writes; `_candidate_rows` does read `jobs`, but every
+        # write below targets the candidate being processed, strictly after its row was
+        # consumed. Candidate identifiers are unique across the page because a job holds
+        # one state and the three arms are disjoint, so no pre-read row is reused after
+        # a write that touched it.
         durable = _candidate_rows(connection, examined)
         owners = pending_owners(connection, examined)
         for _identifier, job_id, state, finished, error_code in rows:
