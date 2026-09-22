@@ -100,11 +100,16 @@
     100-row retention page issued 398 read statements inside a single control
     transaction and now issues 7. The page still runs in that one transaction
     under `BEGIN IMMEDIATE`, so no retention decision moves.
-- **status**: skip the `dbstat` page walk when the database is larger than
-    262 144 pages. The walk visits every page at about 3.5 us per page, which
-    cannot finish inside the sampler's one-second budget at that size. Above the
-    threshold the derived page statistics are omitted from `kb_status` rather
-    than delaying the sample.
+- **status**: decline the `dbstat` page walk when `PRAGMA page_count` reports
+    more than 262 144 pages. The walk visits every page at about 3.5 us per
+    page, so the sampler's one-second budget buys roughly 289 000 pages; past
+    that the walk already ran out of budget and published `last_error: "LIMIT"`
+    with `cached_at: null`. Declining up front reaches the same published state
+    without spending up to a full second of a reader thread every 300 seconds.
+    Two workspaces lose a figure they used to get: one between the threshold and
+    its own host's real break-even, and one whose bulk is canonical records with
+    a small text index, since `page_count` counts the whole database rather than
+    the indexed objects. Below the threshold nothing changes.
 
 ### Refactor
 
