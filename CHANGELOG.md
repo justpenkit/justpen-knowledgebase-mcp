@@ -125,26 +125,21 @@
     path normalization, not by syscalls, and falls from 123.8 us to 4.1 us on
     the cached path; a minimal `kb_search` round trip is about 20% faster. No
     claim is made for writes, where the effect is not separable from noise.
-    **Behaviour change:** a managed directory replaced under a running server,
-    or a WAL that gains a hard link, can now go unnoticed for up to one second
-    longer than before. After that the full check runs again and
-    `check_product` degrades to `WAL_PRESSURE` until restart, as it does today.
-    A name that stops validating is dropped from the cache rather than served
-    until expiry, so the degraded state is reached once and stays.
+    The size is read with `os.stat(name, dir_fd=..., follow_symlinks=False)`
+    through the pinned parent descriptor, so the regular-file and `st_nlink`
+    rules that `validate_native` applies still run on every call: a WAL replaced
+    by a symlink or given a hard link is an unknown measurement on the first
+    call after the change, as it was before. **Behaviour change:** only the
+    directory-identity check is deferred, so a managed directory replaced under
+    a running server can go unnoticed for up to one second. After that the full
+    check runs again and `check_product` degrades to `WAL_PRESSURE` until
+    restart, as it does today. A name that stops validating is dropped from the
+    cache rather than served until expiry, so the degraded state is reached once
+    and stays.
 - **jobs**: probe retention owners once per page instead of once per job. A full
     100-row retention page issued 398 read statements inside a single control
     transaction and now issues 7. The page still runs in that one transaction
     under `BEGIN IMMEDIATE`, so no retention decision moves.
-- **status**: decline the `dbstat` page walk when `PRAGMA page_count` reports
-    more than 262 144 pages. The walk visits every page at about 3.5 us per
-    page, so the sampler's one-second budget buys roughly 289 000 pages; past
-    that the walk already ran out of budget and published `last_error: "LIMIT"`
-    with `cached_at: null`. Declining up front reaches the same published state
-    without spending up to a full second of a reader thread every 300 seconds.
-    Two workspaces lose a figure they used to get: one between the threshold and
-    its own host's real break-even, and one whose bulk is canonical records with
-    a small text index, since `page_count` counts the whole database rather than
-    the indexed objects. Below the threshold nothing changes.
 - **search**: publish `coverage` and `incomplete` from a maintained counter
     instead of counting the `evidence` table on every request. `coverage()` ran
     `SELECT index_state,incomplete,count(*) ... GROUP BY ...` once per
