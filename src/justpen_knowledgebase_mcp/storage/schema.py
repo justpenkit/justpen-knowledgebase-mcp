@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from ..catalog import CATALOG_FINGERPRINT, CATALOG_VERSION
 from ..config import WorkspacePolicy
-from ..errors import ConfigurationError, UnsupportedLayoutError
+from ..errors import ConfigurationError, ContractDimension, ContractMismatchError, UnsupportedLayoutError
 
 if TYPE_CHECKING:
     import apsw
@@ -213,6 +213,32 @@ CREATE INDEX {owner}_property_lookup ON {owner}_property_index(path,value_type,v
 """
 
 
+# Parallel to the SELECT in `SchemaGuard.check`: the name an operator can act on
+# for each compared column. Several dimensions can differ at once — a v1
+# workspace differs in three — so the first one in this order is reported, which
+# is also the coarsest, and fixing it is what makes the rest comparable again.
+_CONTRACT_DIMENSIONS: tuple[ContractDimension, ...] = (
+    "schema version",
+    "catalog version",
+    "catalog fingerprint",
+    "index format version",
+    "managed paths",
+)
+
+
+def _contract_mismatch(row: object, expected: tuple[object, ...]) -> ConfigurationError:
+    # A settings row that is absent or not the expected shape names no dimension:
+    # the contract could not be read at all, so the reason stays undifferentiated.
+    if not isinstance(row, tuple):
+        return ConfigurationError("stored database contract is unreadable")
+    stored_row = cast("tuple[object, ...]", row)
+    if len(stored_row) == len(expected):
+        for dimension, stored, want in zip(_CONTRACT_DIMENSIONS, stored_row, expected, strict=True):
+            if stored != want:
+                return ContractMismatchError(dimension)
+    return ConfigurationError("stored database contract is unreadable")
+
+
 class SchemaGuard:
     """Compare the stored contract and managed paths in the caller's transaction."""
 
@@ -237,7 +263,7 @@ class SchemaGuard:
             "FROM settings WHERE singleton=1"
         ).get
         if row != expected:
-            raise ConfigurationError("database contract or managed paths differ")
+            raise _contract_mismatch(row, expected)
 
     def policy(self, connection: apsw.Connection) -> WorkspacePolicy:
         """Validate the complete persisted policy; malformed state is configuration."""

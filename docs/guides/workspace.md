@@ -52,6 +52,15 @@ Before an upgrade, stop every MCP process using the workspace. Reopen it with
 the same compatible release. The startup guard checks schema/catalog/index
 compatibility; it does not migrate an incompatible database automatically.
 
+An incompatible workspace fails with `CONFIGURATION` and an authored reason
+naming which part of the stored contract differs: the schema version, the
+catalog version, the catalog fingerprint, the index format version, or the
+managed paths. When several differ the coarsest one is reported. The reason
+names the category only; it never contains a stored value or a filesystem path.
+A managed-paths reason means this process is configured with a different
+managed directory layout than the one the workspace was created with, not that
+a directory is missing.
+
 Unreleased v1 workspaces must also contain the required job scheduling and
 ownership indexes with the expected definitions, plus the checked nullable
 `jobs.blob_sha256` ownership column. The locator is independent of job progress

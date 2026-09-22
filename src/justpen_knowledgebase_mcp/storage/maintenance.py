@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ..errors import (
     BusyError,
     ConfigurationError,
+    ContractMismatchError,
     InternalError,
     LimitError,
     McpError,
@@ -187,8 +188,13 @@ class StatusCache:
         """Reject product work after a permanent local maintenance fault."""
         with self._lock:
             error = self._failure[0] if self._failure is not None and self._failure[1] else None
+        # Authored errors are rebuilt from their own field, not from their text:
+        # their constructor takes the selector, so `type(error)(str(error))` would
+        # fail on it. Every other public error carries its message as its argument.
         if isinstance(error, UnsupportedLayoutError):
             raise UnsupportedLayoutError(error.layout) from None
+        if isinstance(error, ContractMismatchError):
+            raise ContractMismatchError(error.dimension) from None
         if error is not None:
             raise type(error)(str(error)) from None
 
@@ -617,7 +623,10 @@ def _startup_failed(ready: asyncio.Future[None], error: BaseException) -> None:
 
 
 def _maintenance_failure(error: Exception) -> tuple[McpError, bool]:
-    if isinstance(error, UnsupportedLayoutError):
+    # Both are authored from a fixed selector, never from stored or exception text,
+    # so they can name what differs where a bare `ConfigurationError` cannot: its
+    # message is whatever the raising site passed and may carry workspace content.
+    if isinstance(error, (UnsupportedLayoutError, ContractMismatchError)):
         return error, True
     if isinstance(error, ConfigurationError):
         return ConfigurationError("maintenance unavailable"), True
