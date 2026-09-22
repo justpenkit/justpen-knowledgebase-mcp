@@ -35,10 +35,13 @@ parse, fails before any envelope exists, so clients should also handle an MCP
 `is_error` result without `structured_content`.
 
 A record identifier is refused whichever layer catches it. The published schema
-promises the 36-byte width; the canonical lowercase 8-4-4-4-12 spelling is
-checked on arrival and cannot be expressed in JSON Schema, so
-`INVALID: invalid tool request; <argument>: non-canonical graph id` is the only
-notice of it. Both arrive as the envelope above.
+promises the 36-byte width and the canonical lowercase 8-4-4-4-12 spelling as an
+anchored `pattern`, so a host can refuse `550E8400-...` without a round trip. An
+evidence identifier publishes its own `e_` plus 64 lowercase hex `pattern`. The
+patterns are metadata: the server still checks on arrival and answers
+`INVALID: invalid tool request; <argument>: non-canonical graph id` as the
+envelope above, so a client that skips the schema check loses nothing but a
+round trip.
 
 Serialized success envelopes are capped at 256 KiB. A single result that cannot
 fit returns `LIMIT`; list operations otherwise return explicit remainder,

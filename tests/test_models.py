@@ -7,6 +7,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from justpen_knowledgebase_mcp import models
+from justpen_knowledgebase_mcp.identity import GRAPH_ID_PATTERN
 from justpen_knowledgebase_mcp.jobs import JobsRequest
 from justpen_knowledgebase_mcp.models import (
     ClosedModel,
@@ -170,19 +171,26 @@ def test_every_ingress_model_refuses_a_non_canonical_identifier(model, payload):
         model.model_validate(payload)
 
 
-def test_the_ingress_alias_publishes_its_width_to_a_client():
-    """Keep the width on the alias, where `list_tools()` can publish it, not inside a tool body.
+def test_the_ingress_alias_publishes_its_width_and_spelling_to_a_client():
+    """Keep the constraints on the alias, where `list_tools()` can publish them, not in a tool body.
 
     The obvious way to give a signature rejection an application envelope is to loosen the argument
     to plain `str` and check the spelling in the tool function. That works, and silently drops these
-    two keys from the published input schema, so an MCP host can no longer reject an over-long
-    identifier before sending it. `tools/request_presence.py` publishes the envelope from the
-    middleware instead, which leaves this schema untouched.
+    keys from the published input schema, so an MCP host can no longer reject a bad identifier
+    before sending it. `tools/request_presence.py` publishes the envelope from the middleware
+    instead, which leaves this schema untouched.
 
-    The canonical-spelling rule itself is an `AfterValidator` with no JSON Schema spelling, so a
-    client cannot predict that refusal from the schema alone; only the width is promised.
+    The canonical-spelling rule stays an `AfterValidator`, which has no JSON Schema spelling of its
+    own; `json_schema_extra` publishes the grammar that validator applies beside the width, as
+    metadata rather than a second check. `tests/tools/test_published_identifier_grammar.py` holds
+    the same pattern at every argument `list_tools()` actually reaches.
     """
-    assert TypeAdapter(models.RecordID).json_schema() == {"type": "string", "minLength": 36, "maxLength": 36}
+    assert TypeAdapter(models.RecordID).json_schema() == {
+        "type": "string",
+        "minLength": 36,
+        "maxLength": 36,
+        "pattern": GRAPH_ID_PATTERN,
+    }
 
 
 def _record_id_fields(model: type) -> set[str]:
