@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import heapq
 import json
 from contextlib import closing
 from typing import TYPE_CHECKING, Any
@@ -87,6 +88,9 @@ def search(connection: apsw.Connection, token: OperationToken, request: SearchRe
         "coverage": current_coverage,
     }
     last_returned = after
+    # Negated keys make the min-heap evict the worst retained match, so the best `limit` are kept
+    # without sorting the retained list once per candidate. Identifiers are unique, so no comparison
+    # ever reaches the item.
     ranked: list[tuple[float, int, dict[str, Any]]] = []
     ranked_count = 0
     item_bytes = 0
@@ -96,9 +100,11 @@ def search(connection: apsw.Connection, token: OperationToken, request: SearchRe
         for identifier, item in candidates:
             if request.sort == "relevance":
                 ranked_count += 1
-                ranked.append((item["score"], identifier, item))
-                ranked.sort(key=lambda entry: (entry[0], entry[1]))
-                del ranked[request.limit :]
+                entry = (-item["score"], -identifier, item)
+                if len(ranked) < request.limit:
+                    heapq.heappush(ranked, entry)
+                else:
+                    heapq.heappushpop(ranked, entry)
                 continue
             cost = _member_bytes(item)
             if len(output["items"]) == request.limit or _envelope_bytes(output) + item_bytes + cost > RESPONSE_BYTES:
@@ -210,7 +216,8 @@ def _matched_candidates(
 def _ranked_output(output: dict[str, Any], ranked: list[tuple[float, int, dict[str, Any]]], ranked_count: int) -> None:
     output["has_more"] = ranked_count > len(ranked)
     envelope, item_bytes = _envelope_bytes(output), 0
-    for _, _, item in ranked:
+    # The heap holds negated keys, so descending order over them is ascending relevance order.
+    for _, _, item in sorted(ranked, reverse=True):
         cost = _member_bytes(item)
         if envelope + item_bytes + cost > RESPONSE_BYTES:
             output["has_more"] = True

@@ -234,3 +234,24 @@ def test_search_page_breaks_within_one_item_of_the_declared_budget(monkeypatch):
     accounted = len(canonical_json({**result, "cursor": None}).encode("utf-8"))
     refused = search._member_bytes(result["items"][0]) + 1
     assert search.RESPONSE_BYTES - refused <= accounted <= search.RESPONSE_BYTES
+
+
+def test_relevance_retains_the_best_matches_and_breaks_score_ties_by_identifier(monkeypatch):
+    """Equivalence pin for the bounded heap, green under the list sort it replaces as well: what
+    the heap changes is cost, which is measured, not the selection or the order, which is pinned
+    here. Lower bm25 scores rank better, and equal scores order by candidate identifier."""
+    monkeypatch.setattr(search, "coverage", Mock(return_value=COVERAGE))
+    monkeypatch.setattr(
+        search, "compile_text_query", Mock(return_value=TextQuery("x", "literal", ("x",), ('"x"',), 0, 1))
+    )
+    scores = [-1.0, -5.0, -3.0, -5.0, -2.0]
+    monkeypatch.setattr(search, "owner_match", Mock(side_effect=[{"score": score} for score in scores]))
+    rows = [(index, NODE, "domain", "key", json.dumps({"label": f"n{index}"}), 1) for index in range(1, 6)]
+    result = search.search(
+        database(cursor(value=(NODE, 1)), cursor(rows=rows), cursor()),
+        Mock(),
+        SearchRequest(kind="nodes", query="x", sort="relevance", limit=3),
+    )
+    assert [item["label"] for item in result["items"]] == ["n2", "n4", "n3"]
+    assert [item["score"] for item in result["items"]] == [-5.0, -5.0, -3.0]
+    assert result["has_more"]
