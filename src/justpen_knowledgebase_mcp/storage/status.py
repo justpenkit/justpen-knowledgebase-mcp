@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import apsw
 
+from ..errors import LimitError
 from .fulltext import coverage
 
 if TYPE_CHECKING:
@@ -58,10 +59,22 @@ DERIVED_OBJECTS = {
 }
 
 
+# `dbstat` reads every page of every object it reports. Measured at 3.4-3.6 us
+# per page across 4751 to 888443 pages, so the sampler's one-second budget buys
+# roughly 289000 pages. Past this bound the walk cannot finish on any host and
+# only wastes a reader thread before the budget cancels it mid-page, so the same
+# LimitError is raised up front instead. `PRAGMA page_count` reads the header in
+# 0.012 ms and bounds the walk from above: it counts the whole database, never
+# fewer pages than the selected objects hold.
+DBSTAT_PAGE_LIMIT = 262144
+
+
 def sample_derived_storage(connection: apsw.Connection, token: OperationToken) -> dict[str, Any]:
     """Sum selected B-tree pages with cancellation between pages and no text materialization."""
     sizes = dict.fromkeys(DERIVED_OBJECTS, 0)
     try:
+        if connection.execute("PRAGMA page_count").get > DBSTAT_PAGE_LIMIT:
+            raise LimitError("derived storage sample exceeds the page allocation budget")
         for category, names in DERIVED_OBJECTS.items():
             for object_name in names:
                 token.check()
