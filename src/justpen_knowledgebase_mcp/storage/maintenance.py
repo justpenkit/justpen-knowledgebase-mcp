@@ -12,6 +12,7 @@ import time
 from contextlib import ExitStack
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
+from weakref import WeakKeyDictionary
 
 import apsw
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -30,6 +31,8 @@ from .admission import open_lock
 from .worker import OperationToken, OwnerOutcome
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ..config import WorkspacePolicy
     from ..workspace import WorkspacePaths
     from .connection import ManagedConnection, SQLiteRuntime
@@ -87,10 +90,43 @@ class WalState(BaseModel):
             return cls()
 
 
+# `validate_native` re-derives and re-validates the name on every call: about 539
+# Python calls of pathlib work around roughly seven syscalls, measured at 123.8 us
+# against 3.5 us for the bare stat. Every product transaction pays it once and
+# every write commit a second time. The validated name is therefore reused for at
+# most this long, which is exactly how long a managed directory replaced under a
+# running server, or a WAL that gained a hard link, can go unnoticed: the full
+# check runs again within a second and `check_product` degrades to WAL_PRESSURE
+# from then on, as it does today.
+_REVALIDATE_SECONDS = 1.0
+
+_VALIDATED_WAL: WeakKeyDictionary[WorkspacePaths, tuple[Path, float]] = WeakKeyDictionary()
+_VALIDATED_WAL_LOCK = threading.Lock()
+
+
+def _wal_path(workspace: WorkspacePaths) -> Path:
+    """Revalidate the WAL name at most once per `_REVALIDATE_SECONDS`."""
+    now = time.monotonic()
+    with _VALIDATED_WAL_LOCK:
+        entry = _VALIDATED_WAL.get(workspace)
+        if entry is not None and now - entry[1] < _REVALIDATE_SECONDS:
+            return entry[0]
+    try:
+        path = workspace.validate_native(str(workspace.db) + "-wal")
+    except BaseException:
+        # A directory that stopped validating must not keep serving its old name.
+        with _VALIDATED_WAL_LOCK:
+            _VALIDATED_WAL.pop(workspace, None)
+        raise
+    with _VALIDATED_WAL_LOCK:
+        _VALIDATED_WAL[workspace] = (path, now)
+    return path
+
+
 def allocation(workspace: WorkspacePaths) -> int | None:
     """Measure WAL allocation; absent WAL is zero, failed measurement unknown."""
     try:
-        return workspace.validate_native(str(workspace.db) + "-wal").stat().st_size
+        return _wal_path(workspace).stat().st_size
     except FileNotFoundError:
         return 0
     except (OSError, PathDeniedError, StorageIOError):

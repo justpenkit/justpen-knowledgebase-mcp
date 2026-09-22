@@ -380,3 +380,58 @@ def test_invalid_local_cycle_cannot_report_recovery_after_peer_sample(monkeypatc
     monkeypatch.setattr(task, "_attempt", lambda *_args: task.factory.status_cache.update(WalState(sample_seq=2)))
     task.run_once("timer")
     assert "maintenance_recovered" not in caplog.text
+
+
+def wal_workspace(size=4096):
+    """A workspace whose WAL name validates and whose WAL stats at a fixed size."""
+    workspace = Mock()
+    workspace.db = "/w/data/kb.sqlite3"
+    workspace.validate_native.return_value = Mock(**{"stat.return_value": Mock(st_size=size)})
+    return workspace
+
+
+def test_wal_name_is_revalidated_at_most_once_per_interval(monkeypatch):
+    """Reusing the validated name is what makes `allocation()` cheap on every read."""
+    clock = 1000.0
+    monkeypatch.setattr(maintenance.time, "monotonic", lambda: clock)
+    workspace = wal_workspace()
+
+    for _ in range(50):
+        assert maintenance.allocation(workspace) == 4096
+    assert workspace.validate_native.call_count == 1
+
+    # Past the interval the full containment check runs again. Without that bound
+    # the name would be reused forever and this count would stay at one.
+    clock += maintenance._REVALIDATE_SECONDS
+    assert maintenance.allocation(workspace) == 4096
+    assert workspace.validate_native.call_count == 2
+
+
+def test_replaced_managed_directory_is_noticed_within_the_revalidation_bound(monkeypatch):
+    """A cached name delays detection; it must not suppress it."""
+    clock = 2000.0
+    monkeypatch.setattr(maintenance.time, "monotonic", lambda: clock)
+    workspace = wal_workspace()
+    assert maintenance.allocation(workspace) == 4096
+
+    workspace.validate_native.side_effect = StorageIOError("IO_ERROR: MANAGED_DIRECTORY_CHANGED")
+    # Inside the bound the replacement is still invisible, which is the cost.
+    clock += maintenance._REVALIDATE_SECONDS * 0.99
+    assert maintenance.allocation(workspace) == 4096
+
+    # At the bound it degrades exactly as an uncached measurement does today.
+    clock += maintenance._REVALIDATE_SECONDS
+    assert maintenance.allocation(workspace) is None
+    # The rejected name is dropped rather than served again until the next expiry.
+    assert maintenance.allocation(workspace) is None
+    assert workspace.validate_native.call_count == 3
+
+
+def test_each_workspace_caches_its_own_wal_name(monkeypatch):
+    monkeypatch.setattr(maintenance.time, "monotonic", lambda: 3000.0)
+    first, second = wal_workspace(4096), wal_workspace(8192)
+    assert maintenance.allocation(first) == 4096
+    assert maintenance.allocation(second) == 8192
+    assert maintenance.allocation(first) == 4096
+    assert first.validate_native.call_count == 1
+    assert second.validate_native.call_count == 1
