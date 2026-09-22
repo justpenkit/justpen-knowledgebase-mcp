@@ -17,9 +17,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SHARED_GUARD = ROOT / "scripts" / "hooks" / "guard_config.py"
 
 
-def call_hook(client: str, tool: str, tool_input: dict[str, Any], *, event="PreToolUse", cwd=ROOT) -> dict[str, Any]:
+def call_hook(tool: str, tool_input: dict[str, Any], *, event="PreToolUse", cwd=ROOT) -> dict[str, Any]:
     result = subprocess.run(
-        [sys.executable, str(SHARED_GUARD), "--client", client],
+        [sys.executable, str(SHARED_GUARD), "--client", "codex"],
         input=json.dumps({"hook_event_name": event, "tool_name": tool, "tool_input": tool_input, "cwd": str(cwd)}),
         capture_output=True,
         text=True,
@@ -29,196 +29,24 @@ def call_hook(client: str, tool: str, tool_input: dict[str, Any], *, event="PreT
     return json.loads(result.stdout) if result.stdout.strip() else {}
 
 
-def call_claude(command: str) -> dict[str, Any]:
-    return call_hook("claude", "Bash", {"command": command})
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "cat pyproject.toml",
-        "head -20 uv.lock",
-        "rg fastmcp pyproject.toml",
-        "sed -n '1,40p' pyproject.toml",
-        "cat pyproject.toml | head -20",
-        "cat < uv.lock",
-        "cat pyproject.toml && git diff -- uv.lock",
-    ],
-)
-def test_reading_protected_files_does_not_request_approval(command: str) -> None:
-    assert call_claude(command) == {}
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "uv add rich && printf bad > pyproject.toml",
-        "uv sync; printf bad > uv.lock",
-        "uv lock > pyproject.toml",
-    ],
-)
-def test_uv_prefix_cannot_approve_a_protected_shell_write(command: str) -> None:
-    assert call_claude(command)["hookSpecificOutput"]["permissionDecision"] == "ask"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "cat pyproject.toml | sort | cut -d= -f1",
-        "cut -d= -f1 pyproject.toml",
-        "sort uv.lock",
-        "diff pyproject.toml /tmp/candidate.toml",
-        "cmp pyproject.toml /tmp/candidate.toml",
-        "md5sum uv.lock",
-        "sha256sum pyproject.toml",
-        "cksum pyproject.toml",
-        "file pyproject.toml",
-        "jq .project.name pyproject.toml",
-        "od -c uv.lock",
-        "column -t pyproject.toml",
-        "basename pyproject.toml",
-        "realpath pyproject.toml",
-        "du -h uv.lock",
-        "diff pyproject.toml /tmp/a && md5sum uv.lock",
-    ],
-)
-def test_inspecting_protected_files_with_stdout_only_tools_does_not_ask(command: str) -> None:
-    """Reading is not writing: an inspection that cannot create a file must not prompt."""
-    assert call_claude(command) == {}
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "sort -o pyproject.toml /dev/null",
-        "sort --output=uv.lock /dev/null",
-        "sort -uo pyproject.toml /dev/null",
-        "sort -ubo uv.lock /dev/null",
-        "sort --compress-program=./writer pyproject.toml",
-        "cat /tmp/candidate | sort -o pyproject.toml",
-        "file -C -m pyproject.toml",
-        "uniq /tmp/candidate pyproject.toml",
-        "cat /dev/null | uniq - pyproject.toml",
-        "xxd -r -p /tmp/candidate.hex uv.lock",
-        "xxd pyproject.toml uv.lock",
-        "sort -opyproject.toml /dev/null",
-        "sort -uopyproject.toml /dev/null",
-        "sort --out=pyproject.toml /dev/null",
-        "sort --outp=uv.lock /dev/null",
-        "sort --compress=/tmp/writer pyproject.toml",
-        "file --comp -m pyproject.toml",
-        "cp /dev/null uv.loc[[:lower:]]",
-        "awk 'system(\"touch /tmp/ran\")' pyproject.toml",
-        "awk '\"touch /tmp/ran\" | getline line' pyproject.toml",
-        "awk /fastmcp/ pyproject.toml",
-    ],
-)
-def test_inspection_tools_cannot_write_a_protected_file(command: str) -> None:
-    """Each spelling here was executed against real copies and changed a protected file.
-
-    `uniq` and `xxd` take their output file as a positional operand, so no option list can gate
-    them and neither command is admitted at all. `sort -uo` proves a write option must be matched
-    inside a short-option cluster. `awk -i`/`-l` reach further still: gawk loads a shared object
-    whose constructor runs before gawk rejects the plugin.
-    """
-    assert call_claude(command)["hookSpecificOutput"]["permissionDecision"] == "ask"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "sed -i s/a/b/ py*.toml",
-        "sed -i s/a/b/ pyproject*.toml",
-        "cp /tmp/candidate ./py?roject.toml",
-        "tee uv.loc? < /tmp/candidate",
-        "mv /tmp/candidate uv.loc[k]",
-        "sed -i s/a/b/ ~/*/py*.toml",
-        "cp /tmp/candidate /*/py*.toml",
-        "cp /tmp/candidate /**/pyproject.toml",
-        "cp /tmp/candidate /home/*/**/py*.toml",
-    ],
-)
-def test_a_glob_that_expands_onto_a_protected_file_is_guarded(command: str) -> None:
-    """A pattern names no protected path literally while the shell still resolves it onto one."""
-    assert call_claude(command)["hookSpecificOutput"]["permissionDecision"] == "ask"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "cp /tmp/candidate /etc/*.conf",
-        "mv /tmp/candidate /var/log/*.log",
-        "cp src/**/*.py /tmp/",
-        "tar -cf /tmp/x.tar /opt/**/*.so",
-        "rm /tmp/*.toml",
-    ],
-)
-def test_a_glob_that_cannot_reach_a_protected_file_is_not_gated(command: str) -> None:
-    """The pattern is matched against the two protected paths, so an unrelated write is quiet.
-
-    Expanding patterns against the filesystem instead would walk the tree for a pattern that
-    matches nothing and would ask about every absolute glob, which is the prompt fatigue this
-    policy exists to avoid.
-    """
-    assert call_claude(command) == {}
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "cat uv.lock | tee pyproject.toml",
-        "sed -n '1w uv.lock' pyproject.toml",
-        "sed -i '' 's/a/b/' pyproject.toml",
-        "sed -n '1p' -e 'w uv.lock' pyproject.toml",
-        "rg --pre='./writer' fastmcp pyproject.toml",
-        "cat pyproject.toml && python writer.py",
-        "cat < uv.lock > pyproject.toml",
-    ],
-)
-def test_read_prefixes_cannot_hide_writes(command):
-    assert call_claude(command)["hookSpecificOutput"]["permissionDecision"] == "ask"
-
-
-@pytest.mark.parametrize("tool", ["Edit", "Write", "MultiEdit"])
-@pytest.mark.parametrize("path", ["pyproject.toml", "./uv.lock", str(ROOT / "pyproject.toml")])
-def test_claude_direct_writes_request_user_approval(tool, path):
-    assert call_hook("claude", tool, {"file_path": path})["hookSpecificOutput"]["permissionDecision"] == "ask"
-
-
-@pytest.mark.parametrize("tool", ["Read", "Edit", "Write"])
-@pytest.mark.parametrize("path", ["src/app.py", "pyproject.toml.example", "uv.lock.bak", "nested/pyproject.toml"])
-def test_unprotected_files_are_not_gated(tool, path):
-    assert call_hook("claude", tool, {"file_path": path}) == {}
-
-
-def test_read_tool_can_inspect_protected_file():
-    assert call_hook("claude", "Read", {"file_path": "pyproject.toml"}) == {}
-
-
-def test_claude_allows_only_the_complete_selected_test_command():
-    output = call_claude("make test-one TEST=tests/test_example.py::test_case")
-    assert output["hookSpecificOutput"]["permissionDecision"] == "allow"
-
-
-@pytest.mark.parametrize("suffix", ["-f other.mk", "--eval=anything", "format", "&& python edit.py"])
-def test_claude_selected_test_does_not_approve_additional_make_options(suffix):
-    output = call_claude(f"make test-one TEST=tests/test_example.py {suffix}")
-    assert output.get("hookSpecificOutput", {}).get("permissionDecision") != "allow"
-    permissions = json.loads((ROOT / ".claude/settings.json").read_text())["permissions"]
-    assert not any("make test-one" in rule for rule in permissions["allow"])
-
-
-@pytest.mark.parametrize("client", ["claude", "codex"])
 @pytest.mark.parametrize("operation", ["Add File", "Update File", "Delete File", "Move to"])
-def test_patch_protects_every_file_operation(client, operation):
+def test_patch_protects_every_file_operation(operation):
     patch = f"*** Begin Patch\n*** {operation}: uv.lock\n*** End Patch"
-    output = call_hook(client, "apply_patch", {"command": patch})
-    assert output["hookSpecificOutput"]["permissionDecision"] == ("ask" if client == "claude" else "deny")
+    output = call_hook("apply_patch", {"command": patch})
+    assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_patch_content_mention_is_not_a_protected_destination():
     patch = "*** Begin Patch\n*** Add File: README.md\n+Read pyproject.toml first.\n*** End Patch"
-    assert call_hook("codex", "apply_patch", {"command": patch}) == {}
+    assert call_hook("apply_patch", {"command": patch}) == {}
+
+
+def test_patch_through_a_symlink_is_guarded(tmp_path):
+    alias = tmp_path / "settings"
+    alias.symlink_to(ROOT / "pyproject.toml")
+    patch = f"*** Begin Patch\n*** Update File: {alias}\n*** End Patch"
+    output = call_hook("apply_patch", {"command": patch})
+    assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 @pytest.mark.parametrize(
@@ -234,7 +62,7 @@ def test_patch_content_mention_is_not_a_protected_destination():
 )
 def test_codex_automatically_approves_managed_uv(command):
     pinned = command.replace("uv ", f'uv --directory "{ROOT}" ', 1)
-    output = call_hook("codex", "Bash", {"command": pinned}, event="PermissionRequest")
+    output = call_hook("Bash", {"command": pinned}, event="PermissionRequest")
     assert output == {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}
 
 
@@ -265,34 +93,34 @@ def test_codex_automatically_approves_managed_uv(command):
     ],
 )
 def test_codex_defers_other_escalations_to_user(command):
-    assert call_hook("codex", "Bash", {"command": command}, event="PermissionRequest") == {}
+    assert call_hook("Bash", {"command": command}, event="PermissionRequest") == {}
 
 
 def test_uv_in_another_directory_needs_user_review(tmp_path):
-    assert call_hook("codex", "Bash", {"command": "uv sync"}, event="PermissionRequest", cwd=tmp_path) == {}
+    assert call_hook("Bash", {"command": "uv sync"}, event="PermissionRequest", cwd=tmp_path) == {}
 
 
 def test_codex_session_cwd_is_not_evidence_of_execution_cwd():
     # CLI 0.154 drops exec_command.workdir from PermissionRequest tool_input.
-    assert call_hook("codex", "Bash", {"command": "uv sync"}, event="PermissionRequest", cwd=ROOT) == {}
+    assert call_hook("Bash", {"command": "uv sync"}, event="PermissionRequest", cwd=ROOT) == {}
 
 
 @pytest.mark.parametrize("suffix", ["--directory /other", "--project /other", "--", "--cache-dir /other"])
 def test_pinned_uv_cannot_override_its_target(suffix):
     command = f'uv --directory "{ROOT}" sync {suffix}'
-    assert call_hook("codex", "Bash", {"command": command}, event="PermissionRequest") == {}
+    assert call_hook("Bash", {"command": command}, event="PermissionRequest") == {}
 
 
 def test_pinned_uv_is_independent_of_session_cwd(tmp_path):
     command = f'uv --directory "{ROOT}" sync --locked'
-    output = call_hook("codex", "Bash", {"command": command}, event="PermissionRequest", cwd=tmp_path)
+    output = call_hook("Bash", {"command": command}, event="PermissionRequest", cwd=tmp_path)
     assert output["hookSpecificOutput"]["decision"]["behavior"] == "allow"
 
 
 @pytest.mark.parametrize("target", ["format", "format-md", "format-toml", "format-yaml", "format-json"])
 def test_codex_automatically_approves_root_pinned_formatting(target, tmp_path):
     command = f'make --directory "{ROOT}" {target}'
-    output = call_hook("codex", "Bash", {"command": command}, event="PermissionRequest", cwd=tmp_path)
+    output = call_hook("Bash", {"command": command}, event="PermissionRequest", cwd=tmp_path)
     assert output["hookSpecificOutput"]["decision"]["behavior"] == "allow"
 
 
@@ -310,30 +138,29 @@ def test_codex_automatically_approves_root_pinned_formatting(target, tmp_path):
 )
 def test_formatting_cannot_approve_command_overrides_or_extra_actions(suffix):
     command = f'make --directory "{ROOT}" format {suffix}'
-    assert call_hook("codex", "Bash", {"command": command}, event="PermissionRequest") == {}
+    assert call_hook("Bash", {"command": command}, event="PermissionRequest") == {}
 
 
 @pytest.mark.parametrize(
     "command", ["make format", "make --directory /other format", "make --directory . format", "./make format"]
 )
 def test_formatting_escalation_requires_a_proven_project_root(command):
-    assert call_hook("codex", "Bash", {"command": command}, event="PermissionRequest") == {}
+    assert call_hook("Bash", {"command": command}, event="PermissionRequest") == {}
 
 
 def test_workdir_override_is_checked(tmp_path):
-    assert call_hook("codex", "Bash", {"command": "uv sync", "workdir": str(tmp_path)}, event="PermissionRequest") == {}
+    assert call_hook("Bash", {"command": "uv sync", "workdir": str(tmp_path)}, event="PermissionRequest") == {}
 
 
 def test_codex_shell_write_uses_native_filesystem_gate():
-    assert call_hook("codex", "Bash", {"command": "echo bad > uv.lock"}) == {}
-    assert call_hook("codex", "Bash", {"command": "echo bad > uv.lock"}, event="PermissionRequest") == {}
+    assert call_hook("Bash", {"command": "echo bad > uv.lock"}) == {}
+    assert call_hook("Bash", {"command": "echo bad > uv.lock"}, event="PermissionRequest") == {}
 
 
-@pytest.mark.parametrize("client", ["claude", "codex"])
 @pytest.mark.parametrize("raw", ["not json", "[]", '{"tool_input": null}'])
-def test_invalid_hook_input_blocks(client, raw):
+def test_invalid_hook_input_blocks(raw):
     result = subprocess.run(
-        [sys.executable, str(SHARED_GUARD), "--client", client],
+        [sys.executable, str(SHARED_GUARD), "--client", "codex"],
         input=raw,
         capture_output=True,
         text=True,
@@ -343,38 +170,33 @@ def test_invalid_hook_input_blocks(client, raw):
     assert result.stderr
 
 
-def test_symlink_write_is_guarded(tmp_path):
-    alias = tmp_path / "settings"
-    alias.symlink_to(ROOT / "pyproject.toml")
-    output = call_hook("claude", "Write", {"file_path": str(alias)})
-    assert output["hookSpecificOutput"]["permissionDecision"] == "ask"
+def test_guard_no_longer_serves_claude():
+    result = subprocess.run(
+        [sys.executable, str(SHARED_GUARD), "--client", "claude"],
+        input="{}",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("client", ["claude", "codex"])
-def test_registered_hooks_run_from_subdirectory(client):
+def test_registered_codex_hooks_run_from_subdirectory():
     # Git's pre-push exports GIT_DIR. Carrying it into a different cwd makes
     # rev-parse treat that cwd as the worktree root. Model a normal agent launch,
     # not a nested Git hook, by clearing Git's documented local environment.
     git_local_vars = subprocess.check_output(["git", "rev-parse", "--local-env-vars"], text=True).splitlines()
     environment = {key: value for key, value in os.environ.items() if key not in git_local_vars}
-    environment["CLAUDE_PROJECT_DIR"] = str(ROOT)
-    config_path = ROOT / (".claude/settings.json" if client == "claude" else ".codex/hooks.json")
-    hooks = json.loads(config_path.read_text())["hooks"]
+    hooks = json.loads((ROOT / ".codex/hooks.json").read_text())["hooks"]
     for event, entries in hooks.items():
         command = entries[0]["hooks"][0]["command"]
         if event == "PermissionRequest":
             tool = "Bash"
             tool_input = {"command": f'uv --directory "{ROOT}" sync --locked'}
-            expected = "allow"
-        elif client == "codex":
+        else:
             tool = "apply_patch"
             tool_input = {"command": f"*** Begin Patch\n*** Delete File: {ROOT / 'uv.lock'}\n*** End Patch"}
-            expected = "deny"
-        else:
-            tool = "Write"
-            tool_input = {"file_path": str(ROOT / "pyproject.toml")}
-            expected = "ask"
         result = subprocess.run(
             ["/bin/sh", "-c", command],
             input=json.dumps(
@@ -389,9 +211,9 @@ def test_registered_hooks_run_from_subdirectory(client):
         output = json.loads(result.stdout)["hookSpecificOutput"]
         assert output["hookEventName"] == event
         if event == "PermissionRequest":
-            assert output["decision"]["behavior"] == expected
+            assert output["decision"]["behavior"] == "allow"
         else:
-            assert output["permissionDecision"] == expected
+            assert output["permissionDecision"] == "deny"
 
 
 def test_codex_profile_preserves_human_write_gate():
@@ -405,12 +227,95 @@ def test_codex_profile_preserves_human_write_gate():
     assert profile["filesystem"][":workspace_roots"]["uv.lock"] == "read"
 
 
+CLAUDE_SETTINGS = json.loads((ROOT / ".claude/settings.json").read_text())
+# Commands that may change protected metadata or Git's own configuration, so they run outside
+# Claude's sandbox. Each one is a known tool action; widening this list re-opens the write gate.
+CLAUDE_UNSANDBOXED = {
+    "uv add *",
+    "uv remove *",
+    "uv lock *",
+    "uv sync *",
+    "uv version *",
+    "make format",
+    "make format-project-text",
+    "make format-toml",
+    "make bump-patch",
+    "make bump-minor",
+    "make bump-major",
+    "git switch *",
+    "git checkout *",
+    "git pull *",
+    "git merge *",
+    "git rebase *",
+    "git restore *",
+    "git stash *",
+    "git reset *",
+    "git cherry-pick *",
+    "git push *",
+    "git branch *",
+}
+
+
 def test_claude_permissions_keep_protected_edit_asks():
-    permissions = json.loads((ROOT / ".claude/settings.json").read_text())["permissions"]
+    permissions = CLAUDE_SETTINGS["permissions"]
     assert permissions["defaultMode"] == "acceptEdits"
     assert "Edit(/pyproject.toml)" in permissions["ask"]
     assert "Edit(/uv.lock)" in permissions["ask"]
+    assert "Edit(/scripts/hooks/guard_config.py)" in permissions["ask"]
     assert "Bash" not in permissions["allow"]
+
+
+def test_claude_sandbox_blocks_shell_writes_to_protected_files():
+    """The OS sandbox, not a command classifier, keeps metadata read-only for Claude's shell."""
+    sandbox = CLAUDE_SETTINGS["sandbox"]
+    assert sandbox["enabled"] is True
+    assert sandbox["failIfUnavailable"] is True
+    assert sandbox["allowUnsandboxedCommands"] is False
+    assert sandbox["autoAllowBashIfSandboxed"] is False
+    assert set(sandbox["filesystem"]["denyWrite"]) == {"./pyproject.toml", "./uv.lock"}
+
+
+def test_claude_sandbox_exempts_only_named_tool_actions():
+    assert set(CLAUDE_SETTINGS["sandbox"]["excludedCommands"]) == CLAUDE_UNSANDBOXED
+
+
+def test_claude_sandbox_reaches_only_caches_and_package_hosts():
+    sandbox = CLAUDE_SETTINGS["sandbox"]
+    assert set(sandbox["filesystem"]["allowWrite"]) == {"~/.cache/uv", "~/.cache/pre-commit", "~/.cache/pyright-python"}
+    assert set(sandbox["network"]["allowedDomains"]) == {
+        "github.com",
+        "api.github.com",
+        "pypi.org",
+        "files.pythonhosted.org",
+    }
+
+
+def test_claude_asks_before_uv_writes_a_named_script():
+    """`uv add --script pyproject.toml` would write a PEP 723 block into the file, unsandboxed."""
+    assert "Bash(uv *--script*)" in CLAUDE_SETTINGS["permissions"]["ask"]
+
+
+def test_claude_sandbox_paths_are_machine_independent():
+    filesystem = CLAUDE_SETTINGS["sandbox"]["filesystem"]
+    for path in filesystem["allowWrite"] + filesystem["denyWrite"]:
+        assert path.startswith(("./", "~/")), path
+
+
+def test_claude_no_longer_runs_the_guard_hook():
+    assert "guard_config.py" not in json.dumps(CLAUDE_SETTINGS.get("hooks", {}))
+
+
+@pytest.mark.parametrize("action", ["checkout", "restore"])
+@pytest.mark.parametrize("name", ["pyproject.toml", "uv.lock"])
+def test_claude_asks_before_git_rewrites_protected_files(action, name):
+    """Unsandboxed Git can restore metadata from any ref, so naming a protected file asks."""
+    assert f"Bash(git {action} *{name}*)" in CLAUDE_SETTINGS["permissions"]["ask"]
+
+
+def test_claude_selected_test_stays_sandboxed():
+    rules = [rule for rule in CLAUDE_SETTINGS["permissions"]["allow"] if "make test-one" in rule]
+    assert rules == ["Bash(make test-one TEST=tests/*)"]
+    assert not any(command.startswith("make test") for command in CLAUDE_UNSANDBOXED)
 
 
 def test_claude_imports_shared_rules():

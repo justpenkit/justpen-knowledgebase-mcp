@@ -4,18 +4,54 @@
     "ENABLE_LSP_TOOL": "1"
   },
   "effortLevel": "high",
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/bin/python3 -I -B \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard_config.py\" --client claude"
-          }
-        ]
-      }
-    ]
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": false,
+    "excludedCommands": [
+      "uv add *",
+      "uv remove *",
+      "uv lock *",
+      "uv sync *",
+      "uv version *",
+      "make format",
+      "make format-project-text",
+      "make format-toml",
+      "make bump-patch",
+      "make bump-minor",
+      "make bump-major",
+      "git switch *",
+      "git checkout *",
+      "git pull *",
+      "git merge *",
+      "git rebase *",
+      "git restore *",
+      "git stash *",
+      "git reset *",
+      "git cherry-pick *",
+      "git push *",
+      "git branch *"
+    ],
+    "filesystem": {
+      "allowWrite": [
+        "~/.cache/uv",
+        "~/.cache/pre-commit",
+        "~/.cache/pyright-python"
+      ],
+      "denyWrite": [
+        "./pyproject.toml",
+        "./uv.lock"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "pypi.org",
+        "files.pythonhosted.org"
+      ]
+    }
   },
   "enabledPlugins": {
     "superpowers@superpowers-marketplace": true,
@@ -75,6 +111,7 @@
       "Bash(make typecheck)",
       "Bash(make docs-build)",
       "Bash(make lock-check)",
+      "Bash(make test-one TEST=tests/*)",
       "Bash(uv add *)",
       "Bash(uv remove *)",
       "Bash(uv lock *)",
@@ -84,7 +121,12 @@
     "ask": [
       "Edit(/pyproject.toml)",
       "Edit(/uv.lock)",
-      "Edit(/scripts/hooks/guard_config.py)"
+      "Edit(/scripts/hooks/guard_config.py)",
+      "Bash(git checkout *pyproject.toml*)",
+      "Bash(git checkout *uv.lock*)",
+      "Bash(git restore *pyproject.toml*)",
+      "Bash(git restore *uv.lock*)",
+      "Bash(uv *--script*)"
     ]
   }
 }
