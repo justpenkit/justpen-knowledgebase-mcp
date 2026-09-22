@@ -606,6 +606,37 @@ def test_the_dedicated_types_keep_every_well_formed_spelling() -> None:
         _invalid("nodes", "txt_record", {"value": value})
 
 
+@pytest.mark.parametrize("type_name", ["caa_issue", "caa_issuewild"])
+def test_caa_parameter_names_are_stored_folded_with_their_extras(type_name: str) -> None:
+    """The stored spelling and the identity derived from it stay in agreement, as `endpoint.url` does."""
+    properties: dict[str, object] = {
+        "flags": 0,
+        "parameters": [
+            {"name": "accountURI", "value": "https://ca.example/1", "seen": 2},
+            {"name": "CAA", "value": ""},
+        ],
+    }
+
+    validate_record("relations", type_name, properties)
+
+    assert properties["parameters"] == [
+        {"name": "accounturi", "value": "https://ca.example/1", "seen": 2},
+        {"name": "caa", "value": ""},
+    ]
+
+
+@pytest.mark.parametrize("name", ["\u212a", "ACCOUNTURI\u212a", "acc ount"])
+def test_folding_a_caa_name_never_widens_what_validation_accepts(name: str) -> None:
+    """`"\u212a".lower()` is `"k"`, so a non-ASCII tag is left alone and refused as before."""
+    _invalid("relations", "caa_issue", {"flags": 0, "parameters": [{"name": name, "value": "x"}]})
+
+
+def test_a_malformed_caa_parameter_list_reaches_validation_unchanged() -> None:
+    """Canonicalization runs before validation, so it must survive anything a client can send."""
+    for parameters in ("text", [1], [{"name": 2, "value": "x"}], [{"value": "x"}]):
+        _invalid("relations", "caa_issue", {"flags": 0, "parameters": parameters})
+
+
 def test_extras_survive_and_properties_size_bound_is_retained() -> None:
     properties: dict[str, object] = {
         "value": "192.0.2.1",

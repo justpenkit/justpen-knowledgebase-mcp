@@ -113,9 +113,23 @@ endpoint, not one per value. Record the parameter names themselves as
 `parameter` nodes attached with `has_parameter`; a value seen during a scan is
 sample data and belongs in evidence or an attribute, not in an identity.
 
-This is the one place the server rewrites a submitted value. Everything else is
-stored as submitted or rejected, and `coercion` stays false: no JSON type is
-converted, only this declared spelling is canonicalized.
+A `caa_issue` or `caa_issuewild` parameter `name` is lower-cased the same way:
+the tag is case-insensitive on the wire, while the parameter list is
+identity-bearing, so `accountURI` and `accounturi` would otherwise describe one
+fact as two edges. The parameter `value` is a URI or a method name and stays
+exactly as submitted. A tag outside ASCII is left alone and rejected, as before.
+
+These are the two places the server rewrites a submitted value. Everything else
+is stored as submitted or rejected, and `coercion` stays false: no JSON type is
+converted, only these declared spellings are canonicalized.
+
+A workspace written before this rule already holds both spellings as two edges,
+and the upgrade does not merge them. The surviving fork is the one whose stored
+`parameters[].name` still carries an upper-case letter: read the `caa_issue` and
+`caa_issuewild` edges with `kb_search` and `kb_get`, delete each such edge with
+`kb_delete`, then write the fact once. Re-writing it without deleting the fork
+leaves the old edge in place, and writing it into a workspace that held only the
+upper-case spelling adds a second edge beside it.
 
 No required map references the `cpe23_or_empty` rule, so a stored `cpe` is
 never validated against it. Produce the spelling the rule describes and

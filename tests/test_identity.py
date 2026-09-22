@@ -72,6 +72,31 @@ def test_order_independent_relation_identity_hashes_declared_collection():
     assert identity_key("relations", "caa_issue", first) == identity_key("relations", "caa_issue", second)
 
 
+CAA_URI = "https://ca.example/acct/1"
+
+
+def _caa(name: str) -> dict[str, object]:
+    return {"flags": 0, "parameters": [{"name": name, "value": CAA_URI}]}
+
+
+@pytest.mark.parametrize("type_name", ["caa_issue", "caa_issuewild"])
+def test_caa_parameter_name_case_is_one_identity(type_name: str) -> None:
+    """RFC 8659 tags are case-insensitive, and the parameter list is identity-bearing."""
+    assert identity_key("relations", type_name, _caa("accountURI")) == identity_key(
+        "relations", type_name, _caa("accounturi")
+    )
+    assert identity_key("relations", type_name, _caa("validationmethods")) != identity_key(
+        "relations", type_name, _caa("accounturi")
+    )
+
+
+def test_caa_parameter_value_case_is_still_two_identities() -> None:
+    """Only the tag folds: a parameter value is a URI or a method name and stays case-sensitive."""
+    other = {"flags": 0, "parameters": [{"name": "accounturi", "value": CAA_URI.upper()}]}
+
+    assert identity_key("relations", "caa_issue", _caa("accounturi")) != identity_key("relations", "caa_issue", other)
+
+
 @pytest.mark.parametrize(
     "value",
     [

@@ -579,18 +579,49 @@ def catalog_view() -> Mapping[str, Any]:
     return _CATALOG_VIEW
 
 
+# Both CAA relation types carry the same parameter list, and `_CAA_ORDER` makes it identity-bearing.
+# RFC 8659 parameter tags are case-insensitive, so `accounturi` and `accountURI` described one fact
+# and forked it into two edges. The fold belongs here rather than in `identity.py`: canonicalizing
+# the property keeps the stored spelling and the identity derived from it in agreement, exactly as
+# `endpoint.url` already does, whereas folding only the digest would leave one edge holding whichever
+# spelling was written last. Declaring the rule in the catalog is not available - it changes
+# `CATALOG_JSON` and with it the fingerprint `SchemaGuard.check` compares for exact equality, which
+# no existing workspace can be upgraded past.
+_CAA_PARAMETER_TYPES = ("caa_issue", "caa_issuewild")
+
+
+def _canonicalize_caa_parameters(properties: dict[str, Any]) -> None:
+    """Fold ASCII parameter tags only; a tag this leaves alone is one validation refuses anyway.
+
+    `"\u212a".lower()` is `"k"`, so folding a non-ASCII name would admit a spelling
+    `_valid_caa_parameters` rejects today. Canonicalization runs before validation and must not
+    widen it.
+    """
+    parameters = properties.get("parameters")
+    if type(parameters) is not list:
+        return
+    items = cast("list[Any]", parameters)
+    if any(type(item) is not dict or type(cast("dict[str, Any]", item).get("name")) is not str for item in items):
+        return
+    folded = [(cast("dict[str, Any]", item), cast("str", item["name"])) for item in items]
+    properties["parameters"] = [{**item, "name": name.lower() if name.isascii() else name} for item, name in folded]
+
+
 def canonicalize_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
     """Rewrite the declared non-canonical spellings in place before identity and storage.
 
-    Only `endpoint.url` is rewritten: its query string is dropped so one path is one node rather
-    than one node per observed parameter value. Parameter names live on `parameter` nodes. This is
-    value canonicalization, not the JSON type coercion `_COMMON["coercion"]` refuses.
+    Two rewrites exist. `endpoint.url` drops its query string, so one path is one node rather than
+    one node per observed parameter value; parameter names live on `parameter` nodes. A CAA
+    parameter name is case-folded, because the tag is case-insensitive on the wire while the
+    parameter list is identity-bearing. Both are value canonicalization, not the JSON type coercion
+    `_COMMON["coercion"]` refuses.
     """
-    if kind != "nodes" or type_name != "endpoint":
-        return
-    url = properties.get("url")
-    if type(url) is str and "?" in url:
-        properties["url"] = url.split("?", 1)[0]
+    if kind == "nodes" and type_name == "endpoint":
+        url = properties.get("url")
+        if type(url) is str and "?" in url:
+            properties["url"] = url.split("?", 1)[0]
+    elif kind == "relations" and type_name in _CAA_PARAMETER_TYPES:
+        _canonicalize_caa_parameters(properties)
 
 
 def _published_rule(rule: str | list[str] | tuple[str, ...]) -> str | list[str]:
