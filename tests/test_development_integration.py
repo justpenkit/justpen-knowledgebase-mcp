@@ -177,6 +177,8 @@ def test_asset_formatters_check_then_rewrite_without_node(make_project, tmp_path
         assert executable is not None
         (binaries / name).symlink_to(executable)
     environment["PATH"] = os.pathsep.join((str(binaries), str(Path(sys.executable).parent)))
+    if shutil.which("taplo", path=environment["PATH"]) is None:
+        pytest.skip("taplo is not a dev dependency on linux aarch64; see pyproject.toml")
     assert shutil.which("node", path=environment["PATH"]) is None
     assert shutil.which("npm", path=environment["PATH"]) is None
     shutil.copyfile(ROOT / "scripts/format_files.py", project / "scripts/format_files.py")
