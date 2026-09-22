@@ -4,7 +4,7 @@ from typing import Annotated, get_args, get_origin, get_type_hints
 from uuid import UUID, uuid4
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from justpen_knowledgebase_mcp import models
 from justpen_knowledgebase_mcp.jobs import JobsRequest
@@ -168,6 +168,21 @@ def test_every_ingress_model_refuses_a_non_canonical_identifier(model, payload):
     assert UUID(NON_CANONICAL)
     with pytest.raises(ValidationError, match="non-canonical graph id"):
         model.model_validate(payload)
+
+
+def test_the_ingress_alias_publishes_its_width_to_a_client():
+    """Keep the width on the alias, where `list_tools()` can publish it, not inside a tool body.
+
+    The obvious way to give a signature rejection an application envelope is to loosen the argument
+    to plain `str` and check the spelling in the tool function. That works, and silently drops these
+    two keys from the published input schema, so an MCP host can no longer reject an over-long
+    identifier before sending it. `tools/request_presence.py` publishes the envelope from the
+    middleware instead, which leaves this schema untouched.
+
+    The canonical-spelling rule itself is an `AfterValidator` with no JSON Schema spelling, so a
+    client cannot predict that refusal from the schema alone; only the width is promised.
+    """
+    assert TypeAdapter(models.RecordID).json_schema() == {"type": "string", "minLength": 36, "maxLength": 36}
 
 
 def _record_id_fields(model: type) -> set[str]:

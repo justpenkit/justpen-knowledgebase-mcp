@@ -86,8 +86,8 @@ async def test_a_non_canonical_identifier_is_refused_at_every_argument(client, t
     accepted = await client.call_tool(tool, _filled(payload, canonical), raise_on_error=False)
     refused = await client.call_tool(tool, _filled(payload, canonical.upper()), raise_on_error=False)
 
-    assert [block.text for block in refused.content if "non-canonical graph id" in block.text]
     assert refused.is_error
+    assert "non-canonical graph id" in envelope(refused)["error"]
     assert not (accepted.is_error and "non-canonical" in "".join(block.text for block in accepted.content))
 
 
@@ -100,7 +100,7 @@ async def test_an_existing_record_is_refused_rather_than_reported_missing(client
 
     assert [record["id"] for record in found["data"]["records"]] == [canonical]
     assert refused.is_error
-    assert refused.structured_content is None
+    assert envelope(refused)["error"].startswith("INVALID: invalid tool request")
 
 
 async def test_the_service_layer_answers_with_the_public_invalid_code(kb):
