@@ -62,6 +62,37 @@
     returned association kind to put in `next_cursor`, and encoding one raised
     an unmapped error. No reachable link item is large enough to reach this
     today, so no client behaviour changes.
+- **storage**: report which part of the stored workspace contract differs. An
+    incompatible workspace previously failed to open with
+    `CONFIGURATION: maintenance unavailable`, identically for a wrong schema
+    version, catalog version, catalog fingerprint, index format version or
+    managed-path layout, because checkpoint maintenance is the first thing to
+    touch the database at open and flattened every `ConfigurationError` into
+    that one message. The compatibility guard now raises an authored reason
+    naming the differing dimension, and maintenance propagates it the way it
+    already propagated the unsupported-layout reasons. When several dimensions
+    differ the coarsest is reported. The reason names the category only: it
+    carries no stored value and no filesystem path, and a `ConfigurationError`
+    from any other source is still replaced with `maintenance unavailable`. The
+    message a client receives for a mismatch therefore changes; clients matching
+    on the `CONFIGURATION` code are unaffected.
+- **tools**: answer a call rejected by its published input schema with the
+    `INVALID` application envelope instead of a bare error result. The envelope
+    names each rejected argument path and the rule it broke, for example
+    `INVALID: invalid tool request; seed_ids.0: non-canonical graph id: use the   lowercase 8-4-4-4-12 spelling`. This makes one identifier refusal one shape:
+    `kb_get.ids` previously answered an evidence ID under `kind=nodes` with an
+    envelope and a non-canonical UUID without one, and nothing published let a
+    client predict which. The rejection no longer repeats the value the client
+    sent, at most three rules are reported, and an argument name longer than 64
+    bytes is truncated. Clients that parsed the previous validator report text
+    must read the envelope instead. A call that reaches no tool at all — an
+    unknown tool name, or a frame the transport cannot parse — still fails
+    without an envelope. The published input schemas are unchanged; `list_tools()`
+    is byte-identical across this change.
+- **docs**: state which stored-contract dimensions an incompatible workspace can
+    name on open, that the coarsest is reported when several differ, and that a
+    managed-paths reason means a different configured managed directory layout
+    rather than a missing directory.
 
 ### Perf
 
