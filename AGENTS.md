@@ -11,8 +11,11 @@ uv manages Python 3.11–3.13, with 3.13 as the local default. Use the Make targ
 for routine development checks; their recipes select the tools and arguments.
 Use uv directly for dependency management and running the application. Do not
 install project dependencies into system Python.
-The stdlib-only permission hook is the sole exception: it runs with
+The stdlib-only Codex permission hook is the sole exception: it runs with
 `/usr/bin/python3 -I -B` (Python 3.9+) independently of project dependencies.
+Claude Code runs shell commands in its OS sandbox. On Linux and WSL install
+`bubblewrap` and `socat` first; the project settings fail closed, so Claude Code
+does not start without them.
 
 - `make check`: lock consistency, formatting, lint, strict typing and unit tests
     once in the active interpreter. The pre-push hook runs this gate.
@@ -48,14 +51,8 @@ Reading `pyproject.toml` and `uv.lock` is allowed. Routine source, test, and doc
 edits may proceed within the user's task without repeated confirmation.
 
 Read a protected file with the host's file-reading tool or an ordinary inspection
-command: `cat`, `head`, `tail`, `grep`, `rg`, `sed -n`, `awk`, `cut`, `sort`,
-`diff`, a checksum tool, `jq`, `wc`, `stat` or a read-only `git` subcommand,
-alone or in a pipeline. Never read one through an interpreter, such as
-`python -c`, `python3 -c`, `uv run python -c`, `node -e` or `perl -e`. The hook
-cannot tell a reading interpreter from a writing one without executing it, so it
-asks about every one of them; using an interpreter to read turns a free
-inspection into an approval prompt and trains reviewers to click through the
-prompts that matter.
+command. Claude Code's sandbox and Codex's filesystem profile keep root metadata
+read-only for shell commands, so reading never needs approval.
 
 Use `uv add`, `uv remove`, `uv lock`, `uv sync`, and `uv version` for normal
 dependency/version changes. Run them as separate commands from the project root.
@@ -85,7 +82,20 @@ The exact `make --directory /absolute/path/to/repo <target>` command also receiv
 automatic escalation for trusted formatting, where the single target is `format`,
 `format-md`, `format-toml`, `format-yaml` or `format-json`. No extra targets, variable
 overrides or shell chains are covered. Other escalations remain user-reviewed.
-Treat hook/config changes as policy changes requiring user authorization.
+
+Claude Code runs Bash in its OS sandbox with no unsandboxed retry. The sandbox
+makes root `pyproject.toml` and `uv.lock` read-only, so a sandboxed shell write
+fails whether it uses a redirect, an interpreter or a script. The uv, formatter,
+bump and Git worktree commands listed in `sandbox.excludedCommands` run outside
+the sandbox, together with the project code they execute (Make recipes, Git
+hooks, `.venv` tools). Run each one as a standalone command: a chained or
+`cd`-prefixed command stays sandboxed. Edit/Write calls, `uv … --script` and
+`git checkout`/`git restore` commands naming a protected file ask for approval.
+Never edit a recipe, hook or tool to route a metadata change through an excluded
+command. When the sandbox blocks a needed command, report the restriction; do
+not add exclusions, domains or writable paths to get past it.
+Treat hook, sandbox and permission changes as policy changes requiring user
+authorization.
 See [agent setup and limitations](docs/contributing/agents.md).
 
 ## Quality and code navigation

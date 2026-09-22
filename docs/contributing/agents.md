@@ -9,10 +9,10 @@ separate generated source tree for each agent.
 | ------------------------------- | ---------------------------------------------------------------- |
 | `AGENTS.md`                     | Shared environment, quality, navigation, Git, and approval rules |
 | `CLAUDE.md`                     | Imports `AGENTS.md` for Claude                                   |
-| `.claude/`                      | Claude permissions, hooks, and existing plugin preferences       |
+| `.claude/`                      | Claude permissions, sandbox, and existing plugin preferences     |
 | `.codex/config.toml`            | Codex filesystem permissions and human approval routing          |
 | `.codex/hooks.json`             | Codex hook registration                                          |
-| `scripts/hooks/guard_config.py` | Shared protected-file policy and host response adapters          |
+| `scripts/hooks/guard_config.py` | Codex protected-file hook responses                              |
 
 GitHub's **Use this template** workflow keeps all these files. It still renames
 the package, personalizes the repository, and removes its own setup machinery.
@@ -24,14 +24,20 @@ Run `make setup` in a terminal before starting either agent. The development
 workflow supports macOS, Linux, and WSL with uv, Git and Make. uv manages Python
 3.11–3.13 (3.13 by default), development tools and MkDocs; no separate Node/npm
 installation is required. Pyright manages its own runtime.
-The hook uses system `/usr/bin/python3` 3.9+ in isolated mode so it works even if
-project metadata or `.venv` is broken. Native Windows shell commands are not
-configured by this template; use WSL.
+The Codex hook uses system `/usr/bin/python3` 3.9+ in isolated mode so it works
+even if project metadata or `.venv` is broken. Native Windows shell commands are
+not configured by this template; use WSL.
+
+Claude Code runs shell commands in its OS sandbox. On Linux and WSL install its
+dependencies first, for example `sudo apt install bubblewrap socat`; macOS uses
+the built-in Seatbelt. The project sets `failIfUnavailable`, so Claude Code
+refuses to start instead of running without the sandbox.
 
 For Claude Code, open the repository root and accept project trust. Check
-`/memory` for the imported shared instructions and `/permissions` for
-`acceptEdits` plus the protected-file ask rules. Existing Claude plugins are
-optional enhancements; they are not required for the server or checks.
+`/memory` for the imported shared instructions, `/permissions` for `acceptEdits`
+plus the protected-file ask rules, and `/sandbox` for the sandbox status.
+Existing Claude plugins are optional enhancements; they are not required for the
+server or checks.
 
 For Codex, use CLI **0.154 or newer**, or a desktop build supporting both
 permission profiles and `PermissionRequest` hooks. Open and trust the repository,
@@ -52,16 +58,16 @@ reviewed change merges, then start a new session and review the hooks there.
 
 ## Everyday permissions
 
-| Operation                                    | Claude Code                   | Codex with the profile active                                          |
-| -------------------------------------------- | ----------------------------- | ---------------------------------------------------------------------- |
-| Read root `pyproject.toml` / `uv.lock`       | Allowed                       | Allowed                                                                |
-| Edit ordinary source, tests, or docs         | Automatic                     | Automatic inside the workspace                                         |
-| Run listed development checks                | Allowed by project rules      | Automatic inside the sandbox                                           |
-| Standalone `uv add/remove/lock/sync/version` | Normal dependency workflow    | Escalations are automatic only with the explicit root form below       |
-| Project formatter output, including metadata | Allowed through Make          | Automatic escalation for the exact root-pinned formatter targets below |
-| Directly rewrite protected metadata          | Human approval                | Human approval for the shell escalation                                |
-| Patch protected metadata with `apply_patch`  | Human approval                | Hook blocks; present the diff and request a shell escalation           |
-| Change permission policy or hook files       | User-authorized policy change | User-authorized policy change                                          |
+| Operation                                    | Claude Code                                    | Codex with the profile active                                          |
+| -------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------- |
+| Read root `pyproject.toml` / `uv.lock`       | Allowed                                        | Allowed                                                                |
+| Edit ordinary source, tests, or docs         | Automatic                                      | Automatic inside the workspace                                         |
+| Run listed development checks                | Allowed by project rules, inside the sandbox   | Automatic inside the sandbox                                           |
+| Standalone `uv add/remove/lock/sync/version` | Runs outside the sandbox as an excluded action | Escalations are automatic only with the explicit root form below       |
+| Project formatter output, including metadata | Excluded Make targets run outside the sandbox  | Automatic escalation for the exact root-pinned formatter targets below |
+| Directly rewrite protected metadata          | Edit/Write asks; shell writes fail             | Human approval for the shell escalation                                |
+| Patch protected metadata with `apply_patch`  | Not applicable                                 | Hook blocks; present the diff and request a shell escalation           |
+| Change permission, sandbox or hook policy    | User-authorized policy change                  | User-authorized policy change                                          |
 
 Use the documented Make targets for routine tests, linting, typing and formatting.
 `make test-one TEST=tests/test_file.py::test_name` selects a single test without
@@ -70,8 +76,8 @@ do not repeat those gates manually after edits or before a PR. CI runs
 `make test-integration`, including real tool/docs/release scenarios and, in the
 generator, Copier scenarios. Run only the relevant integration test locally
 when developing that test or its harness.
-Claude's hook checks the complete `make test-one TEST=…` command before allowing
-it; no wildcard permission covers extra Make options or targets.
+Claude allows `make test-one TEST=tests/…` through a permission rule; the command
+still runs inside the sandbox, so extra Make options cannot reach protected files.
 
 The uv exception applies to a complete command, not a prefix. Chains, shell
 expansions, output redirections, `uv run`, alternative project/interpreter/cache
@@ -134,36 +140,46 @@ also restrict the configuration; check the active session rather than assuming
 the repository setting won. See [permission profiles](https://learn.chatgpt.com/docs/permissions).
 
 The filesystem boundary covers root metadata in each active workspace root.
-Nested independent projects need explicit read rules of their own. Claude's
-command hook conservatively inspects visible commands; opaque scripts mentioning
-protected paths may still ask. It is not an OS sandbox for arbitrary subprocesses.
+Nested independent projects need explicit read rules of their own.
 
-The hook asks about writes, not about reads. It recognizes a fixed set of
-commands that write only to standard output, so inspecting a protected file with
-`cat`, `grep`, `rg`, `sed -n`, `cut`, `sort`, `diff`, `cmp`, a checksum tool,
-`file`, `jq`, `od`, `column`, `wc`, `stat`, `ls`, `du`, `basename`, `dirname`,
-`realpath` or a read-only `git` subcommand
-proceeds without a prompt, alone or in a pipeline. Each of those tools can also
-be told to write a file, so the option that does it — `sort -o`, `awk -f`, an
-`file -C` — is gated, including its GNU abbreviations such as `sort --out` and
-any spelling that attaches the value to the option, such as `sort -opyproject.toml`.
-A glob is matched against the protected paths rather than expanded, so
-`sed -i s/a/b/ py*.toml` and `uv.loc[[:lower:]]` are gated even though neither
-names a protected path.
+### Claude Code sandbox
 
-`awk`, `uniq`, `xxd` and `strings` are deliberately not in that list. `uniq` and
-`xxd` write their second positional operand, so no option list can gate them.
-`awk` is a programming language whose pattern position evaluates arbitrary
-expressions: `awk 'system("...")'` and `awk '"cmd" | getline x'` run a command
-with no option, no brace and no directive. Read those files with `grep`,
-`sed -n` or `cut` instead.
+Claude's sandbox makes root `pyproject.toml` and `uv.lock` read-only for every
+sandboxed Bash command and its subprocesses. A redirect, `sed -i`, an interpreter
+or a script all fail with `Read-only file system`; replacing the file by rename fails
+with `Device or resource busy`. `allowUnsandboxedCommands` is off, so there is no
+retry outside the sandbox. Reading needs no approval.
 
-A command the hook cannot classify still asks. An interpreter is the common
-case: `python3 -c` and `uv run python -c` are gated whether the code reads or
-writes, because a classifier cannot tell which without running it. Read such a
-file with one of the tools above, and make dependency and version changes
-through `uv`, which is approved automatically.
+The actions that must change metadata or Git's own configuration run outside the
+sandbox through `sandbox.excludedCommands`: the uv dependency and version
+commands, `make format`, `make format-project-text`, `make format-toml`, the
+`make bump-*` targets, and the Git commands that update the worktree or
+`.git/config` (`switch`, `checkout`, `pull`, `merge`, `rebase`, `restore`,
+`stash`, `reset`, `cherry-pick`, `push`, `branch`). Run each as a standalone
+command from the repository root. A chain, a `cd` prefix, a redirect or a
+subshell keeps the command in the sandbox, where a metadata update fails.
+Because unsandboxed Git can restore a file from any ref, `git checkout` and
+`git restore` commands naming a protected file ask for approval, and so does any
+`uv … --script`, which writes a PEP 723 block into the named file. These rules
+match only commands that name the file; they are a check against mistakes, not
+a boundary. An excluded command also runs the project code behind it outside the
+sandbox: Make recipes, `.venv` tools, local build backends and, for `git push`,
+the pre-push hook with `make check` and `make docs-build`. That code is trusted;
+never edit it to route a metadata change through an excluded command.
+
+Every other command, including `make check` and the pre-commit hook of
+`git commit`, stays sandboxed. The sandbox may write only the project, the uv,
+pre-commit and Pyright caches, and it reaches only GitHub and PyPI. When a
+command needs another host or path, the failure names it: report it instead of
+widening the sandbox.
+
+Inside the sandbox, `git status` can list placeholder files such as `.bashrc`,
+`.mcp.json` or `.claude/hooks`. They are sandbox mount points that do not exist
+on disk. Stage paths explicitly, or list them in your untracked
+`.git/info/exclude`.
+
 Codex uses its filesystem policy to catch indirect local shell writes. Browser,
 remote MCP, connector, and already-running shell interactions have their own
 controls; never use them to bypass a required approval. See
+[Claude sandboxing](https://code.claude.com/docs/en/sandboxing) and
 [Claude permissions](https://code.claude.com/docs/en/permissions).
