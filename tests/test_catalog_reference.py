@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 import justpen_knowledgebase_mcp.catalog as catalog_module
-from justpen_knowledgebase_mcp.catalog import catalog_manifest
+from justpen_knowledgebase_mcp.catalog import catalog_manifest, scope_relations
 
 ROOT = Path(__file__).resolve().parent.parent
 # Loaded by path, as tests/test_release.py loads its script: `scripts` is not an installed package.
@@ -26,6 +26,9 @@ catalog_reference = importlib.util.module_from_spec(REFERENCE_SPEC)
 REFERENCE_SPEC.loader.exec_module(catalog_reference)
 
 PAGE = catalog_reference.PAGE
+# `scripts/catalog_reference.py` emits only the reference page, so the tool page is hand-written
+# and its parent-scope prose is pinned here instead of regenerated.
+GRAPH_PAGE = "docs/tools/graph.md"
 render = catalog_reference.render
 EMPTY = "—"
 
@@ -134,3 +137,27 @@ def test_rendering_refuses_a_cross_field_description_that_has_drifted(monkeypatc
 
     with pytest.raises(RuntimeError, match="cross-field descriptions"):
         render()
+
+
+@pytest.fixture(scope="module")
+def graph_page() -> str:
+    """Read the tool page as one line, so an assertion survives the Markdown wrap width."""
+    return " ".join((ROOT / GRAPH_PAGE).read_text(encoding="utf-8").split())
+
+
+def _listed(page: str, opening: str, closing: str) -> list[str]:
+    start = page.index(opening)
+    return sorted(_names(page[start : page.index(closing, start)]))
+
+
+def test_the_parent_scope_prose_enumerates_exactly_the_scoped_types(graph_page: str) -> None:
+    """Both enumerations are derived from the catalog the server actually reads.
+
+    The page stated `port`, `service`, `finding`, `dkim_record` and `parameter` and omitted
+    `mta_sts_policy`, which `catalog.py` has declared parent-scoped since it was added. A
+    hand-copied list here would drift the same way, so the expectation is `scope_relations()`.
+    """
+    scoped = scope_relations()
+
+    assert _listed(graph_page, "Creating a new ", " without exactly") == sorted(scoped)
+    assert _listed(graph_page, "Deleting `has_", ", or deleting its parent node") == sorted(scoped.values())

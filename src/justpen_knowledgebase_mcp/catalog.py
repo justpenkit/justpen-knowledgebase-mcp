@@ -654,10 +654,27 @@ def _cross_field_registrar(_type_name: str, properties: dict[str, Any]) -> None:
         raise ExpectedValidationError("/properties/iana_id: expected an assigned IANA registrar id")
 
 
+# One dedicated node type per version tag. Diverting on the bare prefix left a malformed tag with
+# no home at all: `v=spf1include:...`, a missing space after the version tag and the most common
+# real SPF misconfiguration, was refused by `spf_record` for the absent delimiter and by
+# `txt_record` for the prefix. The diversion therefore asks the dedicated type's own value rule,
+# read from the catalog rather than restated here, so the two acceptances partition every spelling
+# of a tag. `dkim_record` validates its value as `txt_value`, so every `v=DKIM1` spelling already
+# has a home and the bare prefix remains the whole rule for it.
+_TXT_RECORD_DIVERSIONS: tuple[tuple[str, str], ...] = (
+    ("v=spf1", "spf_record"),
+    ("v=DMARC1", "dmarc_record"),
+    ("v=DKIM1", "dkim_record"),
+    ("v=STSv1", "mta_sts_policy"),
+)
+
+
 def _cross_field_txt_record(_type_name: str, properties: dict[str, Any]) -> None:
     value = cast("str", properties["value"])
-    if value.startswith(("v=spf1", "v=DMARC1", "v=DKIM1", "v=STSv1")):
-        raise ExpectedValidationError("/properties/value: use the dedicated TXT record type")
+    definitions = cast("Mapping[str, Mapping[str, Any]]", catalog_view()["nodes"])
+    for tag, type_name in _TXT_RECORD_DIVERSIONS:
+        if value.startswith(tag) and _valid_field(value, definitions[type_name]["required"]["value"]):
+            raise ExpectedValidationError("/properties/value: use the dedicated TXT record type")
 
 
 # The digest kinds share one rule; favicon_mmh3 is the one that does not.
@@ -781,6 +798,10 @@ def _ensure_cross_field_contract() -> None:
         declared = _enum(kind, type_name, field)
         if declared != covered:
             raise RuntimeError(f"cross-field table for {type_name}.{field} does not cover {declared ^ covered}")
+    nodes = cast("dict[str, dict[str, Any]]", _CATALOG["nodes"])
+    for tag, type_name in _TXT_RECORD_DIVERSIONS:
+        if "value" not in nodes.get(type_name, {}).get("required", {}):
+            raise RuntimeError(f"txt_record diverts {tag} to {type_name}, which has no value rule")
 
 
 _ensure_cross_field_contract()

@@ -49,8 +49,8 @@ are accepted as submitted and are not validated.
 identity fields, or relation endpoints, which are immutable. It also reports an
 identity hash collision or inconsistent stored scope, including multiple or
 incomplete parent relations. Re-parenting a scoped child is invalid. Creating a
-new `port`, `service`, `finding`, `dkim_record`, or `parameter` without exactly
-one same-request scope relation is also invalid.
+new `port`, `service`, `finding`, `dkim_record`, `mta_sts_policy`, or
+`parameter` without exactly one same-request scope relation is also invalid.
 
 `service.properties.name` must be a member of the bundled, versioned
 Nmap-derived service-name registry; the server does not normalize an arbitrary
@@ -68,9 +68,9 @@ removed object. Removing `/a/x` while setting `{"a": {"y": 1}}` is valid: it
 removes one child and merges a different child. Known catalog and mutation
 errors identify the field and rule without returning submitted values.
 
-Deleting `has_open_port`, `has_service`, `has_finding`, `has_dkim_selector`, or
-`has_parameter`, or deleting its parent node, returns `CONFLICT` while the
-scoped child still exists. Delete the child first with `cascade: true`; the
+Deleting `has_open_port`, `has_service`, `has_finding`, `has_dkim_selector`,
+`has_mta_sts_policy`, or `has_parameter`, or deleting its parent node, returns
+`CONFLICT` while the scoped child still exists. Delete the child first with `cascade: true`; the
 cascade removes its incident scope relation.
 
 Several attribute names and attachment points are conventions the catalog does
@@ -92,11 +92,15 @@ a `_dmarc.example.com` subdomain node to hold it.
 `txt_record` and `dkim_record` values must be normalized before writing: strip
 DNS presentation-form quoting, decode escapes, concatenate a multi-string
 RRset's character-strings into one value, and remove surrounding whitespace.
-Version tags are matched exactly, so `v=spf1` is routed to `spf_record` while
-`V=SPF1` and a leading-space spelling are accepted as a generic `txt_record`.
-That is deliberate: a case-variant tag is a real misconfiguration, the
-dedicated types reject it, and refusing it here too would leave it no home.
-Record it as a `txt_record` and report the defect as a `finding`. Never write ephemeral
+A value is routed to its dedicated type exactly when that type accepts it, so
+every spelling has one home and no spelling has two. `v=spf1 -all` is an
+`spf_record`; `V=SPF1 -all`, `v=spf1include:_spf.google.com ~all` and a
+leading-space spelling are `txt_record`s, because `spf_record` requires the
+version tag to be the whole value or to be followed by a space. The same rule
+applies to `v=DMARC1` and `v=STSv1`. `dkim_record` validates its value as
+generic TXT text, so every `v=DKIM1` spelling belongs to it. A malformed tag is
+a real misconfiguration: record it as a `txt_record` and report the defect as a
+`finding`. Never write ephemeral
 `_acme-challenge` DNS-01 challenge values as `txt_record`s; each certificate
 issuance rotates the nonce, so recording them accumulates one node per renewal
 with no supersession.
@@ -297,8 +301,8 @@ a date-only id such as `v=STSv1; id=20190429T010101;` is published verbatim by
 many unrelated tenants. Unscoped, those tenants would collapse onto one node,
 and the `mode`, `max_age` and `mx` attributes that each of them reads from its
 own `https://mta-sts.<domain>/.well-known/mta-sts.txt` would overwrite each
-other. `txt_record` now rejects a leading `v=STSv1` for the same reason it
-rejects `v=spf1`.
+other. `txt_record` rejects a well-formed `v=STSv1` value for the same reason it
+rejects a well-formed `v=spf1` value.
 
 `has_finding` gained `parameter`, `dkim_record`, `mta_sts_policy`,
 `storage_bucket`, `repository`, `identity_tenant` and `secret` as sources. A
