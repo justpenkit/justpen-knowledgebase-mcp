@@ -110,6 +110,21 @@
     its own host's real break-even, and one whose bulk is canonical records with
     a small text index, since `page_count` counts the whole database rather than
     the indexed objects. Below the threshold nothing changes.
+- **search**: publish `coverage` and `incomplete` from a maintained counter
+    instead of counting the `evidence` table on every request. `coverage()` ran
+    `SELECT index_state,incomplete,count(*) ... GROUP BY ...` once per
+    `kb_search` and once per `kb_status` sample with no index to support it: a
+    full scan of every `evidence` row plus a temporary B-tree, measured at
+    5.4 ms over 10 000 rows, 136 ms over 200 000 and 563 ms over 800 000,
+    growing linearly and visiting every row whether or not it is `ready`. At
+    200 000 rows it was 99.9% of a minimal `kb_search` round trip and 84% of a
+    large text search. The counts now live in a new `settings.evidence_coverage`
+    column, maintained by triggers on `evidence` inside the writing transaction
+    the way `search_fts` already is, and the read is a single row: 0.011 ms and
+    two pages, flat from 10 000 to 800 000 rows. A minimal `kb_search` over an
+    800 000-row corpus falls from 566 ms to 0.20 ms. The published fields are
+    unchanged in name, shape and value, and the aggregate is recomputed from the
+    rows at startup, beside the existing terminal-job reconcile.
 
 ### Refactor
 
@@ -132,16 +147,24 @@
     validation and before the identity is derived, so the stored spelling and
     the identity it produces stay in agreement. A non-ASCII name is left alone,
     because folding it would admit a spelling the parameter rule rejects.
-    Workspaces open unchanged — the catalog data and its fingerprint are not
-    touched — but an existing fork does not merge itself. A workspace holding
-    both spellings keeps the upper-case edge under a key nothing will look up
-    again; a workspace holding only the upper-case spelling gains a second edge
-    on the first write after the upgrade. To repair one, find the `caa_issue`
-    and `caa_issuewild` edges whose stored `parameters[].name` still contains an
-    upper-case letter, `kb_delete` them, and write the fact once. Patching such
-    an edge by `id` does not repair it: an id-patch keeps the existing row's
-    identity key, leaving folded properties under a key that no longer matches
-    them.
+    The catalog data and its fingerprint are not touched, so this change alone
+    would have left existing workspaces readable with an unmerged fork in them.
+    The schema bump below overrides that: a workspace written before this
+    release cannot be opened at all, so no forked pair survives into it and no
+    repair procedure is needed. Were such a workspace reachable, the repair
+    would be to delete the `caa_issue` and `caa_issuewild` edges whose stored
+    `parameters[].name` still contains an upper-case letter and write each fact
+    once; patching one by `id` would not repair it, because an id-patch keeps
+    the existing row's identity key and would leave folded properties under a
+    key that no longer matches them.
+
+- **BREAKING:** the workspace schema is now version 3. The new
+    `settings.evidence_coverage` column and its three `evidence` triggers change
+    the stored layout, and `SchemaGuard.check` compares the contract for exact
+    equality, so a workspace created by an earlier version is refused at open
+    with `CONFIGURATION: database contract or managed paths differ` rather than
+    upgraded. There is no in-tree upgrade path: create a new workspace and
+    re-ingest.
 
 ## v0.2.0 (2026-09-21)
 
