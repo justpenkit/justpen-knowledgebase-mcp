@@ -256,6 +256,12 @@ def check_item(connection: apsw.Connection, owner: IndexOwner) -> None:
         raise ConflictError("INDEX_GENERATION_CHANGED")
 
 
+# The 100-row bound is a writer-lock bound, not a commit-count bound, and raising
+# it is a regression. Clearing 1600 rows of 64 KiB text costs 624-675 ms at 100
+# and 596-599 ms at 2000, because a commit fsyncs in 1.84 ms and 17 of them are
+# 4.8% of the work, while the FTS5 delete triggers are the rest. What does change
+# is the longest single hold of the one global writer lane: 48 ms at 100 against
+# 599 ms at 2000, a twelvefold stall for every concurrent write.
 def clear_item_batch(connection: apsw.Connection, owner: IndexOwner) -> bool:
     """Delete at most 100 derived canonical rows with atomic FTS trigger maintenance."""
     check_item(connection, owner)
