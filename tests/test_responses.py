@@ -3,17 +3,21 @@
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from justpen_knowledgebase_mcp import errors
 from justpen_knowledgebase_mcp.errors import MissingRecordsError, RecordConflictError
 from justpen_knowledgebase_mcp.responses import (
     BlockerDetails,
+    BlockingRecord,
     ErrorResult,
     MissingDetails,
     error_response,
     exception_response,
     success_response,
 )
+
+EVIDENCE = "e_" + "0" * 64
 
 
 def test_success_envelope():
@@ -105,3 +109,28 @@ def test_ready_blocker_nulls_and_pending_six_digit_timestamp():
         exception_response(RecordConflictError("RECORD_DELETING", pending))["details"]["pending_since"]
         == "2001-01-01T00:00:00.000000Z"
     )
+
+
+@pytest.mark.parametrize(
+    ("kind", "identifier"),
+    [("nodes", EVIDENCE), ("relations", EVIDENCE), ("evidence", str(uuid4()))],
+    ids=["nodes-evidence-id", "relations-evidence-id", "evidence-uuid"],
+)
+def test_a_blocker_kind_and_id_that_disagree_are_refused(kind, identifier):
+    """`kind_identity` looks like a no-op over a `UUID`, and is the only check that catches these.
+
+    `BlockingRecord.id` is `UUID | EvidenceID`, so an evidence ID under a graph kind parses as the
+    second branch instead of failing, and `kind="evidence"` coerces a UUID string into the first.
+    Only the model validator refuses the disagreement, and a blocker that names the wrong kind
+    sends a client looking for the record in the wrong place.
+    """
+    with pytest.raises(ValidationError, match=r"invalid (graph|evidence) id"):
+        BlockingRecord(kind=kind, id=identifier)
+
+
+@pytest.mark.parametrize(
+    ("kind", "identifier"), [("nodes", str(uuid4())), ("evidence", EVIDENCE)], ids=["nodes-uuid", "evidence-evidence"]
+)
+def test_a_blocker_kind_and_id_that_agree_are_accepted(kind, identifier):
+    """The check refuses a disagreement without narrowing what a real blocker may carry."""
+    assert str(BlockingRecord(kind=kind, id=identifier).id) == identifier
