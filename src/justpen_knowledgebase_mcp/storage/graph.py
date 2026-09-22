@@ -12,7 +12,14 @@ from uuid import uuid4
 
 from ..catalog import catalog_manifest, catalog_schema, catalog_view, scope_order, validate_record
 from ..cursors import CursorBinding
-from ..errors import ConflictError, ExpectedValidationError, InvalidParamsError, NotFoundError, RecordConflictError
+from ..errors import (
+    ConflictError,
+    ExpectedValidationError,
+    InvalidParamsError,
+    LimitError,
+    NotFoundError,
+    RecordConflictError,
+)
 from ..identity import format_timestamp, identity_json, identity_key, parse_timestamp
 from ..models import GetRequest, Mutation, NodeRef, NodeWrite, RelationWrite, WriteRequest, WriteResult
 from ..mutations import canonical_json, merge_properties
@@ -885,6 +892,10 @@ def _associations(connection: apsw.Connection, request: GetRequest) -> dict[str,
     for index, row in enumerate(rows):
         cost = _member_bytes(row[1])
         if index == request.limit or item_bytes + cost > ASSOCIATION_RESPONSE_BYTES:
+            # A first item over the budget leaves no position to encode: an evidence `links` cursor
+            # carries the association kind of the last returned item, and there is none.
+            if not items:
+                raise LimitError("association item exceeds response budget")
             truncated = True
             break
         item_bytes += cost

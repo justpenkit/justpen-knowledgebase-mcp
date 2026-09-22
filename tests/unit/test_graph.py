@@ -6,7 +6,13 @@ from unittest.mock import Mock
 import pytest
 
 from justpen_knowledgebase_mcp.catalog import catalog_manifest
-from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, NotFoundError, RecordConflictError
+from justpen_knowledgebase_mcp.errors import (
+    ConflictError,
+    InvalidParamsError,
+    LimitError,
+    NotFoundError,
+    RecordConflictError,
+)
 from justpen_knowledgebase_mcp.models import GetRequest, NodeRef, NodeWrite, RelationWrite, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.storage import graph
 
@@ -402,3 +408,16 @@ def test_mutation_validation_preserves_authored_conflict(monkeypatch):
     request = WriteRequest(nodes=[NodeWrite(id=NODE, properties={"a": {}}, remove_properties=["/a"])])
     with pytest.raises(InvalidParamsError, match="remove and set paths conflict"):
         graph.Graph.write(database(), Mock(), request)
+
+
+def test_evidence_link_page_refuses_rather_than_encoding_a_kindless_cursor(monkeypatch):
+    """B6: an evidence `links` page that breaks on the byte budget at index 0 has no association
+    kind to encode, and `CursorBinding._validate_kind` rejects `None` with a bare ValueError that
+    reaches the client as INTERNAL. The validator is deliberately left alone: the guard prevents
+    the call instead of loosening what a cursor may say. `storage/search.py` already guards the
+    equivalent case this way. The limit is patched because no single link item can reach it."""
+    monkeypatch.setattr(graph, "ASSOCIATION_RESPONSE_BYTES", 1)
+    monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner(uuid=EVIDENCE)))
+    db = database(cursor(value=(NODE, 1)), cursor(rows=[(1, NODE)]), cursor(rows=[]))
+    with pytest.raises(LimitError, match="budget"):
+        graph.Graph.get(db, Mock(), GetRequest(kind="evidence", ids=[EVIDENCE], view="links"))
