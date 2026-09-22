@@ -1,9 +1,14 @@
 """Projection coverage and typed evidence contract."""
 
+import json
 from typing import Any
 
+import apsw
+
 from justpen_knowledgebase_mcp.indexing import flatten_properties
-from justpen_knowledgebase_mcp.query import evaluate, index_evidence
+from justpen_knowledgebase_mcp.query import compile_filter, evaluate
+from justpen_knowledgebase_mcp.storage.graph_sql import PROPERTY_INSERT
+from justpen_knowledgebase_mcp.storage.schema import _property_ddl
 
 
 def test_priority_and_scalar_budget():
@@ -38,35 +43,77 @@ def test_required_and_object_numeric_paths_have_priority():
     assert numeric.rows["/array/0"].value == 2
 
 
-def test_index_evidence_matches_canonical_for_known_results():
-    properties = {"values": list(range(600)), "large": "é" * 513, "scalar": None, "object": {"00": 1}}
+_EVIDENCE_SELECT = "SELECT {expression} FROM nodes o WHERE o.id=1"
+
+
+def _projected(properties: dict[str, Any]) -> apsw.Connection:
+    """Build the one owner row and property projection the compiled SQL reads."""
+    connection = apsw.Connection(":memory:")
+    connection.execute("CREATE TABLE nodes(id INTEGER PRIMARY KEY, metadata TEXT);" + _property_ddl("node"))
     projection = flatten_properties(properties)
+    connection.execute(
+        "INSERT INTO nodes(id,metadata) VALUES(1,?)", (json.dumps({"property_index": projection.metadata()}),)
+    )
+    connection.executemany(
+        PROPERTY_INSERT["nodes"],
+        [(1, path, row.value_type, int(row.value_materialized), row.value) for path, row in projection.rows.items()],
+    )
+    return connection
+
+
+def _sql_evidence(connection: apsw.Connection, expression: dict[str, Any]) -> bool | None:
+    compiled, parameters = compile_filter(expression, "nodes")
+    # Server-authored SQL around bound user literals, exactly as `storage/search.py` composes it.
+    statement = _EVIDENCE_SELECT.format(expression=compiled)
+    answer = connection.execute(statement, parameters).get
+    return None if answer is None else bool(answer)
+
+
+def test_sql_index_evidence_matches_canonical_for_known_results():
+    """The live index evidence is the compiled SQL plus the canonical `evaluate` fallback that
+    `storage/search.py` runs when the SQL answer is NULL. Every decided answer must agree with the
+    canonical one; an undecided answer is a licence to read the body, never a wrong result."""
+    properties: dict[str, Any] = {
+        "values": list(range(600)),
+        "large": "\u00e9" * 513,
+        "scalar": None,
+        "object": {"00": 1},
+    }
+    connection = _projected(properties)
     for path in ["/values/599", "/values/00", "/large", "/scalar/child", "/object/00", "/missing"]:
         for op, value in [
             ("exists", False),
             ("exists", True),
-            ("eq", "é" * 513),
+            ("eq", "\u00e9" * 513),
             ("ne", 2),
             ("gt", 2),
             ("in", [1, None]),
         ]:
             expression = {"path": path, "op": op, "value": value}
-            answer = index_evidence(projection, expression)
+            answer = _sql_evidence(connection, expression)
             if answer is not None:
-                assert answer is evaluate(properties, expression)
+                assert answer is evaluate(properties, expression), expression
+    # An unmaterialized value leaves its own leaf undecided, and the group still decides: a false
+    # sibling settles `all`, a true sibling settles `any`.
     assert (
-        index_evidence(
-            projection,
-            {"all": [{"path": "/large", "op": "eq", "value": "é" * 513}, {"path": "/scalar", "op": "eq", "value": 1}]},
+        _sql_evidence(
+            connection,
+            {
+                "all": [
+                    {"path": "/large", "op": "eq", "value": "\u00e9" * 513},
+                    {"path": "/scalar", "op": "eq", "value": 1},
+                ]
+            },
         )
         is False
     )
+    assert _sql_evidence(connection, {"path": "/large", "op": "eq", "value": "\u00e9" * 513}) is None
     assert (
-        index_evidence(
-            projection,
+        _sql_evidence(
+            connection,
             {
                 "any": [
-                    {"path": "/large", "op": "eq", "value": "é" * 513},
+                    {"path": "/large", "op": "eq", "value": "\u00e9" * 513},
                     {"path": "/scalar", "op": "eq", "value": None},
                 ]
             },

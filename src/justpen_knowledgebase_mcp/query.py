@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     import apsw
 
 from .errors import InvalidParamsError
-from .indexing import Projection, value_type
+from .indexing import value_type
 from .mutations import pointer_tokens, validate_properties
 from .storage.graph_sql import PROPERTY_SELECT
 from .text import tokenize, tokens
@@ -125,63 +125,6 @@ def evaluate(document: dict[str, Any], expression: dict[str, Any]) -> bool:
     if "any" in expression:
         return any(evaluate(document, child) for child in expression["any"])
     return predicate_value(resolve_pointer(document, expression["path"]), expression)
-
-
-def index_evidence(projection: Projection, expression: dict[str, Any]) -> bool | None:
-    """Return unknown only when existing index evidence cannot decide."""
-    for group, decisive in (("all", False), ("any", True)):
-        if group in expression:
-            answers = [index_evidence(projection, child) for child in expression[group]]
-            if decisive in answers:
-                return decisive
-            return None if None in answers else not decisive
-    return _leaf_evidence(projection, expression)
-
-
-def _leaf_evidence(projection: Projection, expression: dict[str, Any]) -> bool | None:
-    path = expression["path"]
-    row = projection.rows.get(path)
-    if row is not None:
-        if expression["op"] == "exists":
-            return expression["value"]
-        if row.value_materialized:
-            value: object = (
-                {}
-                if row.value_type == "object"
-                else []
-                if row.value_type == "array"
-                else bool(row.value)
-                if row.value_type == "boolean"
-                else row.value
-            )
-            return predicate_value(value, expression)
-        operands = expression["value"] if expression["op"] == "in" else [expression["value"]]
-        if any(type(item) is str for item in operands):
-            return None
-        return expression["op"] == "ne"
-    return _missing_evidence(projection, expression)
-
-
-def _missing_evidence(projection: Projection, expression: dict[str, Any]) -> bool | None:
-    path = expression["path"]
-    array_seen = False
-    parts = path.split("/")[1:]
-    for index in range(1, len(parts)):
-        ancestor = projection.rows.get("/" + "/".join(parts[:index]))
-        if ancestor is None:
-            if projection.non_array_complete and not array_seen:
-                return predicate_value(MISSING, expression)
-            break
-        if ancestor.value_type not in ("object", "array"):
-            return predicate_value(MISSING, expression)
-        array_seen |= ancestor.value_type == "array"
-    if projection.paths_complete or (
-        projection.non_array_complete
-        and not array_seen
-        and all("/" + "/".join(parts[:index]) in projection.rows for index in range(1, len(parts)))
-    ):
-        return predicate_value(MISSING, expression)
-    return None
 
 
 class _Compiler:
