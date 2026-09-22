@@ -22,7 +22,7 @@ def test_schema_initialized_and_reopened(tmp_path):
     with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
         identity = None
         with closing(runtime.connect()) as connection:
-            assert connection.execute("select schema_version from settings").get == 2
+            assert connection.execute("select schema_version from settings").get == 3
             assert connection.execute("select count(*) from nodes").get == 0
             assert "identity_scope_id" not in {row[1] for row in connection.execute("pragma table_info(nodes)")}
             identity = connection.execute("select workspace_id from settings").get
@@ -34,9 +34,21 @@ def test_newer_schema_is_rejected(tmp_path):
     config = ServerConfig(workspace_dir=tmp_path)
     with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
         connection = runtime.connect()
-        connection.execute("update settings set schema_version=3")
+        connection.execute("update settings set schema_version=4")
         connection.close()
         with pytest.raises(ConfigurationError):
+            runtime.connect()
+
+
+def test_v2_workspace_without_the_coverage_column_fails_closed(tmp_path):
+    config = ServerConfig(workspace_dir=tmp_path)
+    with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
+        with closing(runtime.connect()) as connection:
+            for suffix in ("insert", "delete", "update"):
+                connection.execute(f"drop trigger evidence_coverage_{suffix}")
+            connection.execute("alter table settings drop column evidence_coverage")
+            connection.execute("update settings set schema_version=2")
+        with pytest.raises(ConfigurationError, match="database contract"):
             runtime.connect()
 
 

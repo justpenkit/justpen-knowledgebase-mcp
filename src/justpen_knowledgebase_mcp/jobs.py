@@ -36,6 +36,7 @@ from .mutations import canonical_json
 from .reindex import index_evidence, reindex_step
 from .storage.evidence import EvidenceStore, StagedEvidence, job_bucket, stage_name
 from .storage.evidence_records import EvidenceRecords
+from .storage.fulltext import reconcile_coverage
 from .storage.graph import require_ready, row_by_id
 from .storage.job_ownership import failure_object, row_progress
 from .storage.job_recovery import StageScan, recover_intents, staging_disposable
@@ -114,6 +115,12 @@ class JobsRequest(ClosedModel):
         return self
 
 
+def _reconcile_counters(connection: apsw.Connection, _token: OperationToken) -> None:
+    """Recompute both maintained aggregates in one startup control transaction."""
+    JobRetention.reconcile(connection)
+    reconcile_coverage(connection)
+
+
 class JobRunner:
     """Poll one durable step at a time; RAM queues are bounded independently of DB jobs."""
 
@@ -156,7 +163,7 @@ class JobRunner:
     async def start(self) -> None:
         """Recover owner intent before beginning bounded durable polling."""
         await self.recover()
-        await self.workers.control(lambda c, _t: JobRetention.reconcile(c))
+        await self.workers.control(_reconcile_counters)
         with contextlib.suppress(BusyError, LimitError):
             await self.retention_pass(force=True)
         self._tasks = [asyncio.create_task(self._lane(lane)) for lane in ("short", "bulk")]
