@@ -46,9 +46,12 @@ ASSOCIATION_RESPONSE_BYTES = 245000
 
 
 def _member_bytes(member: object) -> int:
-    # An array member costs its own canonical bytes plus one separator. Charging that separator for
-    # the first member too over-counts a non-empty array by exactly one byte and never under-counts,
-    # so this accounting stays at or below the whole-output size it replaces.
+    # An array member costs its own canonical bytes plus one separator, so n members are charged
+    # `sum(len) + n`. What that is measured against differs by caller. `Graph.get` starts from the
+    # serialized empty envelope, whose brackets are already counted, so it over-counts each
+    # non-empty array by exactly one byte and never under-counts its own output. `_associations`
+    # counts members alone, one byte below the array's own `sum(len) + n + 1`; its budget reserves
+    # the whole view key and cursor beside that array, so the byte is never the one that decides.
     return len(canonical_json(member).encode("utf-8")) + 1
 
 
