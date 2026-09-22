@@ -16,7 +16,7 @@ from justpen_knowledgebase_mcp.identity import identity_key
 from justpen_knowledgebase_mcp.models import GetRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.connection import SQLiteRuntime
-from justpen_knowledgebase_mcp.storage.job_retention import CANDIDATES_SQL, JobRetention
+from justpen_knowledgebase_mcp.storage.job_retention import CANDIDATE_ROWS_SQL, CANDIDATES_SQL, JobRetention
 from justpen_knowledgebase_mcp.storage.jobs import JobStore
 from justpen_knowledgebase_mcp.workspace import WorkspacePaths
 
@@ -590,3 +590,9 @@ async def test_batch_probes_each_owner_table_once_per_page_not_once_per_job(kb):
     assert (await kb.jobs({"action": "get", "job_id": ids[0]}))["retention_protected"] is True
     assert (await kb.jobs({"action": "get", "job_id": ids[1]}))["state"] == "failed"
     assert len(reads) <= 12, f"{len(reads)} read statements for one 100-row page: {json.dumps(reads[:20])}"
+
+    # The page read must seek each candidate, never scan the whole jobs table.
+    plan = await kb.workers.read(
+        lambda c, _t: [row[3] for row in c.execute("explain query plan " + CANDIDATE_ROWS_SQL, (json.dumps(ids),))]
+    )
+    assert any("SEARCH jobs" in item and "uuid=?" in item for item in plan), plan
