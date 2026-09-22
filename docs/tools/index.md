@@ -26,9 +26,19 @@ typed `details` object. Public codes are `INVALID`, `NOT_FOUND`, `CONFLICT`,
 `BUSY`, `LIMIT`, `PATH_DENIED`, `IO_ERROR`, `INDEX_ERROR`, `CANCELLED`,
 `CONFIGURATION`, and `INTERNAL`.
 
-FastMCP/Pydantic can reject structurally invalid protocol data before the
-application envelope exists. Clients should therefore also handle an MCP
-`is_error` result without `structured_content`; raw NaN/Infinity is one example.
+FastMCP validates each call against the tool's published input schema before the
+request model is built. Such a rejection carries the same `INVALID` envelope,
+naming the rejected argument paths and the rules they broke without repeating
+the values sent; raw NaN/Infinity is one example. A call that reaches no tool at
+all, such as an unknown tool name or a protocol frame the transport cannot
+parse, fails before any envelope exists, so clients should also handle an MCP
+`is_error` result without `structured_content`.
+
+A record identifier is refused whichever layer catches it. The published schema
+promises the 36-byte width; the canonical lowercase 8-4-4-4-12 spelling is
+checked on arrival and cannot be expressed in JSON Schema, so
+`INVALID: invalid tool request; <argument>: non-canonical graph id` is the only
+notice of it. Both arrive as the envelope above.
 
 Serialized success envelopes are capped at 256 KiB. A single result that cannot
 fit returns `LIMIT`; list operations otherwise return explicit remainder,
