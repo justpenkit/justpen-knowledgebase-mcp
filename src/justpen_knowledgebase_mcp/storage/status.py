@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 import apsw
 
-from ..errors import LimitError
 from .fulltext import coverage
 
 if TYPE_CHECKING:
@@ -59,22 +58,20 @@ DERIVED_OBJECTS = {
 }
 
 
-# `dbstat` reads every page of every object it reports. Measured at 3.4-3.6 us
-# per page across 4751 to 888443 pages, so the sampler's one-second budget buys
-# roughly 289000 pages. Past this bound the walk cannot finish on any host and
-# only wastes a reader thread before the budget cancels it mid-page, so the same
-# LimitError is raised up front instead. `PRAGMA page_count` reads the header in
-# 0.012 ms and bounds the walk from above: it counts the whole database, never
-# fewer pages than the selected objects hold.
-DBSTAT_PAGE_LIMIT = 262144
-
-
+# `dbstat` reads every page of the object it reports, and only that object: the
+# `name=?` constraint reaches the virtual table, which plans as `SCAN dbstat
+# VIRTUAL TABLE INDEX 0x2`. Measured across 4 to 1051 MiB of unrelated bulk, a
+# one-page `search_documents` walk stays at 0.021 ms while the bulk object's own
+# walk grows with it at 2.2-2.8 us per page. The one-second budget therefore buys
+# roughly 450000 pages of the selected objects, and `token.check()` between pages
+# cancels an overrun 24-83 us past the deadline, which publishes
+# `last_error: "LIMIT"` with `cached_at: null`. That deadline is the only bound
+# taken: a whole-file bound counts pages these queries never read, so it would
+# refuse workspaces whose derived objects finish in microseconds.
 def sample_derived_storage(connection: apsw.Connection, token: OperationToken) -> dict[str, Any]:
     """Sum selected B-tree pages with cancellation between pages and no text materialization."""
     sizes = dict.fromkeys(DERIVED_OBJECTS, 0)
     try:
-        if connection.execute("PRAGMA page_count").get > DBSTAT_PAGE_LIMIT:
-            raise LimitError("derived storage sample exceeds the page allocation budget")
         for category, names in DERIVED_OBJECTS.items():
             for object_name in names:
                 token.check()
