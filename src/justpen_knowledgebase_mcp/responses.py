@@ -20,7 +20,13 @@ class BlockingRecord(BaseModel):
 
     @model_validator(mode="after")
     def kind_identity(self) -> Self:
-        """Validate blocker ID against its server-selected record kind."""
+        """Validate blocker ID against its server-selected record kind.
+
+        This reads as a no-op and is not one. `id` is a union, so a graph kind carrying an evidence
+        ID parses as the `EvidenceID` branch rather than failing, and `kind="evidence"` accepts a
+        UUID string by coercion; only this check refuses those two disagreements. The UUID branch
+        alone can indeed never fail it, since `str(UUID(...))` is canonical by construction.
+        """
         validate_record_id(self.kind, str(self.id))
         return self
 

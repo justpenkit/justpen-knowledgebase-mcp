@@ -65,6 +65,12 @@ class NodeRef(ClosedModel):
         return self
 
 
+# Dual use, and the ingress use is the one that decides the alias: this is `kb_ingest_evidence`'s
+# `targets[]` as well as a `LinksViewResult` entry, so `StoredRecordID` here would drop the canonical
+# check from a real ingress path. The egress use costs nothing to leave strict, because it is never
+# validated: `LinksViewResult` is only ever asked for its JSON Schema in `tools/graph.py`, and
+# profiling five maximal `kb_get view=links` pages, 500 targets, counted zero `validate_graph_id`
+# calls. The `RecordID`/`StoredRecordID` split above removes measured egress cost; there is none here.
 class TargetRef(ClosedModel):
     """An evidence association's graph target."""
 
