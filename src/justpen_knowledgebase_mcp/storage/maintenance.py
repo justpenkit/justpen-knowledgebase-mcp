@@ -7,6 +7,7 @@ import fcntl
 import logging
 import math
 import os
+import stat
 import threading
 import time
 from contextlib import ExitStack
@@ -96,22 +97,23 @@ class WalState(BaseModel):
 # against 3.5 us for the bare stat. Every product transaction pays it once and
 # every write commit a second time. The validated name is therefore reused for at
 # most this long, which is exactly how long a managed directory replaced under a
-# running server, or a WAL that gained a hard link, can go unnoticed: the full
-# check runs again within a second and `check_product` degrades to WAL_PRESSURE
-# from then on, as it does today.
+# running server can go unnoticed: the full check runs again within a second and
+# `check_product` degrades to WAL_PRESSURE from then on, as it does today. The
+# name's own two inode rules are not deferred with it; `allocation` re-checks
+# them against the pinned descriptor on every call.
 _REVALIDATE_SECONDS = 1.0
 
-_VALIDATED_WAL: WeakKeyDictionary[WorkspacePaths, tuple[Path, float]] = WeakKeyDictionary()
+_VALIDATED_WAL: WeakKeyDictionary[WorkspacePaths, tuple[str, Path, float]] = WeakKeyDictionary()
 _VALIDATED_WAL_LOCK = threading.Lock()
 
 
-def _wal_path(workspace: WorkspacePaths) -> Path:
+def _wal_name(workspace: WorkspacePaths) -> tuple[str, Path]:
     """Revalidate the WAL name at most once per `_REVALIDATE_SECONDS`."""
     now = time.monotonic()
     with _VALIDATED_WAL_LOCK:
         entry = _VALIDATED_WAL.get(workspace)
-        if entry is not None and now - entry[1] < _REVALIDATE_SECONDS:
-            return entry[0]
+        if entry is not None and now - entry[2] < _REVALIDATE_SECONDS:
+            return entry[0], entry[1]
     try:
         path = workspace.validate_native(str(workspace.db) + "-wal")
     except BaseException:
@@ -120,18 +122,30 @@ def _wal_path(workspace: WorkspacePaths) -> Path:
             _VALIDATED_WAL.pop(workspace, None)
         raise
     with _VALIDATED_WAL_LOCK:
-        _VALIDATED_WAL[workspace] = (path, now)
-    return path
+        _VALIDATED_WAL[workspace] = (path.name, path.parent, now)
+    return path.name, path.parent
 
 
 def allocation(workspace: WorkspacePaths) -> int | None:
     """Measure WAL allocation; absent WAL is zero, failed measurement unknown."""
     try:
-        return _wal_path(workspace).stat().st_size
+        # Reusing the validation must not reuse a resolved path: a name resolved
+        # again from the root follows a symlink planted since and measures a file
+        # outside the workspace. The pinned parent descriptor reads the inode the
+        # open database holds, and `KeyError` stands for a workspace already
+        # closed, the same unknown an uncached measurement returns then.
+        name, directory = _wal_name(workspace)
+        item = os.stat(name, dir_fd=workspace.managed_fd(directory), follow_symlinks=False)
     except FileNotFoundError:
         return 0
-    except (OSError, PathDeniedError, StorageIOError):
+    except (KeyError, OSError, PathDeniedError, StorageIOError):
         return None
+    # `validate_native`'s own two inode rules, kept on every call rather than
+    # deferred with the name; only its directory-identity check waits for the
+    # next full revalidation. An unsafe alias is an unknown, as `PATH_DENIED` is.
+    if not stat.S_ISREG(item.st_mode) or item.st_nlink != 1:
+        return None
+    return item.st_size
 
 
 class StatusCache:
