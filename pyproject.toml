@@ -69,7 +69,6 @@ docs = ["mkdocs-material>=9.5"]
 [tool.commitizen]
 name = "cz_conventional_commits"
 version_provider = "pep621"
-version_files = ["README.md:justpen-knowledgebase-mcp.git@v"]
 tag_format = "v$version"
 message_length_limit = 72
 allowed_prefixes = ["Merge ", "fixup! ", "squash! ", "amend! ", 'Revert "']
