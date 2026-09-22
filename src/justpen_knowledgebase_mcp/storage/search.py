@@ -26,6 +26,26 @@ if TYPE_CHECKING:
     from .worker import OperationToken
 
 
+# The whole output is counted here except `cursor`, which is encoded once the page breaks and is
+# bounded at 4096 base64 characters. The 17 121 bytes this leaves below the 262 121-byte serialized
+# data bound of `bounded_response` cover that remainder.
+RESPONSE_BYTES = 245000
+
+
+def _member_bytes(member: object) -> int:
+    # An array member costs its own canonical bytes plus one separator. Charging that separator for
+    # the first member too over-counts a non-empty array by exactly one byte and never under-counts,
+    # so this accounting stays at or below the whole-output size it replaces.
+    return len(canonical_json(member).encode("utf-8")) + 1
+
+
+def _envelope_bytes(output: dict[str, Any]) -> int:
+    # Everything except the accumulating items, which the running counter owns. This is one small
+    # object per item instead of one whole output per accumulated item, and it stays exact while
+    # `property_filter_mode` and `canonical_scan_count` still move underneath the loop.
+    return len(canonical_json({**output, "items": []}).encode("utf-8"))
+
+
 def search(connection: apsw.Connection, token: OperationToken, request: SearchRequest) -> dict[str, Any]:
     """Resolve each candidate before advancing; never skip unknown owners."""
     workspace, epoch = connection.execute("SELECT workspace_id,query_epoch FROM settings WHERE singleton=1").get
@@ -69,6 +89,7 @@ def search(connection: apsw.Connection, token: OperationToken, request: SearchRe
     last_returned = after
     ranked: list[tuple[float, int, dict[str, Any]]] = []
     ranked_count = 0
+    item_bytes = 0
     with closing(
         _matched_candidates(connection, token, request, text_query, sql, values, filters, after, output)
     ) as candidates:
@@ -79,16 +100,15 @@ def search(connection: apsw.Connection, token: OperationToken, request: SearchRe
                 ranked.sort(key=lambda entry: (entry[0], entry[1]))
                 del ranked[request.limit :]
                 continue
-            if (
-                len(output["items"]) == request.limit
-                or len(canonical_json({**output, "items": [*output["items"], item]}).encode("utf-8")) > 245000
-            ):
+            cost = _member_bytes(item)
+            if len(output["items"]) == request.limit or _envelope_bytes(output) + item_bytes + cost > RESPONSE_BYTES:
                 if not output["items"]:
                     raise LimitError("search item exceeds response budget")
                 output["has_more"] = True
                 output["cursor"] = binding.encode(last_returned)
                 break
             output["items"].append(item)
+            item_bytes += cost
             last_returned = identifier
     token.check()
     if request.sort == "relevance":
@@ -189,11 +209,14 @@ def _matched_candidates(
 
 def _ranked_output(output: dict[str, Any], ranked: list[tuple[float, int, dict[str, Any]]], ranked_count: int) -> None:
     output["has_more"] = ranked_count > len(ranked)
+    envelope, item_bytes = _envelope_bytes(output), 0
     for _, _, item in ranked:
-        if len(canonical_json({**output, "items": [*output["items"], item]}).encode("utf-8")) > 245000:
+        cost = _member_bytes(item)
+        if envelope + item_bytes + cost > RESPONSE_BYTES:
             output["has_more"] = True
             break
         output["items"].append(item)
+        item_bytes += cost
 
 
 def _text_candidates(kind: str, expressions: tuple[str, ...], *, include_evidence: bool) -> tuple[str, list[str]]:

@@ -1,14 +1,16 @@
 """Search and traversal decisions isolated from SQLite/FTS execution."""
 
 import importlib
+import json
 from unittest.mock import Mock
 
 import pytest
 
 from justpen_knowledgebase_mcp.errors import InvalidParamsError, NotFoundError
 from justpen_knowledgebase_mcp.models import NeighborsRequest, SearchRequest
+from justpen_knowledgebase_mcp.mutations import canonical_json
 from justpen_knowledgebase_mcp.query import TextQuery
-from justpen_knowledgebase_mcp.storage import traversal
+from justpen_knowledgebase_mcp.storage import graph, traversal
 
 from .helpers import NODE, OTHER, cursor, database, owner
 
@@ -175,3 +177,60 @@ def test_traversal_missing_seed_and_deadline(monkeypatch):
         traversal.neighbors(database(), Mock(deadline=0), NeighborsRequest(seed_ids=[NODE]))
     monkeypatch.setattr(traversal, "row_by_id", Mock(return_value=owner()))
     assert traversal.neighbors(database(), Mock(deadline=0), NeighborsRequest(seed_ids=[NODE]))["reason"] == "deadline"
+
+
+def serialization_counter(monkeypatch, module):
+    """Count bytes handed to canonical_json so cost is read as work, not as elapsed time."""
+    total = [0]
+
+    def counted(value):
+        text = canonical_json(value)
+        total[0] += len(text.encode("utf-8"))
+        return text
+
+    monkeypatch.setattr(module, "canonical_json", counted)
+    return lambda: total[0]
+
+
+def test_search_budget_serializes_each_returned_item_once(monkeypatch):
+    """P5: the budget re-serialized the whole output, items included, for every candidate, and
+    copied the accumulated item list to do it. Serialized volume is the observable that separates
+    the running counter from that shape; the call count is identical under both."""
+    monkeypatch.setattr(search, "coverage", Mock(return_value=COVERAGE))
+    metadata = json.dumps({"label": "l" * 1024, "source": None})
+    rows = [(index, NODE, "domain", "key", metadata, True) for index in range(1, 101)]
+    db = database(cursor(value=(NODE, 1)), cursor(rows=rows))
+    serialized = serialization_counter(monkeypatch, search)
+    result = search.search(db, Mock(), SearchRequest(kind="nodes", limit=100))
+    assert len(result["items"]) == 100
+    # Each returned item is serialized once for its own cost plus a small fixed envelope per item;
+    # the replaced shape serialized the whole accumulated output one hundred times.
+    volume, response = serialized(), len(canonical_json(result).encode("utf-8"))
+    assert volume <= 4 * response
+
+
+@pytest.mark.parametrize("module", [search, traversal, graph])
+def test_member_accounting_over_counts_each_array_by_exactly_one_separator(module):
+    """The whole budget change rests on this identity: an empty array in the envelope plus one
+    charge per member is the filled output plus exactly one byte. One byte over per array is safe
+    because it stops the page earlier; any byte under would let a page exceed its declared budget."""
+    members = [{"id": NODE, "type": "domain"}, {"id": OTHER, "type": "subdomain"}]
+    envelope = len(canonical_json({"items": [], "truncated": False}).encode("utf-8"))
+    filled = len(canonical_json({"items": members, "truncated": False}).encode("utf-8"))
+    accounted = sum(module._member_bytes(member) for member in members)
+    assert envelope + accounted == filled + 1
+
+
+def test_search_page_breaks_within_one_item_of_the_declared_budget(monkeypatch):
+    """The moved boundary, asserted rather than absorbed: the page still fills the budget to within
+    the one item it refused plus the separator the accounting adds."""
+    monkeypatch.setattr(search, "coverage", Mock(return_value=COVERAGE))
+    metadata = json.dumps({"label": "l" * 16384, "source": None})
+    rows = [(index, NODE, "domain", "key", metadata, True) for index in range(1, 101)]
+    result = search.search(
+        database(cursor(value=(NODE, 1)), cursor(rows=rows)), Mock(), SearchRequest(kind="nodes", limit=100)
+    )
+    assert result["has_more"]
+    accounted = len(canonical_json({**result, "cursor": None}).encode("utf-8"))
+    refused = search._member_bytes(result["items"][0]) + 1
+    assert search.RESPONSE_BYTES - refused <= accounted <= search.RESPONSE_BYTES

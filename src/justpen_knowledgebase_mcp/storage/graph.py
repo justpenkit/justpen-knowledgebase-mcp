@@ -31,6 +31,18 @@ KINDS = frozenset(("nodes", "relations", "evidence"))
 # Derived parent-first from the catalog: a scoped type that is itself a scope-relation source
 # must be resolved before its child, and deriving it keeps that true without a manual reorder.
 _SCOPED_NODE_ORDER = scope_order()
+# `Graph.get` counts its whole record output, so its remainder below the 262 121-byte serialized
+# data bound of `bounded_response` is only the response envelope. `_associations` counts its items
+# alone, leaving its remainder to carry the view key and a 4096-character `next_cursor`.
+RECORD_RESPONSE_BYTES = 250000
+ASSOCIATION_RESPONSE_BYTES = 245000
+
+
+def _member_bytes(member: object) -> int:
+    # An array member costs its own canonical bytes plus one separator. Charging that separator for
+    # the first member too over-counts a non-empty array by exactly one byte and never under-counts,
+    # so this accounting stays at or below the whole-output size it replaces.
+    return len(canonical_json(member).encode("utf-8")) + 1
 
 
 @dataclass
@@ -763,17 +775,22 @@ class Graph:
         if request.view != "record":
             return _associations(connection, request)
         output: dict[str, Any] = {"records": [], "missing_ids": [], "remaining_ids": []}
+        response_bytes = len(canonical_json(output).encode("utf-8"))
         for identifier in request.ids:
             token.check()
             row = row_by_id(connection, request.kind, identifier)
             if row is None:
                 output["missing_ids"].append(identifier)
+                response_bytes += _member_bytes(identifier)
                 continue
             record = _record(connection, request.kind, row)
-            output["records"].append(record)
-            if len(canonical_json(output).encode("utf-8")) > 250000:
-                output["records"].pop()
+            cost = _member_bytes(record)
+            if response_bytes + cost > RECORD_RESPONSE_BYTES:
                 output["remaining_ids"].append(identifier)
+                response_bytes += _member_bytes(identifier)
+                continue
+            output["records"].append(record)
+            response_bytes += cost
         return output
 
 
@@ -864,10 +881,13 @@ def _associations(connection: apsw.Connection, request: GetRequest) -> dict[str,
     last = after
     last_kind = after_kind
     truncated = False
+    item_bytes = 0
     for index, row in enumerate(rows):
-        if index == request.limit or len(canonical_json([*items, row[1]]).encode("utf-8")) > 245000:
+        cost = _member_bytes(row[1])
+        if index == request.limit or item_bytes + cost > ASSOCIATION_RESPONSE_BYTES:
             truncated = True
             break
+        item_bytes += cost
         last = row[0]
         if request.kind == "evidence" and request.view == "links":
             last_kind = row[1]["kind"]
