@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -10,6 +11,7 @@ from ..errors import ConflictError, NotFoundError
 from ..mutations import canonical_json
 from ..text import TextChunk, record_text_units, tokens
 from . import graph
+from .schema import COVERAGE_STATES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -31,16 +33,32 @@ def refresh_record_text(connection: apsw.Connection, kind: str, row: dict[str, A
     )
 
 
+COVERAGE_SCAN = (
+    "SELECT index_state,incomplete,count(*) FROM evidence WHERE lifecycle='ready' GROUP BY index_state,incomplete"
+)
+
+
+def _published(counts: dict[str, int]) -> dict[str, int]:
+    """Rename the stored `index_failed` key to the published `failed` field."""
+    result: dict[str, int] = dict.fromkeys(("ready", "pending", "failed", "incomplete", "not_applicable"), 0)
+    for state, count in counts.items():
+        result["failed" if state == "index_failed" else state] += count
+    return result
+
+
 def coverage(connection: apsw.Connection) -> dict[str, int]:
     """Read current ready-owner evidence coverage from this search snapshot."""
-    result: dict[str, int] = dict.fromkeys(("ready", "pending", "failed", "incomplete", "not_applicable"), 0)
-    for state, incomplete, count in connection.execute(
-        "SELECT index_state,incomplete,count(*) FROM evidence WHERE lifecycle='ready' GROUP BY index_state,incomplete"
-    ):
-        result["failed" if state == "index_failed" else state] += count
+    return _published(json.loads(connection.execute("SELECT evidence_coverage FROM settings WHERE singleton=1").get))
+
+
+def reconcile_coverage(connection: apsw.Connection) -> None:
+    """Explicit startup recovery recomputes the maintained aggregate from the rows."""
+    counts = dict.fromkeys((*COVERAGE_STATES, "incomplete"), 0)
+    for state, incomplete, count in connection.execute(COVERAGE_SCAN):
+        counts[state] += count
         if incomplete:
-            result["incomplete"] += count
-    return result
+            counts["incomplete"] += count
+    connection.execute("UPDATE settings SET evidence_coverage=? WHERE singleton=1", (json.dumps(counts),))
 
 
 def _literal_ranges(tokenizer: apsw.FTS5Tokenizer, text: str, query: TextQuery) -> Iterator[tuple[int, int]]:
@@ -256,6 +274,12 @@ def check_item(connection: apsw.Connection, owner: IndexOwner) -> None:
         raise ConflictError("INDEX_GENERATION_CHANGED")
 
 
+# The 100-row bound is a writer-lock bound, not a commit-count bound, and raising
+# it is a regression. Clearing 1600 rows of 64 KiB text costs 624-675 ms at 100
+# and 596-599 ms at 2000, because a commit fsyncs in 1.84 ms and 17 of them are
+# 4.8% of the work, while the FTS5 delete triggers are the rest. What does change
+# is the longest single hold of the one global writer lane: 48 ms at 100 against
+# 599 ms at 2000, a twelvefold stall for every concurrent write.
 def clear_item_batch(connection: apsw.Connection, owner: IndexOwner) -> bool:
     """Delete at most 100 derived canonical rows with atomic FTS trigger maintenance."""
     check_item(connection, owner)

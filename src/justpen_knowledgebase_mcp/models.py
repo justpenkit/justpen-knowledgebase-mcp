@@ -3,18 +3,38 @@
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Self
-from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .identity import EvidenceID, parse_timestamp, validate_evidence_id, validate_record_id
+from .identity import (
+    GRAPH_ID_PATTERN,
+    EvidenceID,
+    parse_timestamp,
+    validate_evidence_id,
+    validate_graph_id,
+    validate_record_id,
+)
 from .mutations import validate_properties
 from .query import validate_filter
 from .responses import BlockerDetails
 
 Kind = Literal["nodes", "relations", "evidence"]
 GraphKind = Literal["nodes", "relations"]
-RecordID = Annotated[str, Field(min_length=36, max_length=36)]
+# Ingress. Every client-supplied graph identifier carries this alias, including the public tool
+# signatures in `tools/`, which FastMCP validates before a request model is built. Placing the
+# canonical check on the alias rather than inside `validate_record_id` is what makes `kb_get` and
+# `kb_reindex` equally strict: `GetRequest` calls that function and `NodeRef` never did.
+# `json_schema_extra` publishes the spelling `validate_graph_id` already enforces without adding a
+# second check, so a host can reject `550E8400-...` before sending and the refusal below is unchanged.
+RecordID = Annotated[
+    str,
+    Field(min_length=36, max_length=36, json_schema_extra={"pattern": GRAPH_ID_PATTERN}),
+    AfterValidator(validate_graph_id),
+]
+# Egress. A stored identifier is `str(uuid4())` by construction, so re-deriving its spelling on the
+# way out buys nothing: the canonical check over one maximal `NeighborsResult` costs 5.4 ms of a
+# measured 8.0 ms validation, on the path PR3 is shortening. The width bound stays.
+StoredRecordID = Annotated[str, Field(min_length=36, max_length=36)]
 MediaType = Annotated[
     str,
     Field(
@@ -42,11 +62,15 @@ class NodeRef(ClosedModel):
         """Require a single non-null reference field."""
         if self.model_fields_set not in ({"id"}, {"node_index"}) or (self.id is None and self.node_index is None):
             raise ValueError("exactly one id or node_index required")
-        if self.id is not None:
-            UUID(self.id)
         return self
 
 
+# Dual use, and the ingress use is the one that decides the alias: this is `kb_ingest_evidence`'s
+# `targets[]` as well as a `LinksViewResult` entry, so `StoredRecordID` here would drop the canonical
+# check from a real ingress path. The egress use costs nothing to leave strict, because it is never
+# validated: `LinksViewResult` is only ever asked for its JSON Schema in `tools/graph.py`, and
+# profiling five maximal `kb_get view=links` pages, 500 targets, counted zero `validate_graph_id`
+# calls. The `RecordID`/`StoredRecordID` split above removes measured egress cost; there is none here.
 class TargetRef(ClosedModel):
     """An evidence association's graph target."""
 
@@ -71,8 +95,6 @@ class Mutation(ClosedModel):
         """Validate metadata without losing explicit null or omission."""
         if self.id is None and (self.type is None or "properties" not in self.model_fields_set):
             raise ValueError("creation requires type and properties")
-        if self.id is not None:
-            UUID(self.id)
         if "observed_at" in self.model_fields_set:
             if self.observed_at is None:
                 raise ValueError("observed_at cannot be null")
@@ -198,7 +220,7 @@ class PropertyIndexCoverage(ClosedModel):
 class MutationResult(ClosedModel):
     """Compact mutation acknowledgment, never a duplicate full property payload."""
 
-    id: RecordID
+    id: StoredRecordID
     created: bool
     updated: bool
     links_added: Annotated[int, Field(ge=0, le=100)]
@@ -217,8 +239,8 @@ class RecordViewResult(ClosedModel):
     """Full records and explicit missing or response-budget remainder IDs."""
 
     records: list[dict[str, Any]] = Field(max_length=100)
-    missing_ids: list[RecordID | EvidenceID] = Field(max_length=100)
-    remaining_ids: list[RecordID | EvidenceID] = Field(max_length=100)
+    missing_ids: list[StoredRecordID | EvidenceID] = Field(max_length=100)
+    remaining_ids: list[StoredRecordID | EvidenceID] = Field(max_length=100)
 
 
 class LinksViewResult(ClosedModel):
@@ -300,9 +322,6 @@ class SearchRequest(ClosedModel):
             raise ValueError("relevance needs query and does not accept cursor")
         if self.query is not None and len(self.query.encode("utf-8")) > 2048:
             raise ValueError("query byte limit")
-        for identifier in (self.source_id, self.target_id):
-            if identifier is not None:
-                UUID(identifier)
         for timestamp in (self.observed_at_min, self.observed_at_max, self.created_at_min, self.created_at_max):
             if timestamp is not None:
                 parse_timestamp(timestamp)
@@ -326,8 +345,6 @@ class NeighborsRequest(ClosedModel):
         """Reject duplicate/oversized seeds before any database work."""
         if len(self.seed_ids) > self.max_nodes or len(set(self.seed_ids)) != len(self.seed_ids):
             raise ValueError("seed budget exceeded or duplicate seed")
-        for identifier in self.seed_ids:
-            UUID(identifier)
         return self
 
 
@@ -344,14 +361,14 @@ class MatchReference(SourceRange):
     """Exact source bounds, separate from the deliberately short snippet."""
 
     kind: Kind
-    id: RecordID | EvidenceID
+    id: StoredRecordID | EvidenceID
     pointer: str | None = None
 
 
 class SearchSummary(ClosedModel):
     """One bounded summary and one winning match unit."""
 
-    id: RecordID | EvidenceID
+    id: StoredRecordID | EvidenceID
     type: str | None = None
     key: str | None = None
     source: str | None = None
@@ -394,15 +411,15 @@ class SearchResult(ClosedModel):
 class NeighborNode(ClosedModel):
     """Bounded graph node identity for traversal."""
 
-    id: RecordID
+    id: StoredRecordID
     type: str
 
 
 class NeighborEdge(NeighborNode):
     """A directed stored relation, without inferred facts."""
 
-    source_id: RecordID
-    target_id: RecordID
+    source_id: StoredRecordID
+    target_id: StoredRecordID
 
 
 class NeighborsResult(ClosedModel):
@@ -412,7 +429,7 @@ class NeighborsResult(ClosedModel):
     edges: list[NeighborEdge] = Field(max_length=3000)
     truncated: bool
     reason: Literal["max_nodes", "max_edges", "deadline", "response_bytes"] | None
-    frontier: list[RecordID] = Field(max_length=1000)
+    frontier: list[StoredRecordID] = Field(max_length=1000)
 
 
 class JobProgress(ClosedModel):
@@ -426,7 +443,7 @@ class JobProgress(ClosedModel):
 class JobResult(ClosedModel):
     """One public job state, independent of private path and token bookkeeping."""
 
-    job_id: RecordID
+    job_id: StoredRecordID
     kind: Literal["ingest", "delete", "reindex"]
     state: Literal["queued", "running", "completed", "failed", "cancelled"]
     lane: Literal["short", "bulk"]
@@ -443,7 +460,7 @@ class JobResult(ClosedModel):
     retention_protected: bool = False
     error: Annotated[str, Field(max_length=32)] | None = None
     reason: Annotated[str, Field(max_length=256)] | None = None
-    deleted_ids: list[RecordID | EvidenceID] = Field(default_factory=list[str], max_length=100)
+    deleted_ids: list[StoredRecordID | EvidenceID] = Field(default_factory=list[str], max_length=100)
     status: Literal["accepted", "completed", "failed", "cancelled"] | None = None
 
     details: BlockerDetails | None = None
@@ -451,7 +468,7 @@ class JobResult(ClosedModel):
     coverage_incomplete: bool = False
     generation_changed_count: Annotated[int, Field(ge=0)] = 0
     index_busy_count: Annotated[int, Field(ge=0)] = 0
-    sample_ids: list[RecordID | EvidenceID] = Field(default_factory=list[str], max_length=32)
+    sample_ids: list[StoredRecordID | EvidenceID] = Field(default_factory=list[str], max_length=32)
     sample_truncated: bool = False
 
     @model_validator(mode="after")

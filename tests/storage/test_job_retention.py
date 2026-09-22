@@ -16,7 +16,7 @@ from justpen_knowledgebase_mcp.identity import identity_key
 from justpen_knowledgebase_mcp.models import GetRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.connection import SQLiteRuntime
-from justpen_knowledgebase_mcp.storage.job_retention import CANDIDATES_SQL, JobRetention
+from justpen_knowledgebase_mcp.storage.job_retention import CANDIDATE_ROWS_SQL, CANDIDATES_SQL, JobRetention
 from justpen_knowledgebase_mcp.storage.jobs import JobStore
 from justpen_knowledgebase_mcp.workspace import WorkspacePaths
 
@@ -549,3 +549,50 @@ async def test_retention_corruption_stays_visible_after_count_falls_below_target
     await kb.job_runner.retention_pass(force=True)
     assert not kb.job_runner.retention_status()["needs_attention"]
     assert kb.job_runner.retention_status()["last_error"] is None
+
+
+async def test_batch_probes_each_owner_table_once_per_page_not_once_per_job(kb):
+    """One retention batch must not scale its probe count with the page size."""
+    await kb.job_runner.close()
+
+    def populate(c, _t):
+        ids = [terminal(c, "failed", finished=100 + index) for index in range(100)]
+        # One protected owner inside the page: its probe result must survive batching.
+        properties = {"value": f"pending-{ids[0]}.example"}
+        c.execute(
+            "insert into nodes(uuid,type,key,properties,lifecycle,delete_job_id,delete_cascade,delete_requested_at) "
+            "values(?,'domain',?,?,'delete_pending',?,1,1)",
+            (str(uuid4()), identity_key("nodes", "domain", properties), json.dumps(properties), ids[0]),
+        )
+        # One live lease inside the page: eligibility must still reject it.
+        c.execute("update jobs set lease_expires_at=1000 where uuid=?", (ids[1],))
+        return ids
+
+    ids = await kb.workers.control(populate)
+    policy = await kb.workers.control(
+        lambda c, _t: persist_policy(c, failed_cancelled_retention_seconds=1, failed_cancelled_retention_count=1)
+    )
+
+    def measure(c, _t):
+        observed: list[str] = []
+        c.set_exec_trace(lambda _cursor, sql, _bindings: observed.append(sql) or True)
+        try:
+            outcome = JobRetention.batch(c, policy, (0.0, 0), now=400)
+        finally:
+            c.set_exec_trace(None)
+        return outcome, observed
+
+    outcome, observed = await kb.workers.control(measure)
+    reads = [sql for sql in observed if sql.lstrip().upper().startswith(("SELECT", "WITH"))]
+    assert outcome["examined"] == 100
+    assert outcome["pruned"] == 98, outcome
+    # The protected owner and the live lease are both retained.
+    assert (await kb.jobs({"action": "get", "job_id": ids[0]}))["retention_protected"] is True
+    assert (await kb.jobs({"action": "get", "job_id": ids[1]}))["state"] == "failed"
+    assert len(reads) <= 12, f"{len(reads)} read statements for one 100-row page: {json.dumps(reads[:20])}"
+
+    # The page read must seek each candidate, never scan the whole jobs table.
+    plan = await kb.workers.read(
+        lambda c, _t: [row[3] for row in c.execute("explain query plan " + CANDIDATE_ROWS_SQL, (json.dumps(ids),))]
+    )
+    assert any("SEARCH jobs" in item and "uuid=?" in item for item in plan), plan

@@ -63,3 +63,16 @@ def test_page_stream_interrupt_closes_both_cursors_without_partial_total():
     names.close.assert_called_once()
     pages.close.assert_called_once()
     assert token.check.call_count == 2
+
+
+def test_the_walk_reads_only_the_selected_objects_and_never_the_file_page_count():
+    """`dbstat` walks the named object alone, so no whole-file reading may gate it."""
+    names = cursor(rows=[("search_documents",)])
+    pages = cursor(rows=[(4096,), (2048,)])
+    remaining = [cursor(rows=[]) for _ in range(8)]
+    db = database(names, pages, *remaining)
+    result = DerivedStorage.model_validate(sample_derived_storage(db, Mock()))
+    assert result.available
+    assert result.text_projection_bytes == 6144
+    assert result.fts_index_bytes == 0
+    assert not [call for call in db.execute.call_args_list if "page_count" in call.args[0]]

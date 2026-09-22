@@ -124,7 +124,8 @@ outer ones are refused until the level below them is gone.
 
 Catalog v2 is a clean cut. A workspace created with catalog v1 is rejected at
 startup; it is not migrated or opened read-only. Create a new workspace for this
-version.
+version. A workspace created before schema version 3 is likewise rejected, so a
+workspace written by v0.2.0 does not open either.
 
 ## Mutable records
 

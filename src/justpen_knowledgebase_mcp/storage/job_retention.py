@@ -7,10 +7,10 @@ import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from uuid import UUID
 
-from ..errors import ConflictError, StorageIOError
+from ..errors import ConflictError, NotFoundError, StorageIOError
 from .evidence import stage_name
 from .job_ownership import OTHER_BLOB_OWNER_SQL, row_metadata
-from .jobs import TERMINAL, adjust_terminal_count, job_row, protected
+from .jobs import TERMINAL, adjust_terminal_count, job_row, pending_owners, protected
 
 if TYPE_CHECKING:
     import apsw
@@ -43,17 +43,33 @@ PROTECTED_COUNT_SQL = """WITH pending(job_id) AS (
 ) SELECT count(*) FROM pending CROSS JOIN jobs ON jobs.uuid=pending.job_id
 WHERE jobs.state IN ('completed','failed','cancelled')"""
 
+CANDIDATE_ROWS_SQL = "SELECT * FROM jobs WHERE uuid IN (SELECT value FROM json_each(?))"
+
 
 def _group(state: str) -> Literal["completed", "failed_cancelled"]:
     return "completed" if state == "completed" else "failed_cancelled"
 
 
+def _unleased(row: dict[str, Any], now: float) -> bool:
+    return row["state"] in TERMINAL and (row["lease_expires_at"] is None or row["lease_expires_at"] <= now)
+
+
 def _eligible(connection: apsw.Connection, row: dict[str, Any], now: float) -> bool:
-    return (
-        row["state"] in TERMINAL
-        and (row["lease_expires_at"] is None or row["lease_expires_at"] <= now)
-        and not protected(connection, row["uuid"])
-    )
+    return _unleased(row, now) and not protected(connection, row["uuid"])
+
+
+def _candidate_rows(connection: apsw.Connection, job_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Read a whole candidate page once, never one durable row per candidate."""
+    rows: dict[str, dict[str, Any]] = {}
+    if not job_ids:
+        return rows
+    cursor = connection.execute(CANDIDATE_ROWS_SQL, (json.dumps(job_ids),))
+    names: list[str] = []
+    for value in cursor:
+        names = names or [column[0] for column in cursor.get_description()]
+        row = dict(zip(names, value, strict=True))
+        rows[str(row["uuid"])] = row
+    return rows
 
 
 def _ownership(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -141,6 +157,16 @@ class JobRetention:
             pending[_group(state)] += count
         rows = list(connection.execute(CANDIDATES_SQL, cursor * 3))
         pruned = marked = invalid = 0
+        examined = [job_id for _id, job_id, _state, _finished, code in rows if code != "JOB_METADATA_INVALID"]
+        # `BEGIN IMMEDIATE` excludes every other writer, so one page-wide probe returns
+        # exactly what a probe per candidate returned. `pending_owners` reads only
+        # tables this loop never writes; `_candidate_rows` does read `jobs`, but every
+        # write below targets the candidate being processed, strictly after its row was
+        # consumed. Candidate identifiers are unique across the page because a job holds
+        # one state and the three arms are disjoint, so no pre-read row is reused after
+        # a write that touched it.
+        durable = _candidate_rows(connection, examined)
+        owners = pending_owners(connection, examined)
         for _identifier, job_id, state, finished, error_code in rows:
             if error_code == "JOB_METADATA_INVALID":
                 invalid += 1
@@ -150,8 +176,10 @@ class JobRetention:
             expired = finished + getattr(policy, group + "_retention_seconds") <= now
             if not (excess or expired):
                 continue
-            row = job_row(connection, job_id)
-            if row["purge_pending"] or not _eligible(connection, row, now):
+            row = durable.get(job_id)
+            if row is None:
+                raise NotFoundError("job not found")
+            if row["purge_pending"] or not _unleased(row, now) or job_id in owners:
                 continue
             try:
                 tokens = _recorded_tokens(row)

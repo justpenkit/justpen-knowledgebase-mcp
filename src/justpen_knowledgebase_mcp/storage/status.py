@@ -58,6 +58,16 @@ DERIVED_OBJECTS = {
 }
 
 
+# `dbstat` reads every page of the object it reports, and only that object: the
+# `name=?` constraint reaches the virtual table, which plans as `SCAN dbstat
+# VIRTUAL TABLE INDEX 0x2`. Measured across 4 to 1051 MiB of unrelated bulk, a
+# one-page `search_documents` walk stays at 0.021 ms while the bulk object's own
+# walk grows with it at 2.2-2.8 us per page. The one-second budget therefore buys
+# roughly 450000 pages of the selected objects, and `token.check()` between pages
+# cancels an overrun 24-83 us past the deadline, which publishes
+# `last_error: "LIMIT"` with `cached_at: null`. That deadline is the only bound
+# taken: a whole-file bound counts pages these queries never read, so it would
+# refuse workspaces whose derived objects finish in microseconds.
 def sample_derived_storage(connection: apsw.Connection, token: OperationToken) -> dict[str, Any]:
     """Sum selected B-tree pages with cancellation between pages and no text materialization."""
     sizes = dict.fromkeys(DERIVED_OBJECTS, 0)

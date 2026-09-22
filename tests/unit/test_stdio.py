@@ -1,5 +1,6 @@
 """Cancellable stream adapter with SDK and descriptor operations isolated."""
 
+import json
 import socket
 import stat
 from contextlib import asynccontextmanager, nullcontext
@@ -194,7 +195,8 @@ async def test_pipe_buffer_eof_partial_writes_and_readiness(monkeypatch, regular
         monkeypatch.setattr(stdio.os, "read", Mock(side_effect=[BlockingIOError(), b"one\ntw", b"o\xff", b""]))
         stream = stdio._PipeFile(9)
         assert await stream.readline() == "one\n"
-        assert await stream.readline() == "two�"
+        # A truncated trailing frame is named rather than repaired; see the decode tests below.
+        assert await stream.readline() == stdio._UNDECODABLE_LINE
         writes = Mock(side_effect=[BlockingIOError(), 1, 2])
         monkeypatch.setattr(stdio.os, "write", writes)
         assert await stream.write("éx") == 2
@@ -371,3 +373,49 @@ async def test_stdio_sdk_adapter_resets_transport_on_failure(monkeypatch):
         await stdio.KnowledgeBaseMCP.run_stdio_async(mcp)
     assert sdk_server.run.call_args.args[:2] == ("reader", "writer")
     reset.assert_called_once_with("transport-token")
+
+
+def _regular_stream(monkeypatch, chunks):
+    """A regular-file descriptor reads without readiness, so only the decode is under test."""
+    monkeypatch.setattr(stdio.os, "fstat", Mock(return_value=SimpleNamespace(st_mode=stat.S_IFREG)))
+    monkeypatch.setattr(stdio.os, "read", Mock(side_effect=[*chunks, b""]))
+    return stdio._PipeFile(9)
+
+
+async def test_invalid_utf8_inside_a_json_string_is_not_delivered_as_data(monkeypatch):
+    """U+FFFD substitution leaves the document parseable, so corrupted text arrives as a value."""
+    frame = b'{"jsonrpc":"2.0","id":1,"method":"call","params":{"name":"a\xffb"}}\n'
+    with monkeypatch.context() as patched:
+        stream = _regular_stream(patched, [frame])
+
+        line = await stream.readline()
+
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(line)
+
+
+async def test_an_undecodable_line_keeps_the_session_reading(monkeypatch):
+    """`stdin_reader` catches only `ClosedResourceError`, so raising here would end the session."""
+    with monkeypatch.context() as patched:
+        stream = _regular_stream(patched, [b"\xff\xfe\n", b'{"jsonrpc":"2.0","id":2}\n'])
+
+        first = await stream.readline()
+        second = await stream.readline()
+        third = await stream.readline()
+
+    assert json.loads(second) == {"jsonrpc": "2.0", "id": 2}
+    assert third == ""
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(first)
+
+
+async def test_a_valid_multibyte_line_still_decodes_exactly(monkeypatch):
+    """Strict decoding must not disturb the frames that are simply not ASCII."""
+    with monkeypatch.context() as patched:
+        stream = _regular_stream(patched, ['{"t":"héllo — 世界"}\n'.encode(), b'{"t":"plain"}\n'])
+
+        first = await stream.readline()
+        second = await stream.readline()
+
+    assert json.loads(first) == {"t": "héllo — 世界"}
+    assert json.loads(second) == {"t": "plain"}

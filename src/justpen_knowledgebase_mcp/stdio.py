@@ -32,6 +32,24 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
 
+# `errors="replace"` matches the SDK (`mcp/server/stdio.py:176`) and is harmless for a line that is
+# corrupted anywhere structural: the substituted U+FFFD leaves it unparseable and the SDK reports a
+# parse error to the peer. Inside a JSON string value it is not harmless - the document still parses,
+# so corrupted text is accepted as data. Decoding strictly and returning a line that cannot parse as
+# JSON keeps the peer-visible outcome and rejects the bytes. Raising is not available: `readline` is
+# consumed by the SDK's `stdin_reader`, which catches only `anyio.ClosedResourceError`, so one bad
+# byte would tear down the session instead of failing one frame.
+_UNDECODABLE_LINE = "invalid utf-8 in transport frame\n"
+
+
+def _decode(data: bytes) -> str:
+    """Decode one transport line, or name it unparseable without consuming the session."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return _UNDECODABLE_LINE
+
+
 class _PipeFile(anyio.AsyncFile[str]):
     """SDK-compatible line/text stream using cancellable descriptor readiness."""
 
@@ -74,12 +92,12 @@ class _PipeFile(anyio.AsyncFile[str]):
             if not chunk:
                 result = bytes(self._buffer)
                 self._buffer.clear()
-                return result.decode("utf-8", errors="replace")
+                return _decode(result)
             self._buffer.extend(chunk)
         ending = self._buffer.index(b"\n") + 1
         result = bytes(self._buffer[:ending])
         del self._buffer[:ending]
-        return result.decode("utf-8", errors="replace")
+        return _decode(result)
 
     @override
     async def write(self, b: str) -> int:

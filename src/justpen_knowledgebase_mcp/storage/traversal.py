@@ -23,6 +23,19 @@ if TYPE_CHECKING:
     from .worker import OperationToken
 
 
+# Everything the traversal accumulates is counted here except `frontier`, which is filled once the
+# loop ends and is bounded by `max_nodes` node identifiers. The 62 121 bytes this leaves below the
+# 262 121-byte serialized data bound of `bounded_response` cover that remainder with room to spare.
+RESPONSE_BYTES = 200000
+
+
+def _member_bytes(member: object) -> int:
+    # An array member costs its own canonical bytes plus one separator. Charging that separator for
+    # the first member too over-counts a non-empty array by exactly one byte and never under-counts,
+    # so this accounting stays at or below the whole-output size it replaces.
+    return len(canonical_json(member).encode("utf-8")) + 1
+
+
 def _edges(
     connection: apsw.Connection, owner: int, request: NeighborsRequest
 ) -> Generator[tuple[Any, ...], None, None]:
@@ -59,6 +72,7 @@ class _Traversal:
         self.visited: dict[int, str] = {}
         self.edges: set[int] = set()
         self.queue: deque[tuple[int, int]] = deque()
+        self.response_bytes = len(canonical_json(self.output).encode("utf-8"))
 
     def seeds(self) -> None:
         for identifier in self.request.seed_ids:
@@ -68,7 +82,9 @@ class _Traversal:
                 raise NotFoundError("seed missing")
             require_ready(self.connection, "nodes", row)
             self.visited[row["id"]] = row["uuid"]
-            self.output["nodes"].append({"id": row["uuid"], "type": row["type"]})
+            node = {"id": row["uuid"], "type": row["type"]}
+            self.output["nodes"].append(node)
+            self.response_bytes += _member_bytes(node)
             self.queue.append((row["id"], 0))
 
     def append_edge(self, owner: int, depth: int, edge: tuple[Any, ...]) -> str | None:
@@ -90,14 +106,13 @@ class _Traversal:
             "target_id": other_uuid if source == owner else self.visited[owner],
         }
         node = {"id": other_uuid, "type": row["type"]} if row else None
+        cost = _member_bytes(item) + (_member_bytes(node) if node is not None else 0)
+        if self.response_bytes + cost > RESPONSE_BYTES:
+            return "response_bytes"
+        self.response_bytes += cost
         self.output["edges"].append(item)
         if node is not None:
             self.output["nodes"].append(node)
-        if len(canonical_json(self.output).encode("utf-8")) > 200000:
-            self.output["edges"].pop()
-            if node is not None:
-                self.output["nodes"].pop()
-            return "response_bytes"
         self.edges.add(edge_id)
         if new_node:
             self.visited[other] = other_uuid

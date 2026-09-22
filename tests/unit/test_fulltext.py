@@ -1,5 +1,6 @@
 """FTS orchestration verifies exact matches using scripted native token offsets."""
 
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -18,8 +19,28 @@ def test_refresh_full_string_leaves_and_coverage():
     db = database()
     fulltext.refresh_record_text(db, "nodes", owner())
     assert list(db.executemany.call_args.args[1]) == [(1, "/properties/name", "example.com")]
-    db = database(cursor(rows=[("ready", 0, 2), ("index_failed", 1, 3), ("pending", 1, 4)]))
-    assert fulltext.coverage(db) == {"ready": 2, "pending": 4, "failed": 3, "incomplete": 7, "not_applicable": 0}
+    stored = cursor(value='{"ready":2,"index_failed":3,"pending":4,"not_applicable":0,"incomplete":7}')
+    assert fulltext.coverage(database(stored)) == {
+        "ready": 2,
+        "pending": 4,
+        "failed": 3,
+        "incomplete": 7,
+        "not_applicable": 0,
+    }
+
+
+def test_reconcile_recomputes_every_state_from_the_evidence_rows():
+    db = database(cursor(rows=[("ready", 0, 2), ("index_failed", 1, 3), ("pending", 1, 4)]), cursor())
+    fulltext.reconcile_coverage(db)
+    statement, parameters = db.execute.call_args.args
+    assert statement == "UPDATE settings SET evidence_coverage=? WHERE singleton=1"
+    assert json.loads(parameters[0]) == {
+        "pending": 4,
+        "ready": 2,
+        "index_failed": 3,
+        "not_applicable": 0,
+        "incomplete": 7,
+    }
 
 
 def test_literal_uses_native_boundaries_and_exact_case(monkeypatch):

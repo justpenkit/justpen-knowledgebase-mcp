@@ -7,11 +7,13 @@ import fcntl
 import logging
 import math
 import os
+import stat
 import threading
 import time
 from contextlib import ExitStack
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
+from weakref import WeakKeyDictionary
 
 import apsw
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -19,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ..errors import (
     BusyError,
     ConfigurationError,
+    ContractMismatchError,
     InternalError,
     LimitError,
     McpError,
@@ -30,6 +33,8 @@ from .admission import open_lock
 from .worker import OperationToken, OwnerOutcome
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ..config import WorkspacePolicy
     from ..workspace import WorkspacePaths
     from .connection import ManagedConnection, SQLiteRuntime
@@ -87,14 +92,60 @@ class WalState(BaseModel):
             return cls()
 
 
+# `validate_native` re-derives and re-validates the name on every call: about 539
+# Python calls of pathlib work around roughly seven syscalls, measured at 123.8 us
+# against 3.5 us for the bare stat. Every product transaction pays it once and
+# every write commit a second time. The validated name is therefore reused for at
+# most this long, which is exactly how long a managed directory replaced under a
+# running server can go unnoticed: the full check runs again within a second and
+# `check_product` degrades to WAL_PRESSURE from then on, as it does today. The
+# name's own two inode rules are not deferred with it; `allocation` re-checks
+# them against the pinned descriptor on every call.
+_REVALIDATE_SECONDS = 1.0
+
+_VALIDATED_WAL: WeakKeyDictionary[WorkspacePaths, tuple[str, Path, float]] = WeakKeyDictionary()
+_VALIDATED_WAL_LOCK = threading.Lock()
+
+
+def _wal_name(workspace: WorkspacePaths) -> tuple[str, Path]:
+    """Revalidate the WAL name at most once per `_REVALIDATE_SECONDS`."""
+    now = time.monotonic()
+    with _VALIDATED_WAL_LOCK:
+        entry = _VALIDATED_WAL.get(workspace)
+        if entry is not None and now - entry[2] < _REVALIDATE_SECONDS:
+            return entry[0], entry[1]
+    try:
+        path = workspace.validate_native(str(workspace.db) + "-wal")
+    except BaseException:
+        # A directory that stopped validating must not keep serving its old name.
+        with _VALIDATED_WAL_LOCK:
+            _VALIDATED_WAL.pop(workspace, None)
+        raise
+    with _VALIDATED_WAL_LOCK:
+        _VALIDATED_WAL[workspace] = (path.name, path.parent, now)
+    return path.name, path.parent
+
+
 def allocation(workspace: WorkspacePaths) -> int | None:
     """Measure WAL allocation; absent WAL is zero, failed measurement unknown."""
     try:
-        return workspace.validate_native(str(workspace.db) + "-wal").stat().st_size
+        # Reusing the validation must not reuse a resolved path: a name resolved
+        # again from the root follows a symlink planted since and measures a file
+        # outside the workspace. The pinned parent descriptor reads the inode the
+        # open database holds, and `KeyError` stands for a workspace already
+        # closed, the same unknown an uncached measurement returns then.
+        name, directory = _wal_name(workspace)
+        item = os.stat(name, dir_fd=workspace.managed_fd(directory), follow_symlinks=False)
     except FileNotFoundError:
         return 0
-    except (OSError, PathDeniedError, StorageIOError):
+    except (KeyError, OSError, PathDeniedError, StorageIOError):
         return None
+    # `validate_native`'s own two inode rules, kept on every call rather than
+    # deferred with the name; only its directory-identity check waits for the
+    # next full revalidation. An unsafe alias is an unknown, as `PATH_DENIED` is.
+    if not stat.S_ISREG(item.st_mode) or item.st_nlink != 1:
+        return None
+    return item.st_size
 
 
 class StatusCache:
@@ -151,8 +202,13 @@ class StatusCache:
         """Reject product work after a permanent local maintenance fault."""
         with self._lock:
             error = self._failure[0] if self._failure is not None and self._failure[1] else None
+        # Authored errors are rebuilt from their own field, not from their text:
+        # their constructor takes the selector, so `type(error)(str(error))` would
+        # fail on it. Every other public error carries its message as its argument.
         if isinstance(error, UnsupportedLayoutError):
             raise UnsupportedLayoutError(error.layout) from None
+        if isinstance(error, ContractMismatchError):
+            raise ContractMismatchError(error.dimension) from None
         if error is not None:
             raise type(error)(str(error)) from None
 
@@ -581,7 +637,10 @@ def _startup_failed(ready: asyncio.Future[None], error: BaseException) -> None:
 
 
 def _maintenance_failure(error: Exception) -> tuple[McpError, bool]:
-    if isinstance(error, UnsupportedLayoutError):
+    # Both are authored from a fixed selector, never from stored or exception text,
+    # so they can name what differs where a bare `ConfigurationError` cannot: its
+    # message is whatever the raising site passed and may carry workspace content.
+    if isinstance(error, (UnsupportedLayoutError, ContractMismatchError)):
         return error, True
     if isinstance(error, ConfigurationError):
         return ConfigurationError("maintenance unavailable"), True

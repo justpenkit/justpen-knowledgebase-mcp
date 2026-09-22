@@ -1,6 +1,7 @@
 """Checkpoint orchestration with isolated connection, file measurements and locks."""
 
 import json
+import os
 from contextlib import nullcontext, suppress
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -12,6 +13,7 @@ from justpen_knowledgebase_mcp.config import WorkspacePolicy
 from justpen_knowledgebase_mcp.errors import (
     BusyError,
     ConfigurationError,
+    ContractMismatchError,
     LimitError,
     StorageIOError,
     UnsupportedLayoutError,
@@ -128,6 +130,26 @@ def test_runtime_failure_is_visible_and_permanent_fault_rejects_admission(monkey
         task.factory.status_cache.check_health()
     assert "maintenance_failed" in caplog.text
     assert "private path" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "dimension", ["schema version", "catalog version", "catalog fingerprint", "index format version", "managed paths"]
+)
+def test_contract_mismatch_keeps_its_dimension_through_maintenance(monkeypatch, dimension):
+    # The authored reason survives classification, and `check_health` rebuilds it
+    # from its dimension rather than from its message, which its constructor
+    # would reject.
+    task, _db = component(monkeypatch)
+    monkeypatch.setattr(task, "_open", Mock(side_effect=ContractMismatchError(dimension)))
+    with pytest.raises(ContractMismatchError) as raised:
+        task.run_once("startup")
+    assert raised.value.dimension == dimension
+    assert task.status()["maintenance_error"] == "CONFIGURATION"
+    assert task.status()["maintenance_failed_permanently"]
+    with pytest.raises(ContractMismatchError) as admitted:
+        task.factory.status_cache.check_health()
+    assert admitted.value.dimension == dimension
+    assert str(admitted.value) == str(raised.value)
 
 
 def test_transient_open_failure_is_visible_and_retried(monkeypatch, caplog):
@@ -361,12 +383,18 @@ def test_nonleader_cannot_report_recovery_from_another_owner_sample(monkeypatch,
     assert "maintenance_recovered" not in caplog.text
 
 
-def test_health_rejections_do_not_accumulate_cached_exception_tracebacks():
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (UnsupportedLayoutError("supporting index"), "offline workspace upgrade required"),
+        (ContractMismatchError("managed paths"), "stored managed paths differ"),
+    ],
+)
+def test_health_rejections_do_not_accumulate_cached_exception_tracebacks(error, expected):
     cache = StatusCache()
-    error = UnsupportedLayoutError("supporting index")
     cache.failed(error, permanent=True)
     for _ in range(3):
-        with pytest.raises(ConfigurationError, match="offline workspace upgrade required"):
+        with pytest.raises(ConfigurationError, match=expected):
             cache.check_health()
     assert error.__traceback__ is None
 
@@ -380,3 +408,74 @@ def test_invalid_local_cycle_cannot_report_recovery_after_peer_sample(monkeypatc
     monkeypatch.setattr(task, "_attempt", lambda *_args: task.factory.status_cache.update(WalState(sample_seq=2)))
     task.run_once("timer")
     assert "maintenance_recovered" not in caplog.text
+
+
+@pytest.fixture
+def managed_directory(tmp_path):
+    """A pinned directory descriptor, as `WorkspacePaths` owns one for the database."""
+    directory = tmp_path / "data"
+    directory.mkdir()
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        yield directory, fd
+    finally:
+        os.close(fd)
+
+
+def wal_workspace(managed_directory, size=4096):
+    """A workspace whose WAL name validates and whose WAL is a real private file."""
+    directory, fd = managed_directory
+    database_name = directory / f"kb{size}.sqlite3"
+    (directory / f"{database_name.name}-wal").write_bytes(b"\0" * size)
+    workspace = Mock()
+    workspace.db = str(database_name)
+    workspace.validate_native.return_value = directory / f"{database_name.name}-wal"
+    workspace.managed_fd.return_value = fd
+    return workspace
+
+
+def test_wal_name_is_revalidated_at_most_once_per_interval(monkeypatch, managed_directory):
+    """Reusing the validated name is what makes `allocation()` cheap on every read."""
+    clock = 1000.0
+    monkeypatch.setattr(maintenance.time, "monotonic", lambda: clock)
+    workspace = wal_workspace(managed_directory)
+
+    for _ in range(50):
+        assert maintenance.allocation(workspace) == 4096
+    assert workspace.validate_native.call_count == 1
+
+    # Past the interval the full containment check runs again. Without that bound
+    # the name would be reused forever and this count would stay at one.
+    clock += maintenance._REVALIDATE_SECONDS
+    assert maintenance.allocation(workspace) == 4096
+    assert workspace.validate_native.call_count == 2
+
+
+def test_replaced_managed_directory_is_noticed_within_the_revalidation_bound(monkeypatch, managed_directory):
+    """A cached name delays detection; it must not suppress it."""
+    clock = 2000.0
+    monkeypatch.setattr(maintenance.time, "monotonic", lambda: clock)
+    workspace = wal_workspace(managed_directory)
+    assert maintenance.allocation(workspace) == 4096
+
+    workspace.validate_native.side_effect = StorageIOError("IO_ERROR: MANAGED_DIRECTORY_CHANGED")
+    # Inside the bound the replacement is still invisible, which is the cost.
+    clock += maintenance._REVALIDATE_SECONDS * 0.99
+    assert maintenance.allocation(workspace) == 4096
+
+    # At the bound it degrades exactly as an uncached measurement does today.
+    clock += maintenance._REVALIDATE_SECONDS
+    assert maintenance.allocation(workspace) is None
+    # The rejected name is dropped rather than served again until the next expiry.
+    assert maintenance.allocation(workspace) is None
+    assert workspace.validate_native.call_count == 3
+
+
+def test_each_workspace_caches_its_own_wal_name(monkeypatch, managed_directory):
+    monkeypatch.setattr(maintenance.time, "monotonic", lambda: 3000.0)
+    first, second = wal_workspace(managed_directory), wal_workspace(managed_directory, 8192)
+    assert maintenance.allocation(first) == 4096
+    assert maintenance.allocation(second) == 8192
+    assert maintenance.allocation(first) == 4096
+    assert first.validate_native.call_count == 1
+    assert second.validate_native.call_count == 1
