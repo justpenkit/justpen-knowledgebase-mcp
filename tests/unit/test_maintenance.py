@@ -1,6 +1,7 @@
 """Checkpoint orchestration with isolated connection, file measurements and locks."""
 
 import json
+import os
 from contextlib import nullcontext, suppress
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -409,19 +410,35 @@ def test_invalid_local_cycle_cannot_report_recovery_after_peer_sample(monkeypatc
     assert "maintenance_recovered" not in caplog.text
 
 
-def wal_workspace(size=4096):
-    """A workspace whose WAL name validates and whose WAL stats at a fixed size."""
+@pytest.fixture
+def managed_directory(tmp_path):
+    """A pinned directory descriptor, as `WorkspacePaths` owns one for the database."""
+    directory = tmp_path / "data"
+    directory.mkdir()
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        yield directory, fd
+    finally:
+        os.close(fd)
+
+
+def wal_workspace(managed_directory, size=4096):
+    """A workspace whose WAL name validates and whose WAL is a real private file."""
+    directory, fd = managed_directory
+    database_name = directory / f"kb{size}.sqlite3"
+    (directory / f"{database_name.name}-wal").write_bytes(b"\0" * size)
     workspace = Mock()
-    workspace.db = "/w/data/kb.sqlite3"
-    workspace.validate_native.return_value = Mock(**{"stat.return_value": Mock(st_size=size)})
+    workspace.db = str(database_name)
+    workspace.validate_native.return_value = directory / f"{database_name.name}-wal"
+    workspace.managed_fd.return_value = fd
     return workspace
 
 
-def test_wal_name_is_revalidated_at_most_once_per_interval(monkeypatch):
+def test_wal_name_is_revalidated_at_most_once_per_interval(monkeypatch, managed_directory):
     """Reusing the validated name is what makes `allocation()` cheap on every read."""
     clock = 1000.0
     monkeypatch.setattr(maintenance.time, "monotonic", lambda: clock)
-    workspace = wal_workspace()
+    workspace = wal_workspace(managed_directory)
 
     for _ in range(50):
         assert maintenance.allocation(workspace) == 4096
@@ -434,11 +451,11 @@ def test_wal_name_is_revalidated_at_most_once_per_interval(monkeypatch):
     assert workspace.validate_native.call_count == 2
 
 
-def test_replaced_managed_directory_is_noticed_within_the_revalidation_bound(monkeypatch):
+def test_replaced_managed_directory_is_noticed_within_the_revalidation_bound(monkeypatch, managed_directory):
     """A cached name delays detection; it must not suppress it."""
     clock = 2000.0
     monkeypatch.setattr(maintenance.time, "monotonic", lambda: clock)
-    workspace = wal_workspace()
+    workspace = wal_workspace(managed_directory)
     assert maintenance.allocation(workspace) == 4096
 
     workspace.validate_native.side_effect = StorageIOError("IO_ERROR: MANAGED_DIRECTORY_CHANGED")
@@ -454,9 +471,9 @@ def test_replaced_managed_directory_is_noticed_within_the_revalidation_bound(mon
     assert workspace.validate_native.call_count == 3
 
 
-def test_each_workspace_caches_its_own_wal_name(monkeypatch):
+def test_each_workspace_caches_its_own_wal_name(monkeypatch, managed_directory):
     monkeypatch.setattr(maintenance.time, "monotonic", lambda: 3000.0)
-    first, second = wal_workspace(4096), wal_workspace(8192)
+    first, second = wal_workspace(managed_directory), wal_workspace(managed_directory, 8192)
     assert maintenance.allocation(first) == 4096
     assert maintenance.allocation(second) == 8192
     assert maintenance.allocation(first) == 4096

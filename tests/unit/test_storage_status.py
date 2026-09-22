@@ -9,7 +9,7 @@ from justpen_knowledgebase_mcp.config import WorkspacePolicy
 from justpen_knowledgebase_mcp.errors import LimitError
 from justpen_knowledgebase_mcp.status import DerivedStorage
 from justpen_knowledgebase_mcp.storage import status
-from justpen_knowledgebase_mcp.storage.status import DBSTAT_PAGE_LIMIT, sample_derived_storage
+from justpen_knowledgebase_mcp.storage.status import sample_derived_storage
 
 from .helpers import cursor, database
 
@@ -43,7 +43,7 @@ def test_cheap_sample_never_runs_page_allocation_scan(monkeypatch):
 
 def test_unsupported_dbstat_has_nullable_bytes_and_closes_schema_cursor():
     names = cursor(rows=[("search_documents",)])
-    db = database(cursor(value=DBSTAT_PAGE_LIMIT), names, apsw.SQLError("no such table: private details"))
+    db = database(names, apsw.SQLError("no such table: private details"))
     result = DerivedStorage.model_validate(sample_derived_storage(db, Mock()))
     assert not result.available
     assert result.reason == "DBSTAT_UNAVAILABLE"
@@ -59,30 +59,20 @@ def test_page_stream_interrupt_closes_both_cursors_without_partial_total():
     token = Mock()
     token.check.side_effect = [None, LimitError("deadline")]
     with pytest.raises(LimitError):
-        sample_derived_storage(database(cursor(value=DBSTAT_PAGE_LIMIT), names, pages), token)
+        sample_derived_storage(database(names, pages), token)
     names.close.assert_called_once()
     pages.close.assert_called_once()
     assert token.check.call_count == 2
 
 
-def test_oversized_database_declines_the_walk_instead_of_spending_the_whole_budget():
-    """`dbstat` reads every page, so the header count refuses a walk that cannot finish."""
-    db = database(cursor(value=DBSTAT_PAGE_LIMIT + 1))
-    token = Mock()
-    with pytest.raises(LimitError):
-        sample_derived_storage(db, token)
-    # The header read is the only statement, and no page was ever examined.
-    assert db.execute.call_count == 1
-    assert db.execute.call_args.args[0] == "PRAGMA page_count"
-    token.check.assert_not_called()
-
-
-def test_database_at_the_page_bound_is_still_measured():
+def test_the_walk_reads_only_the_selected_objects_and_never_the_file_page_count():
+    """`dbstat` walks the named object alone, so no whole-file reading may gate it."""
     names = cursor(rows=[("search_documents",)])
     pages = cursor(rows=[(4096,), (2048,)])
     remaining = [cursor(rows=[]) for _ in range(8)]
-    db = database(cursor(value=DBSTAT_PAGE_LIMIT), names, pages, *remaining)
+    db = database(names, pages, *remaining)
     result = DerivedStorage.model_validate(sample_derived_storage(db, Mock()))
     assert result.available
     assert result.text_projection_bytes == 6144
     assert result.fts_index_bytes == 0
+    assert not [call for call in db.execute.call_args_list if "page_count" in call.args[0]]
