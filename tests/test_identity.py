@@ -1,17 +1,38 @@
 """Identity and timestamp codecs preserve the selected exact representation."""
 
+import hashlib
+import re
 from uuid import UUID, uuid4
 
 import pytest
 
 from justpen_knowledgebase_mcp.identity import (
+    _CANONICAL_EVIDENCE,
+    _CANONICAL_UUID,
+    EVIDENCE_ID_PATTERN,
+    GRAPH_ID_PATTERN,
     format_timestamp,
     identity_json,
     identity_key,
     parse_timestamp,
+    validate_evidence_id,
     validate_graph_id,
     validate_record_id,
 )
+
+# The published pattern and the grammar its validator applies, for the two public identifier
+# spellings. Nothing here restates a pattern as a literal: a hand-copied spelling is exactly the
+# drift these tests exist to refuse.
+PUBLISHED = [
+    (GRAPH_ID_PATTERN, _CANONICAL_UUID, validate_graph_id, str(uuid4())),
+    (EVIDENCE_ID_PATTERN, _CANONICAL_EVIDENCE, validate_evidence_id, "e_" + hashlib.sha256(b"body").hexdigest()),
+]
+PUBLISHED_IDS = ["graph", "evidence"]
+# Constructs a Python `re` source may carry that ECMA-262, the dialect JSON Schema reads `pattern`
+# in, either lacks or spells differently: Python-only named groups and comments, the Python-only
+# end-of-input escapes, inline flag groups, and the `(?<` forms ECMA-262 only gained in ES2018 and
+# an older validator still rejects. Lookahead is deliberately absent; both dialects read it alike.
+NOT_PUBLISHABLE_VERBATIM = ["(?P", "(?#", "(?<", r"\A", r"\Z", r"\z", "(?i", "(?s", "(?m", "(?x", "(?a", "(?u"]
 
 PARENT = "00000000-0000-4000-8000-000000000001"
 OTHER_PARENT = "00000000-0000-4000-8000-000000000002"
@@ -183,3 +204,83 @@ def test_the_grammar_accepts_exactly_what_the_uuid_roundtrip_accepts():
         except ValueError:
             grammar = False
         assert grammar is roundtrip, value
+
+
+def _corpus(canonical: str) -> list[str]:
+    """Surround, truncate, extend and corrupt one canonical identifier, character by character."""
+    values = [canonical, canonical.upper(), canonical.replace("-", ""), canonical + canonical, ""]
+    values += [
+        canonical[:index] + character + canonical[index + 1 :]
+        for index in range(len(canonical))
+        for character in "-gF0"
+    ]
+    values += [canonical[:index] for index in range(len(canonical))]
+    values += [
+        f"{prefix}{canonical}{suffix}" for prefix in ("", "x", "\n", " ") for suffix in ("", "x", "\n", " ", "\u00e9")
+    ]
+    return list(dict.fromkeys(values))
+
+
+@pytest.mark.parametrize(("pattern", "grammar", "validator", "canonical"), PUBLISHED, ids=PUBLISHED_IDS)
+def test_a_published_pattern_is_the_anchored_spelling_of_its_own_grammar(pattern, grammar, validator, canonical):
+    """The schema is derived from the validator's compiled grammar, never transcribed beside it.
+
+    `validate_graph_id` and `validate_evidence_id` were enforcing a spelling `list_tools()` never
+    published, so a host could not refuse `550E8400-...` before sending it. Deriving the published
+    `pattern` from the same compiled object is what keeps the two from parting again.
+    """
+    del validator, canonical
+    assert pattern == f"^(?:{grammar.pattern})$"
+
+
+@pytest.mark.parametrize(("pattern", "grammar", "validator", "canonical"), PUBLISHED, ids=PUBLISHED_IDS)
+def test_a_published_pattern_accepts_exactly_what_its_validator_accepts(pattern, grammar, validator, canonical):
+    """Hold the published constraint against the runtime one over a generated corpus.
+
+    `re.fullmatch` is the Python spelling of what an ECMA-262 engine does with these anchors: a
+    plain `re.search` would also accept a trailing newline, which ECMA-262's `$` does not.
+    """
+    del grammar
+    corpus = _corpus(canonical)
+    assert len(corpus) > 100
+    for value in corpus:
+        try:
+            validator(value)
+        except ValueError:
+            runtime = False
+        else:
+            runtime = True
+        assert (re.fullmatch(pattern, value) is not None) is runtime, value
+
+
+@pytest.mark.parametrize(("pattern", "grammar", "validator", "canonical"), PUBLISHED, ids=PUBLISHED_IDS)
+def test_a_published_pattern_is_anchored_rather_than_a_substring_search(pattern, grammar, validator, canonical):
+    """JSON Schema's `pattern` is an unanchored search, so the anchors carry the whole meaning.
+
+    This asserts on `re.search`, the operation a host actually performs, rather than `fullmatch`,
+    which anchors by itself and would pass an unanchored pattern that promises nothing.
+    """
+    del validator
+    surrounded = f"prefix{canonical}suffix"
+
+    assert re.search(grammar.pattern, surrounded) is not None
+    assert re.search(pattern, surrounded) is None
+    assert re.search(pattern, canonical) is not None
+
+
+@pytest.mark.parametrize(("pattern", "grammar", "validator", "canonical"), PUBLISHED, ids=PUBLISHED_IDS)
+def test_a_published_pattern_stays_inside_the_subset_ecma_262_spells_identically(
+    pattern, grammar, validator, canonical
+):
+    """A Python `re` source is not automatically a valid ECMA-262 `pattern`.
+
+    These two grammars are character classes and counted repetitions, which both dialects read the
+    same way; a real ECMA-262 engine was held against the validators over a generated corpus when
+    the patterns were first published. This refuses a later grammar that reaches for a construct
+    outside that shared subset, where publishing the source verbatim would hand clients something
+    their own validator reads differently or cannot compile at all.
+    """
+    del validator, canonical
+    assert grammar.flags == re.UNICODE
+    for construct in NOT_PUBLISHABLE_VERBATIM:
+        assert construct not in pattern, construct

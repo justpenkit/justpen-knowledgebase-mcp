@@ -6,7 +6,14 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .identity import EvidenceID, parse_timestamp, validate_evidence_id, validate_graph_id, validate_record_id
+from .identity import (
+    GRAPH_ID_PATTERN,
+    EvidenceID,
+    parse_timestamp,
+    validate_evidence_id,
+    validate_graph_id,
+    validate_record_id,
+)
 from .mutations import validate_properties
 from .query import validate_filter
 from .responses import BlockerDetails
@@ -17,7 +24,13 @@ GraphKind = Literal["nodes", "relations"]
 # signatures in `tools/`, which FastMCP validates before a request model is built. Placing the
 # canonical check on the alias rather than inside `validate_record_id` is what makes `kb_get` and
 # `kb_reindex` equally strict: `GetRequest` calls that function and `NodeRef` never did.
-RecordID = Annotated[str, Field(min_length=36, max_length=36), AfterValidator(validate_graph_id)]
+# `json_schema_extra` publishes the spelling `validate_graph_id` already enforces without adding a
+# second check, so a host can reject `550E8400-...` before sending and the refusal below is unchanged.
+RecordID = Annotated[
+    str,
+    Field(min_length=36, max_length=36, json_schema_extra={"pattern": GRAPH_ID_PATTERN}),
+    AfterValidator(validate_graph_id),
+]
 # Egress. A stored identifier is `str(uuid4())` by construction, so re-deriving its spelling on the
 # way out buys nothing: the canonical check over one maximal `NeighborsResult` costs 5.4 ms of a
 # measured 8.0 ms validation, on the path PR3 is shortening. The width bound stays.

@@ -19,6 +19,7 @@ from fastmcp import Client
 
 from justpen_knowledgebase_mcp.app import create_app
 from justpen_knowledgebase_mcp.config import ServerConfig
+from justpen_knowledgebase_mcp.identity import GRAPH_ID_PATTERN
 
 from . import envelope
 
@@ -105,18 +106,12 @@ async def test_the_published_schema_still_constrains_a_record_identifier(client)
 
     Loosening a signature to plain `str` and checking the spelling in the tool body would produce
     the same envelope while removing what an MCP host can check before sending. These are the
-    constraints `list_tools()` published before the envelope existed, and they are unchanged.
+    constraints `list_tools()` published before the envelope existed, still carried by the alias
+    and now joined by the canonical spelling the `AfterValidator` enforces.
     """
     published = {tool.name: tool.input_schema for tool in await client.list_tools()}
+    constrained = {"type": "string", "minLength": 36, "maxLength": 36, "pattern": GRAPH_ID_PATTERN}
 
-    assert published["kb_neighbors"]["properties"]["seed_ids"]["items"] == {
-        "type": "string",
-        "minLength": 36,
-        "maxLength": 36,
-    }
-    assert {"type": "string", "minLength": 36, "maxLength": 36} in published["kb_search"]["properties"]["source_id"][
-        "anyOf"
-    ]
-    assert {"type": "string", "minLength": 36, "maxLength": 36} in published["kb_get"]["properties"]["ids"]["items"][
-        "anyOf"
-    ]
+    assert published["kb_neighbors"]["properties"]["seed_ids"]["items"] == constrained
+    assert constrained in published["kb_search"]["properties"]["source_id"]["anyOf"]
+    assert constrained in published["kb_get"]["properties"]["ids"]["items"]["anyOf"]

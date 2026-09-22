@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from pydantic import AfterValidator
+from pydantic import AfterValidator, Field
 
 from .catalog import catalog_view, validate_record
 from .errors import ExpectedValidationError
@@ -94,9 +94,14 @@ def format_timestamp(value: int) -> str:
     return f"{date.year:04d}-{date.month:02d}-{date.day:02d}T{date.hour:02d}:{date.minute:02d}:{date.second:02d}.{date.microsecond:06d}Z"
 
 
+# Compiled rather than inlined so one object is both what `validate_evidence_id` enforces and what
+# `_published_pattern` publishes; a literal repeated in either place is a spelling free to drift.
+_CANONICAL_EVIDENCE = re.compile(r"e_[0-9a-f]{64}")
+
+
 def validate_evidence_id(value: str) -> str:
     """Require the canonical content-addressed public evidence identity."""
-    if re.fullmatch(r"e_[0-9a-f]{64}", value) is None:
+    if _CANONICAL_EVIDENCE.fullmatch(value) is None:
         raise ValueError("invalid evidence id")
     return value
 
@@ -139,4 +144,24 @@ def validate_record_id(kind: str, value: str) -> str:
     return validate_graph_id(value)
 
 
-EvidenceID = Annotated[str, AfterValidator(validate_evidence_id)]
+def _published_pattern(grammar: re.Pattern[str]) -> str:
+    """Spell a `fullmatch` grammar as the anchored ECMA-262 `pattern` a JSON Schema publishes.
+
+    `pattern` is an unanchored ECMA-262 search, so without the anchors the published constraint
+    would accept any string merely containing an identifier. The non-capturing group keeps the
+    anchors outside any alternation a future grammar adds. Both grammars here are character classes
+    and counted repetitions, which ECMA-262 spells exactly as Python does;
+    `tests/test_identity.py` holds that subset rather than leaving it to inspection.
+    """
+    return f"^(?:{grammar.pattern})$"
+
+
+GRAPH_ID_PATTERN = _published_pattern(_CANONICAL_UUID)
+EVIDENCE_ID_PATTERN = _published_pattern(_CANONICAL_EVIDENCE)
+# `json_schema_extra` publishes metadata only: the acceptance stays the `AfterValidator` below, so a
+# non-canonical evidence id is still refused by `validate_evidence_id` with its own message.
+EvidenceID = Annotated[
+    str,
+    Field(json_schema_extra={"pattern": EVIDENCE_ID_PATTERN}),
+    AfterValidator(validate_evidence_id),
+]
