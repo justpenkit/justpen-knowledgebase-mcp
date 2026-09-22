@@ -74,7 +74,8 @@ def test_initialization_checks_contract_before_commit(exists):
             call.args[1] for call in db.execute.call_args_list if call.args[0].startswith("INSERT INTO settings")
         )
         assert settings[1:5] == expected(value)[:4]
-        assert json.loads(settings[-1]) == {"completed": 0, "failed_cancelled": 0}
+        assert json.loads(settings[-2]) == {"completed": 0, "failed_cancelled": 0}
+        assert json.loads(settings[-1]) == dict.fromkeys((*schema.COVERAGE_STATES, "incomplete"), 0)
 
 
 def test_failed_initialization_rolls_back_only_active_transaction():
