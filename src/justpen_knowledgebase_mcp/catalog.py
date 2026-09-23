@@ -1969,7 +1969,8 @@ def _valid_url(value: str) -> bool:
         return False
     if any(segment in (".", "..") for segment in path.split("/")):
         return False
-    pchar = r"(?:[A-Za-z0-9._~!$&'()*+,;=:@/]|%[0-9A-F]{2})*"
+    # RFC 3986 pchar: unreserved (`-` included), sub-delims, `:`, `@`, and upper-case percent escapes.
+    pchar = r"(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-F]{2})*"
     return re.fullmatch(pchar, path) is not None and (
         query is None or re.fullmatch(pchar.replace("@/", "@/?"), query) is not None
     )

@@ -230,6 +230,7 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("endpoint", {"url": "https://example.com/?", "method": "GET"}),
         ("endpoint", {"url": "https://[2001:db8::1]:8443/", "method": "GET"}),
         ("endpoint", {"url": "http://x/", "method": "M" * 32}),
+        ("endpoint", {"url": "https://www.example.com/my-page/bootstrap-5.3.0.min.css?cache-bust=1", "method": "GET"}),
         ("endpoint", {"url": "https://my_service.example.com/", "method": "GET"}),
         ("endpoint", {"url": "https://_acme.dev_env.example.com:8443/a", "method": "GET"}),
         ("cve", {"value": "CVE-2026-1234"}),

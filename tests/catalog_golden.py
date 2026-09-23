@@ -145,6 +145,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
             "https://api.example.com/a%2Fb",
             "https://my_service.example.com/",
             "http://localhost:8080/",
+            "https://www.example.com/my-page?x-y=1",
         ),
         (
             "https://example.com",
