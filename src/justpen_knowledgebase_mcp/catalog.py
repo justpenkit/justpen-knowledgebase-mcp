@@ -6,9 +6,11 @@ import copy
 import hashlib
 import ipaddress
 import json
+import math
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from itertools import pairwise
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
@@ -42,11 +44,14 @@ _FORMATS: dict[str, int] = {
     "asn": 1,
     "boolean": 1,
     "bucket_name": 1,
+    "calendar_date": 1,
     "caa_parameters": 1,
     "cidr": 1,
     "cpe23": 1,
     "credential_key_id": 1,
     "cve": 1,
+    "cvss_score": 1,
+    "cvss_vector": 1,
     "cwe": 1,
     "dkim_selector": 1,
     "dmarc": 1,
@@ -55,6 +60,8 @@ _FORMATS: dict[str, int] = {
     "email_address": 1,
     "finding_matcher_or_empty": 1,
     "finding_rule": 1,
+    "git_ref_name": 1,
+    "hex_serial": 1,
     "epp_status_list": 1,
     "http_fingerprint_value": 1,
     "http_status": 1,
@@ -65,11 +72,13 @@ _FORMATS: dict[str, int] = {
     "media_type": 1,
     "method": 1,
     "mta_sts": 1,
+    "multiline_text_4096": 1,
     "mx_pattern_list": 1,
     "parameter_name": 1,
     "phone_e164": 1,
     "printable_text_1024": 1,
     "printable_text_200": 1,
+    "probability": 1,
     "public_suffix": 1,
     "redirect_status": 1,
     "registry_domain_id": 1,
@@ -80,6 +89,7 @@ _FORMATS: dict[str, int] = {
     "sha256": 1,
     "spf": 1,
     "srv_label": 1,
+    "tag_list": 1,
     "tech_token": 1,
     "tech_version": 1,
     "tenant_id": 1,
@@ -169,16 +179,39 @@ _NODES: dict[str, dict[str, Any]] = {
     "certificate": {
         "identity": _identity(["der_sha256"]),
         "required": {"der_sha256": "sha256"},
-        "optional": {"self_signed": "boolean"},
+        "optional": {
+            "self_signed": "boolean",
+            "subject_cn": "printable_text_1024",
+            "issuer_dn": "printable_text_1024",
+            "not_before": "utc_timestamp",
+            "not_after": "utc_timestamp",
+            "serial": "hex_serial",
+        },
     },
-    "cve": {"identity": _identity(["value"]), "required": {"value": "cve"}},
+    "cve": {
+        "identity": _identity(["value"]),
+        "required": {"value": "cve"},
+        "optional": {
+            "cvss_score": "cvss_score",
+            "cvss_vector": "cvss_vector",
+            "epss_score": "probability",
+            "epss_percentile": "probability",
+            "kev_added": "calendar_date",
+            "published": "utc_timestamp",
+        },
+    },
     "cwe": {"identity": _identity(["value"]), "required": {"value": "cwe"}, "optional": {"name": "printable_text_200"}},
     "dkim_record": {
         "identity": _identity(["selector"], scope=_SCOPE_DKIM),
         "required": {"selector": "dkim_selector", "value": "txt_value"},
     },
     "dmarc_record": {"identity": _identity(["value"]), "required": {"value": "dmarc"}},
-    "domain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}, "checks": ["dns_name_kind.1"]},
+    "domain": {
+        "identity": _identity(["value"]),
+        "required": {"value": "dns_name"},
+        "optional": {"wildcard": "boolean", "wildcard_answer": "boolean"},
+        "checks": ["dns_name_kind.1"],
+    },
     "email_address": {"identity": _identity(["value"]), "required": {"value": "email_address"}},
     "endpoint": {
         "identity": _identity(["url", "method"]),
@@ -199,6 +232,14 @@ _NODES: dict[str, dict[str, Any]] = {
             "matcher": "finding_matcher_or_empty",
             "title": "printable_text_200",
             "severity": ["info", "low", "medium", "high", "critical", "unknown"],
+        },
+        "optional": {
+            "scanner": "tech_token",
+            "cvss_score": "cvss_score",
+            "cvss_vector": "cvss_vector",
+            "confidence": ["unknown", "low", "medium", "high", "confirmed"],
+            "tags": "tag_list",
+            "description": "multiline_text_4096",
         },
     },
     "host_key": {
@@ -233,6 +274,7 @@ _NODES: dict[str, dict[str, Any]] = {
     "ip_address": {
         "identity": _identity(["value"]),
         "required": {"value": "ip", "version": "ip_version"},
+        "optional": {"cdn_provider": "tech_token", "waf_provider": "tech_token", "cloud_provider": "tech_token"},
         "checks": ["ip_address_version.1"],
     },
     "ip_cidr": {
@@ -277,6 +319,12 @@ _NODES: dict[str, dict[str, Any]] = {
             "owner": "repo_owner",
             "name": "repo_name",
         },
+        "optional": {
+            "default_branch": "git_ref_name",
+            "visibility": ["public", "private", "internal"],
+            "archived": "boolean",
+            "fork": "boolean",
+        },
         "checks": ["repository_owner_spelling.1"],
     },
     "secret": {
@@ -303,6 +351,7 @@ _NODES: dict[str, dict[str, Any]] = {
     "service": {
         "identity": _identity(["name"], scope=_SCOPE_SERVICE),
         "required": {"name": "service_name"},
+        "optional": {"product": "printable_text_200", "version": "tech_version"},
         "checks": ["service_secure_flag.1"],
     },
     "spf_record": {"identity": _identity(["value"]), "required": {"value": "spf"}},
@@ -311,7 +360,12 @@ _NODES: dict[str, dict[str, Any]] = {
         "required": {"provider": ["aws_s3", "gcp_gcs", "azure_blob"], "name": "bucket_name"},
         "checks": ["bucket_name_spelling.1"],
     },
-    "subdomain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}, "checks": ["dns_name_kind.1"]},
+    "subdomain": {
+        "identity": _identity(["value"]),
+        "required": {"value": "dns_name"},
+        "optional": {"wildcard": "boolean", "wildcard_answer": "boolean"},
+        "checks": ["dns_name_kind.1"],
+    },
     "technology": {
         "identity": _identity(["name"]),
         "required": {"name": "tech_token"},
@@ -471,6 +525,7 @@ _RELATIONS = {
             "alpn_offered": "alpn_tokens",
         },
         identity=_identity(["mode", "server_name", "alpn_offered"], order_independent=_ALPN_ORDER),
+        optional={"name_mismatch": "boolean"},
     ),
     "presents_host_key": _relation(["service"], ["host_key"]),
     "protected_by": _relation(
@@ -1207,24 +1262,19 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
     # `bool` is a subclass of `int`, so every numeric branch compares the exact type.
     if rule in integer_validators:
         return type(value) is int and integer_validators[rule](value)
-    if rule == "boolean":
-        return type(value) is bool
-    if rule == "mx_pattern_list":
-        return _valid_sorted_set(value, _valid_mx_pattern)
-    if rule == "epp_status_list":
-        return value != [] and _valid_sorted_set(value, _EPP_STATUSES.__contains__)
-    if rule == "alpn_tokens":
-        return _valid_alpn_tokens(value)
-    if rule == "caa_parameters":
-        return _valid_caa_parameters(value)
+    structured = _STRUCTURED_VALIDATORS.get(rule)
+    if structured is not None:
+        return structured(value)
     if type(value) is not str:
         return False
     validators: dict[str, Callable[[str], bool]] = {
         "bucket_name": _valid_bucket_name,
         "cidr": lambda text: _parse_cidr(text) is not None,
+        "calendar_date": _valid_calendar_date,
         "cpe23": lambda text: len(text) <= 512 and _CPE23.fullmatch(text) is not None,
         "credential_key_id": lambda text: re.fullmatch(r"[A-Za-z0-9._:/+=-]{1,128}", text) is not None,
         "cve": lambda text: re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", text) is not None,
+        "cvss_vector": _valid_cvss_vector,
         "cwe": lambda text: re.fullmatch(r"CWE-[0-9]{1,6}", text) is not None,
         "dkim_selector": _valid_dkim_selector,
         "dmarc": _valid_dmarc,
@@ -1233,6 +1283,8 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "email_address": _valid_email_address,
         "finding_matcher_or_empty": lambda text: text == "" or _FINDING_MATCHER.fullmatch(text) is not None,
         "finding_rule": lambda text: _FINDING_RULE.fullmatch(text) is not None,
+        "git_ref_name": _valid_git_ref_name,
+        "hex_serial": lambda text: re.fullmatch(r"0|[1-9a-f][0-9a-f]{0,39}", text) is not None,
         "http_fingerprint_value": lambda text: (
             re.fullmatch(r"[0-9a-f]{64}", text) is not None or _valid_signed_int32_text(text)
         ),
@@ -1242,6 +1294,9 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "media_type": lambda text: _MEDIA_TYPE.fullmatch(text) is not None,
         "method": lambda text: re.fullmatch(r"[A-Z][A-Z0-9!#$%&'*+.^_`|~-]{0,31}", text) is not None,
         "mta_sts": _valid_mta_sts,
+        "multiline_text_4096": lambda text: (
+            1 <= len(text) <= 4096 and all(char in "\n\t" or char.isprintable() for char in text)
+        ),
         "parameter_name": lambda text: (
             1 <= len(text) <= 128 and all(0x21 <= ord(char) <= 0x7E and char not in "&=#" for char in text)
         ),
@@ -1323,12 +1378,62 @@ _EPP_STATUSES = frozenset(
 )
 # `<tool>:<id>`: the reporting tool's token, then its own rule id exactly as it spells it.
 _TECH_SLUG = r"[a-z0-9](?:[a-z0-9._+-]{0,61}[a-z0-9])?"
+_TECH_SLUG_RE = re.compile(_TECH_SLUG)
 _FINDING_RULE = re.compile(_TECH_SLUG + r":[A-Za-z0-9._/-]{1,200}")
 # Long enough for an SNI host prefix (253 bytes) before a matcher name.
 _FINDING_MATCHER = re.compile(r"[A-Za-z0-9._:/-]{1,400}")
 # RFC 5730 repository object id, ASCII only: `2138514_DOMAIN_COM-VRSN`, `DOM000000113746-FRNIC`.
 _ROID = re.compile(r"[A-Za-z0-9_]{1,80}-[A-Za-z0-9]{1,8}")
 _UTC_TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z")
+
+
+# The base metrics each CVSS version requires; a vector missing one does not describe a score.
+_CVSS_BASE_METRICS = {
+    "3.0": {"AV", "AC", "PR", "UI", "S", "C", "I", "A"},
+    "3.1": {"AV", "AC", "PR", "UI", "S", "C", "I", "A"},
+    "4.0": {"AV", "AC", "AT", "PR", "UI", "VC", "VI", "VA", "SC", "SI", "SA"},
+}
+
+
+def _valid_number(value: object, low: float, high: float) -> bool:
+    """A finite JSON number in range; a boolean is not a number here even though Python says it is."""
+    return type(value) in (int, float) and math.isfinite(cast("float", value)) and low <= cast("float", value) <= high
+
+
+def _at_most_one_decimal(value: float) -> bool:
+    """`repr` is the shortest spelling that round-trips, so `9.8` reads as one decimal, not 9.800000000000000710."""
+    exponent = Decimal(repr(value)).as_tuple().exponent
+    return type(exponent) is int and exponent >= -1
+
+
+def _valid_cvss_vector(value: str) -> bool:
+    """`CVSS:3.0/`, `CVSS:3.1/` or `CVSS:4.0/` and metric pairs, each metric once, every base metric present."""
+    match = re.fullmatch(r"CVSS:(3\.0|3\.1|4\.0)((?:/[A-Z]{1,3}:[A-Za-z]{1,5}){1,40})", value)
+    if match is None:
+        return False
+    metrics = [pair.split(":", 1)[0] for pair in match.group(2)[1:].split("/")]
+    return len(metrics) == len(set(metrics)) and _CVSS_BASE_METRICS[match.group(1)] <= set(metrics)
+
+
+def _valid_calendar_date(value: str) -> bool:
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _valid_git_ref_name(value: str) -> bool:
+    """A branch name `git check-ref-format --branch` accepts, one level allowed, at most 255 bytes."""
+    if not value.isascii() or not 1 <= len(value) <= 255 or value in ("@", "HEAD") or value.startswith("-"):
+        return False
+    if any(ord(char) < 0x20 or ord(char) == 0x7F or char in " ~^:?*[\\" for char in value):
+        return False
+    if ".." in value or "@{" in value or "//" in value or value.startswith("/") or value.endswith((".", "/")):
+        return False
+    return all(not part.startswith(".") and not part.endswith(".lock") for part in value.split("/"))
 
 
 def _valid_public_suffix(value: str) -> bool:
@@ -1559,6 +1664,21 @@ def _valid_caa_parameters(value: object) -> bool:
     return True
 
 
+# Rules whose JSON value is not a string: booleans, numbers and arrays, each checked in full.
+_STRUCTURED_VALIDATORS: dict[str, Callable[[object], bool]] = {
+    "alpn_tokens": _valid_alpn_tokens,
+    "boolean": lambda value: type(value) is bool,
+    "caa_parameters": _valid_caa_parameters,
+    "cvss_score": lambda value: _valid_number(value, 0, 10) and _at_most_one_decimal(cast("float", value)),
+    "epp_status_list": lambda value: value != [] and _valid_sorted_set(value, _EPP_STATUSES.__contains__),
+    "mx_pattern_list": lambda value: _valid_sorted_set(value, _valid_mx_pattern),
+    "probability": lambda value: _valid_number(value, 0, 1),
+    "tag_list": lambda value: (
+        value != [] and _valid_sorted_set(value, lambda text: _TECH_SLUG_RE.fullmatch(text) is not None)
+    ),
+}
+
+
 def _schema_for_rule(rule: str | list[str]) -> dict[str, Any]:
     if isinstance(rule, list):
         return {"type": "string", "enum": rule}
@@ -1576,7 +1696,11 @@ def _schema_for_rule(rule: str | list[str]) -> dict[str, Any]:
         return integer_rules[rule]
     if rule == "boolean":
         return {"type": "boolean", "format": rule}
-    if rule in ("mx_pattern_list", "epp_status_list"):
+    if rule == "cvss_score":
+        return {"type": "number", "minimum": 0, "maximum": 10, "multipleOf": 0.1, "format": rule}
+    if rule == "probability":
+        return {"type": "number", "minimum": 0, "maximum": 1, "format": rule}
+    if rule in ("mx_pattern_list", "epp_status_list", "tag_list"):
         return {"type": "array", "items": {"type": "string"}, "uniqueItems": True, "format": rule}
     if rule == "alpn_tokens":
         return {"type": "array", "items": {"type": "string"}, "format": rule}

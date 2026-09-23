@@ -25,6 +25,10 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ("example-assets", "my_bucket", "a.b.c"),
         ("ab", "Example", "ex..ample", "192.168.1.1", "-abc", "a" * 223),
     ),
+    "calendar_date": (
+        ("2021-12-10", "2024-02-29"),
+        ("2021-12-10T00:00:00Z", "2025-02-29", "2021-1-10", "20211210", ""),
+    ),
     "caa_parameters": (
         ([], [{"name": "accounturi", "value": "https://ca.example/1"}], [{"name": "a", "value": ""}]),
         ("x", [1], [{"name": "-bad", "value": "x"}], [{"name": "ok", "value": "has space"}], [{"name": "ok"}]),
@@ -39,6 +43,23 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     ),
     "credential_key_id": (("AKIAIOSFODNN7EXAMPLE", "sk_live:1/a+b=="), ("", "AKIA IOSFODNN", "k" * 129, "\u00e9")),
     "cve": (("CVE-2026-1234", "CVE-1999-1234567"), ("cve-2026-1234", "CVE-26-1234", "CVE-2026-123", 20261234)),
+    "cvss_score": ((0, 10, 9.8, 5.0, 7), (-0.1, 10.1, 9.85, "9.8", True, float("nan"), None)),
+    "cvss_vector": (
+        (
+            "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+            "CVSS:3.0/AV:N/AC:L/PR:H/UI:N/S:U/C:L/I:L/A:N",
+            "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+            "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H/E:P",
+        ),
+        (
+            "AV:N/AC:M/Au:N/C:C/I:C/A:C",
+            "3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+            "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H",
+            "CVSS:3.1/AV:N/AV:L/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+            "CVSS:2.0/AV:N",
+            "cvss:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+        ),
+    ),
     "cwe": (("CWE-79", "CWE-999999"), ("cwe-79", "CWE-1234567", "CWE-", "79", 79)),
     "dkim_selector": (("default", "selector1.sub", "a" * 63), ("Default", "s1._domainkey", "", "a" * 64, "s1-")),
     "dmarc": (
@@ -78,6 +99,32 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ("nuclei:http-missing-security-headers", "nuclei:CVE-2021-44228", "bbot:badsecrets", "manual:a/b_c.d"),
         ("nuclei", "Nuclei:x", "nuclei:", ":x", "nuclei:a b", "nuclei:" + "x" * 201, "nu clei:x"),
     ),
+    "git_ref_name": (
+        ("main", "release/v1.2", "feature/x_y-z", "a.b"),
+        (
+            "",
+            "HEAD",
+            "@",
+            "-main",
+            "a..b",
+            "a b",
+            "a~1",
+            "a:b",
+            "a^",
+            "a?",
+            "a*",
+            "a[",
+            "a\\b",
+            ".hidden",
+            "x.lock",
+            "a/",
+            "/a",
+            "a//b",
+            "a.",
+            "a@{1}",
+        ),
+    ),
+    "hex_serial": (("0", "1", "abcdef0123456789", "f" * 40), ("", "00", "0a", "AB", "ab:cd", "f" * 41)),
     "http_fingerprint_value": (("-1752256170", "0", "a" * 64), ("+1", "A" * 64, "01", "-0", "2147483648")),
     "http_status": ((100, 200, 599), (99, 600, "200", True, 200.0)),
     "http_url": (
@@ -110,6 +157,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     ),
     "method": (("GET", "PROPFIND", "M" * 32), ("get", "M" * 33, "")),
     "mta_sts": (("v=STSv1", "v=STSv1; id=1", "v=STSv1 id=1"), ("v=STSv10", "V=STSv1", "", " v=STSv1")),
+    "multiline_text_4096": (("x", "line one\nline two\tindented", "x" * 4096), ("", "x" * 4097, "a\rb", "a\x00b", 1)),
     "mx_pattern_list": (
         ([], ["mail.example.com"], ["*.mail.protection.outlook.com", "mx1.example.com"]),
         (
@@ -126,6 +174,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     "phone_e164": (("+14155552671", "+12"), ("14155552671", "+0155552671", "+1", "+" + "9" * 16, "+1 415 555")),
     "printable_text_1024": (("x", "x" * 1024), ("", "x" * 1025, "line\nbreak", 1)),
     "printable_text_200": (("x", "x" * 200), ("", "x" * 201, "a\tb")),
+    "probability": ((0, 1, 0.97556, 0.5), (-0.01, 1.01, "0.97556", True, float("inf"))),
     "public_suffix": (
         ("com", "co.uk", "internal", "xn--p1ai"),
         ("example.com", "Com", "com.", "", "ck", "c_m", "xn--a"),
@@ -145,6 +194,10 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ("v=spf10", " v=spf1", "v=spf1\t-all", "v=spf1 é", "v=spf1 " + "a" * 4090),
     ),
     "srv_label": (("_ldap", "_tcp", "_" + "b" * 62), ("ldap", "_LDAP", "_ldap-", "_" + "a" * 63)),
+    "tag_list": (
+        (["cve"], ["cve", "log4j", "rce"], ["cve2021", "oast"]),
+        ([], ["rce", "cve"], ["cve", "cve"], ["CVE"], ["a b"], "cve,rce"),
+    ),
     "tech_token": (("nginx", "php_7.4+x", "a"), ("Nginx", "-nginx", "nginx-", "a" * 64, "ngin x", "")),
     "tech_version": (("1.18.0", "2.4.41-ubuntu", "x" * 64), ("", "1.18 beta", "x" * 65, "1.0\u00e9")),
     "tenant_id": (("dev-12345", "72f988bf-86f1-41af-91ab-2d7cd011db47"), ("Dev-12345", "", "-x", "a" * 129)),

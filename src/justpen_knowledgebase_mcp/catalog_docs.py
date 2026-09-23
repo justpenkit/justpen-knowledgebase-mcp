@@ -38,6 +38,7 @@ DOCS: dict[str, Any] = {
             "dot, and never a dotted-quad IPv4 address. Every provider is stricter than this union rule, and "
             "the declared provider fixes which of the narrower spellings is accepted."
         ),
+        "calendar_date": "A calendar date `YYYY-MM-DD` that exists, without a time or zone.",
         "caa_parameters": (
             "An array of objects with name and value strings. Names start alphanumeric and continue "
             "alphanumeric or hyphen. Values are empty or use ASCII 0x21-0x3A and 0x3C-0x7E."
@@ -53,6 +54,15 @@ DOCS: dict[str, Any] = {
             "two-part credential, such as an AWS access key id, never secret material."
         ),
         "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
+        "cvss_score": (
+            "A strict JSON number from 0 through 10 with at most one decimal place, as CVSS publishes a score: "
+            '`9.8` and `10` are accepted, `9.85` and `"9.8"` are not.'
+        ),
+        "cvss_vector": (
+            "A CVSS vector string with its version prefix, `CVSS:3.0/`, `CVSS:3.1/` or `CVSS:4.0/`, then "
+            "`/`-separated `METRIC:value` pairs, each metric once and every base metric of that version present. "
+            "The unprefixed CVSS 2 form is rejected."
+        ),
         "cwe": "A string matching `CWE-[0-9]{1,6}` exactly, uppercase as MITRE publishes it.",
         "dkim_selector": (
             "A lowercase ASCII DKIM selector of at most 253 bytes, as one or more dot-separated labels of at "
@@ -88,6 +98,15 @@ DOCS: dict[str, Any] = {
             "from ASCII letters, digits and `._/-` spelling the tool's own rule id, such as "
             "`nuclei:http-missing-security-headers` or `manual:exposed-admin-panel`."
         ),
+        "git_ref_name": (
+            "A branch name as `git check-ref-format --branch` accepts it, one level allowed: at most 255 ASCII "
+            "characters, no space, control character or any of `~^:?*[\\`, no `..`, `@{` or `//`, no component "
+            "starting with `.` or ending `.lock`, and not `@`, `HEAD` or a leading `-`."
+        ),
+        "hex_serial": (
+            "A certificate serial number as 1 to 40 lowercase hexadecimal digits without leading zeros or "
+            "separators: tlsx's `AB:CD:...` becomes `abcd...`."
+        ),
         "http_fingerprint_value": (
             "Either a signed 32-bit decimal integer written in ASCII without a leading zero or a plus sign, for "
             "a MurmurHash3 favicon hash, or exactly 64 lowercase hexadecimal characters for a response digest. "
@@ -119,6 +138,7 @@ DOCS: dict[str, Any] = {
             "Printable ASCII of at most 4096 characters beginning with 'v=STSv1' followed by a semicolon, a "
             "normal space, or end of text: the TXT record at `_mta-sts.<domain>`, not the policy file body."
         ),
+        "multiline_text_4096": "1 to 4096 printable Unicode characters, newlines and tabs included.",
         "mx_pattern_list": (
             "An array of RFC 8461 `mx` patterns, each a lowercase dns_name or `*.` followed by one, sorted "
             "ascending with no duplicate, so one policy has one spelling."
@@ -130,6 +150,7 @@ DOCS: dict[str, Any] = {
         "phone_e164": "An E.164 number: `+`, a leading digit from 1 through 9, and in total 2 to 15 digits.",
         "printable_text_1024": "A string of 1-1024 printable Unicode characters.",
         "printable_text_200": "A string of 1-200 printable Unicode characters.",
+        "probability": "A strict JSON number from 0 through 1, such as an EPSS score or percentile.",
         "public_suffix": (
             "A lowercase ASCII zone under which names are registered, per the bundled ICANN PSL: one more "
             "label makes a registrable domain, so `com` and `co.uk` qualify and `example.com` does not."
@@ -164,6 +185,10 @@ DOCS: dict[str, Any] = {
             "of text, the same bound as every other TXT value rule."
         ),
         "srv_label": "A 2-63 byte lowercase ASCII SRV label beginning with underscore.",
+        "tag_list": (
+            "A non-empty array of tech_token tags, lowercase, sorted ascending with no duplicate, so one tag set "
+            "has one spelling."
+        ),
         "tech_token": (
             "A 1-63 character lowercase ASCII technology slug that starts and ends alphanumeric and may contain "
             "interior dot, underscore, plus, or hyphen."
@@ -298,6 +323,11 @@ DOCS: dict[str, Any] = {
             "properties": {
                 "der_sha256": "Lowercase hex SHA-256 of the certificate's DER bytes.",
                 "self_signed": "True when the subject signed itself; keep it beside the `issued_by` self edge.",
+                "subject_cn": "The subject common name.",
+                "issuer_dn": "The issuer distinguished name as the scanner prints it.",
+                "not_before": "The start of the validity period.",
+                "not_after": "The end of the validity period.",
+                "serial": "The serial number in lowercase hex without separators or leading zeros.",
             },
         },
         "cve": {
@@ -306,7 +336,15 @@ DOCS: dict[str, Any] = {
                 "Not an observation that something is vulnerable; that is `affected_by` from the affected "
                 "service, endpoint or finding. Never a finding source."
             ),
-            "properties": {"value": "The CVE id, uppercase as MITRE publishes it."},
+            "properties": {
+                "value": "The CVE id, uppercase as MITRE publishes it.",
+                "cvss_score": "The CVSS base score the advisory publishes, from its highest CVSS version.",
+                "cvss_vector": "The CVSS vector string that score comes from.",
+                "epss_score": "The FIRST EPSS probability of exploitation in the next 30 days.",
+                "epss_percentile": "The EPSS score's percentile among all scored CVEs.",
+                "kev_added": "The date CISA added the CVE to its Known Exploited Vulnerabilities catalog.",
+                "published": "When the CVE record was published.",
+            },
         },
         "cwe": {
             "summary": "A CWE weakness class: the canonical spelling that joins findings from different scanners.",
@@ -339,7 +377,11 @@ DOCS: dict[str, Any] = {
                 "Not a name below a registrable domain (`subdomain`) and not a public suffix. Registration "
                 "dates, status and DNSSEC state belong to a `whois_registration`, not to the name."
             ),
-            "properties": {"value": "The lowercase ASCII name without a trailing dot; IDNs in punycode."},
+            "properties": {
+                "value": "The lowercase ASCII name without a trailing dot; IDNs in punycode.",
+                "wildcard": "True when random labels directly under this name resolve, a DNS wildcard.",
+                "wildcard_answer": "True when this name's answer equals its parent wildcard's, so it may not exist.",
+            },
         },
         "email_address": {
             "summary": "A mailbox, reached as a contact through `has_contact`.",
@@ -385,6 +427,12 @@ DOCS: dict[str, Any] = {
                 "matcher": "The sub-rule discriminator, such as a matcher name, or empty when the rule has one result.",
                 "title": "The rule's human-readable name; the latest write wins.",
                 "severity": "The reporter's severity; the latest write wins.",
+                "scanner": "The tool that reported it, when `rule` names a wrapped tool.",
+                "cvss_score": "The CVSS score the reporter assigns.",
+                "cvss_vector": "The CVSS vector the reporter assigns.",
+                "confidence": "How sure the reporter is, in BBOT's scale.",
+                "tags": "The rule's tags, lowercase, sorted.",
+                "description": "The reporter's description, never one that embeds a secret.",
             },
         },
         "host_key": {
@@ -422,9 +470,16 @@ DOCS: dict[str, Any] = {
         "ip_address": {
             "summary": "One IPv4 or IPv6 address.",
             "excludes": "Not a network (`ip_cidr`) and not a name that resolves to it (`resolves_to`).",
+            "notes": (
+                "A range-list classification (cdncheck, httpx `cdn_name`) is an attribute of the address; a CDN "
+                "or WAF seen in front of a name or service is a `protected_by` edge instead."
+            ),
             "properties": {
                 "value": "The canonical compressed address spelling.",
                 "version": "4 or 6, matching `value`.",
+                "cdn_provider": "The CDN whose published ranges hold the address, such as `cloudflare`.",
+                "waf_provider": "The WAF vendor whose published ranges hold the address.",
+                "cloud_provider": "The cloud provider whose published ranges hold the address, such as `aws`.",
             },
         },
         "ip_cidr": {
@@ -498,6 +553,10 @@ DOCS: dict[str, Any] = {
                 "host": "The hosting instance's host name.",
                 "owner": "The owner path, lowercase; only `gitlab` nests groups.",
                 "name": "The repository name, lowercase.",
+                "default_branch": "The default branch name.",
+                "visibility": "The platform's visibility setting.",
+                "archived": "Whether the repository is archived.",
+                "fork": "Whether the repository is a fork.",
             },
         },
         "secret": {
@@ -521,7 +580,11 @@ DOCS: dict[str, Any] = {
         "service": {
             "summary": "The application protocol a port speaks, scoped to that port through `has_service`.",
             "excludes": "Not the product or version implementing it; that is `runs_technology`.",
-            "properties": {"name": "A member of the bundled Nmap-derived service-name registry."},
+            "properties": {
+                "name": "A member of the bundled Nmap-derived service-name registry.",
+                "product": "The product a version probe names, such as `OpenSSH`.",
+                "version": "The version a version probe reports.",
+            },
         },
         "spf_record": {
             "summary": "An SPF policy value, shared by every name that publishes the same string.",
@@ -542,7 +605,11 @@ DOCS: dict[str, Any] = {
         "subdomain": {
             "summary": "A DNS name below a registrable domain, such as `api.example.com`.",
             "excludes": "Not the registrable domain itself (`domain`).",
-            "properties": {"value": "The lowercase ASCII name without a trailing dot; IDNs in punycode."},
+            "properties": {
+                "value": "The lowercase ASCII name without a trailing dot; IDNs in punycode.",
+                "wildcard": "True when random labels directly under this name resolve, a DNS wildcard.",
+                "wildcard_answer": "True when this name's answer equals its parent wildcard's, so it may not exist.",
+            },
         },
         "technology": {
             "summary": "A product, framework or service slug, shared by every host that runs it.",
@@ -816,6 +883,7 @@ DOCS: dict[str, Any] = {
                 "mode": "How TLS was reached on the service.",
                 "server_name": "The SNI name offered, or empty when none was.",
                 "alpn_offered": "The ALPN ids offered, hashed order-independently.",
+                "name_mismatch": "True when the certificate did not cover the name that was asked for.",
             },
         },
         "presents_host_key": {

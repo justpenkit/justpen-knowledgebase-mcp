@@ -209,10 +209,13 @@ Every declared property that is not an enum names one of these rules. The versio
 | `boolean`                  | 1       | A strict JSON `true` or `false`; the strings `"true"` and `"1"` and the number 1 are rejected.                                                                                                                                                                                                                                                                                                                                                                                        |
 | `bucket_name`              | 1       | The provider-global name of an object-storage bucket: 3 to 222 lowercase ASCII characters from letters, digits, hyphen, underscore and dot, starting and ending alphanumeric, without a doubled dot, and never a dotted-quad IPv4 address. Every provider is stricter than this union rule, and the declared provider fixes which of the narrower spellings is accepted.                                                                                                              |
 | `caa_parameters`           | 1       | An array of objects with name and value strings. Names start alphanumeric and continue alphanumeric or hyphen. Values are empty or use ASCII 0x21-0x3A and 0x3C-0x7E.                                                                                                                                                                                                                                                                                                                 |
+| `calendar_date`            | 1       | A calendar date `YYYY-MM-DD` that exists, without a time or zone.                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `cidr`                     | 1       | Canonical strict IPv4 or IPv6 network with an explicit prefix length.                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `cpe23`                    | 1       | A lowercase CPE 2.3 formatted string (NIST IR 7695) of at most 512 characters: 'cpe:2.3:', the part, and ten colon-separated attributes, each '*', '-', or an escaped value optionally anchored by '*' or a run of '?'. The legacy 'cpe:/' URI binding that nmap prints is rejected; convert it.                                                                                                                                                                                      |
 | `credential_key_id`        | 1       | 1 to 128 characters from ASCII letters, digits and `._:/+=-`: the public identifier half of a two-part credential, such as an AWS access key id, never secret material.                                                                                                                                                                                                                                                                                                               |
 | `cve`                      | 1       | A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `cvss_score`               | 1       | A strict JSON number from 0 through 10 with at most one decimal place, as CVSS publishes a score: `9.8` and `10` are accepted, `9.85` and `"9.8"` are not.                                                                                                                                                                                                                                                                                                                            |
+| `cvss_vector`              | 1       | A CVSS vector string with its version prefix, `CVSS:3.0/`, `CVSS:3.1/` or `CVSS:4.0/`, then `/`-separated `METRIC:value` pairs, each metric once and every base metric of that version present. The unprefixed CVSS 2 form is rejected.                                                                                                                                                                                                                                               |
 | `cwe`                      | 1       | A string matching `CWE-[0-9]{1,6}` exactly, uppercase as MITRE publishes it.                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `dkim_selector`            | 1       | A lowercase ASCII DKIM selector of at most 253 bytes, as one or more dot-separated labels of at most 63 bytes each, written without the `_domainkey` suffix or the domain. In practice it is far shorter, since `<selector>._domainkey.<domain>` must itself fit in 253 bytes.                                                                                                                                                                                                        |
 | `dmarc`                    | 1       | Printable ASCII of at most 4096 characters beginning with 'v=DMARC1' followed by a semicolon, a normal space, or end of text.                                                                                                                                                                                                                                                                                                                                                         |
@@ -222,6 +225,8 @@ Every declared property that is not an enum names one of these rules. The versio
 | `epp_status_list`          | 1       | A non-empty array of EPP domain status codes in their camelCase spelling, from RFC 5731 and the RFC 3915 grace periods, sorted ascending with no duplicate. Convert RDAP's spaced words: `client transfer prohibited` is `clientTransferProhibited`, `active` is `ok`.                                                                                                                                                                                                                |
 | `finding_matcher_or_empty` | 1       | The empty string, or 1 to 400 characters from ASCII letters, digits and `._:/-`: the reporting tool's sub-rule discriminator, such as a nuclei matcher name or `<host>:<matcher>` for a TLS result.                                                                                                                                                                                                                                                                                   |
 | `finding_rule`             | 1       | `<tool>:<id>`: a lowercase tech_token naming the reporting tool, a colon, and 1 to 200 characters from ASCII letters, digits and `._/-` spelling the tool's own rule id, such as `nuclei:http-missing-security-headers` or `manual:exposed-admin-panel`.                                                                                                                                                                                                                              |
+| `git_ref_name`             | 1       | A branch name as `git check-ref-format --branch` accepts it, one level allowed: at most 255 ASCII characters, no space, control character or any of `~^:?*[\`, no `..`, `@{` or `//`, no component starting with `.` or ending `.lock`, and not `@`, `HEAD` or a leading `-`.                                                                                                                                                                                                         |
+| `hex_serial`               | 1       | A certificate serial number as 1 to 40 lowercase hexadecimal digits without leading zeros or separators: tlsx's `AB:CD:...` becomes `abcd...`.                                                                                                                                                                                                                                                                                                                                        |
 | `http_fingerprint_value`   | 1       | Either a signed 32-bit decimal integer written in ASCII without a leading zero or a plus sign, for a MurmurHash3 favicon hash, or exactly 64 lowercase hexadecimal characters for a response digest. The declared kind fixes which one is accepted.                                                                                                                                                                                                                                   |
 | `http_status`              | 1       | A strict JSON integer HTTP status code from 100 through 599.                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `http_url`                 | 1       | Canonical absolute ASCII http/https URL with a lowercase host (underscore labels are accepted left of the registrable domain, as for subdomain), mandatory path, no userinfo, fragment, whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase percent escape. A submitted query string is validated with the rest of the URL and then removed before identity and storage, so one endpoint holds one path; parameter names belong to parameter nodes. |
@@ -231,11 +236,13 @@ Every declared property that is not an enum names one of these rules. The versio
 | `media_type`               | 1       | A lowercase media type essence `type/subtype` of RFC 6838 restricted names, without parameters: `text/html`, never `text/html; charset=utf-8` or `Text/HTML`.                                                                                                                                                                                                                                                                                                                         |
 | `method`                   | 1       | One to 32 characters matching an uppercase HTTP method token.                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `mta_sts`                  | 1       | Printable ASCII of at most 4096 characters beginning with 'v=STSv1' followed by a semicolon, a normal space, or end of text: the TXT record at `_mta-sts.<domain>`, not the policy file body.                                                                                                                                                                                                                                                                                         |
+| `multiline_text_4096`      | 1       | 1 to 4096 printable Unicode characters, newlines and tabs included.                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `mx_pattern_list`          | 1       | An array of RFC 8461 `mx` patterns, each a lowercase dns_name or `*.` followed by one, sorted ascending with no duplicate, so one policy has one spelling.                                                                                                                                                                                                                                                                                                                            |
 | `parameter_name`           | 1       | 1 to 128 printable ASCII characters without space, `&`, `=`, or `#`; one single parameter name, never a raw query string.                                                                                                                                                                                                                                                                                                                                                             |
 | `phone_e164`               | 1       | An E.164 number: `+`, a leading digit from 1 through 9, and in total 2 to 15 digits.                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `printable_text_1024`      | 1       | A string of 1-1024 printable Unicode characters.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `printable_text_200`       | 1       | A string of 1-200 printable Unicode characters.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `probability`              | 1       | A strict JSON number from 0 through 1, such as an EPSS score or percentile.                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `public_suffix`            | 1       | A lowercase ASCII zone under which names are registered, per the bundled ICANN PSL: one more label makes a registrable domain, so `com` and `co.uk` qualify and `example.com` does not.                                                                                                                                                                                                                                                                                               |
 | `redirect_status`          | 1       | A strict JSON integer in 301, 302, 303, 307, or 308.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `registry_domain_id`       | 1       | An RFC 5730 repository object id in ASCII, as the registry publishes it in the RDAP `handle` or the WHOIS `Registry Domain ID`: 1-80 letters, digits or underscores, a hyphen, and a 1-8 character alphanumeric repository suffix, such as `2138514_DOMAIN_COM-VRSN`. Case is preserved.                                                                                                                                                                                              |
@@ -246,6 +253,7 @@ Every declared property that is not an enum names one of these rules. The versio
 | `sha256`                   | 1       | Exactly 64 lowercase ASCII hexadecimal characters.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `spf`                      | 1       | Printable ASCII of at most 4096 characters beginning with `v=spf1` followed by a normal space or end of text, the same bound as every other TXT value rule.                                                                                                                                                                                                                                                                                                                           |
 | `srv_label`                | 1       | A 2-63 byte lowercase ASCII SRV label beginning with underscore.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `tag_list`                 | 1       | A non-empty array of tech_token tags, lowercase, sorted ascending with no duplicate, so one tag set has one spelling.                                                                                                                                                                                                                                                                                                                                                                 |
 | `tech_token`               | 1       | A 1-63 character lowercase ASCII technology slug that starts and ends alphanumeric and may contain interior dot, underscore, plus, or hyphen.                                                                                                                                                                                                                                                                                                                                         |
 | `tech_version`             | 1       | 1 to 64 printable ASCII characters without space: a version string as the product reports it.                                                                                                                                                                                                                                                                                                                                                                                         |
 | `tenant_id`                | 1       | A 1-128 character lowercase ASCII identity-tenant identifier that starts and ends alphanumeric and may contain interior dot, underscore or hyphen. The declared provider fixes the narrower spelling: a canonical lowercase UUID for Entra ID, a bare organization slug for Okta.                                                                                                                                                                                                     |
@@ -285,10 +293,15 @@ A self edge through `issued_by` records a self-signed certificate. Absence of th
 
 **Identity:** `der_sha256`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
 
-| Property      | Required | Rule      | Meaning                                                                        |
-| ------------- | -------- | --------- | ------------------------------------------------------------------------------ |
-| `der_sha256`  | yes      | `sha256`  | Lowercase hex SHA-256 of the certificate's DER bytes.                          |
-| `self_signed` | no       | `boolean` | True when the subject signed itself; keep it beside the `issued_by` self edge. |
+| Property      | Required | Rule                  | Meaning                                                                        |
+| ------------- | -------- | --------------------- | ------------------------------------------------------------------------------ |
+| `der_sha256`  | yes      | `sha256`              | Lowercase hex SHA-256 of the certificate's DER bytes.                          |
+| `issuer_dn`   | no       | `printable_text_1024` | The issuer distinguished name as the scanner prints it.                        |
+| `not_after`   | no       | `utc_timestamp`       | The end of the validity period.                                                |
+| `not_before`  | no       | `utc_timestamp`       | The start of the validity period.                                              |
+| `self_signed` | no       | `boolean`             | True when the subject signed itself; keep it beside the `issued_by` self edge. |
+| `serial`      | no       | `hex_serial`          | The serial number in lowercase hex without separators or leading zeros.        |
+| `subject_cn`  | no       | `printable_text_1024` | The subject common name.                                                       |
 
 ### `cve`
 
@@ -298,9 +311,15 @@ A published CVE record, shared by every object affected by it.
 
 **Identity:** `value`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
 
-| Property | Required | Rule  | Meaning                                      |
-| -------- | -------- | ----- | -------------------------------------------- |
-| `value`  | yes      | `cve` | The CVE id, uppercase as MITRE publishes it. |
+| Property          | Required | Rule            | Meaning                                                                     |
+| ----------------- | -------- | --------------- | --------------------------------------------------------------------------- |
+| `value`           | yes      | `cve`           | The CVE id, uppercase as MITRE publishes it.                                |
+| `cvss_score`      | no       | `cvss_score`    | The CVSS base score the advisory publishes, from its highest CVSS version.  |
+| `cvss_vector`     | no       | `cvss_vector`   | The CVSS vector string that score comes from.                               |
+| `epss_percentile` | no       | `probability`   | The EPSS score's percentile among all scored CVEs.                          |
+| `epss_score`      | no       | `probability`   | The FIRST EPSS probability of exploitation in the next 30 days.             |
+| `kev_added`       | no       | `calendar_date` | The date CISA added the CVE to its Known Exploited Vulnerabilities catalog. |
+| `published`       | no       | `utc_timestamp` | When the CVE record was published.                                          |
 
 ### `cwe`
 
@@ -350,9 +369,11 @@ A registrable domain name as the bundled public suffix list classifies it, such 
 
 **Identity:** `value`<br>**Parent scope:** —<br>**Checks:** `dns_name_kind.1`<br>**Canonicalizations:** —
 
-| Property | Required | Rule       | Meaning                                                            |
-| -------- | -------- | ---------- | ------------------------------------------------------------------ |
-| `value`  | yes      | `dns_name` | The lowercase ASCII name without a trailing dot; IDNs in punycode. |
+| Property          | Required | Rule       | Meaning                                                                         |
+| ----------------- | -------- | ---------- | ------------------------------------------------------------------------------- |
+| `value`           | yes      | `dns_name` | The lowercase ASCII name without a trailing dot; IDNs in punycode.              |
+| `wildcard`        | no       | `boolean`  | True when random labels directly under this name resolve, a DNS wildcard.       |
+| `wildcard_answer` | no       | `boolean`  | True when this name's answer equals its parent wildcard's, so it may not exist. |
 
 ### `email_address`
 
@@ -396,12 +417,18 @@ Identity is the rule and matcher under the parent, as nuclei deduplicates by tem
 
 **Identity:** `rule`, `matcher`<br>**Parent scope:** `has_finding` (source)<br>**Checks:** —<br>**Canonicalizations:** —
 
-| Property   | Required | Rule                                                          | Meaning                                                                                    |
-| ---------- | -------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `matcher`  | yes      | `finding_matcher_or_empty`                                    | The sub-rule discriminator, such as a matcher name, or empty when the rule has one result. |
-| `rule`     | yes      | `finding_rule`                                                | The reporting tool and its rule id, such as a nuclei template id.                          |
-| `severity` | yes      | one of `info`, `low`, `medium`, `high`, `critical`, `unknown` | The reporter's severity; the latest write wins.                                            |
-| `title`    | yes      | `printable_text_200`                                          | The rule's human-readable name; the latest write wins.                                     |
+| Property      | Required | Rule                                                          | Meaning                                                                                    |
+| ------------- | -------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `matcher`     | yes      | `finding_matcher_or_empty`                                    | The sub-rule discriminator, such as a matcher name, or empty when the rule has one result. |
+| `rule`        | yes      | `finding_rule`                                                | The reporting tool and its rule id, such as a nuclei template id.                          |
+| `severity`    | yes      | one of `info`, `low`, `medium`, `high`, `critical`, `unknown` | The reporter's severity; the latest write wins.                                            |
+| `title`       | yes      | `printable_text_200`                                          | The rule's human-readable name; the latest write wins.                                     |
+| `confidence`  | no       | one of `unknown`, `low`, `medium`, `high`, `confirmed`        | How sure the reporter is, in BBOT's scale.                                                 |
+| `cvss_score`  | no       | `cvss_score`                                                  | The CVSS score the reporter assigns.                                                       |
+| `cvss_vector` | no       | `cvss_vector`                                                 | The CVSS vector the reporter assigns.                                                      |
+| `description` | no       | `multiline_text_4096`                                         | The reporter's description, never one that embeds a secret.                                |
+| `scanner`     | no       | `tech_token`                                                  | The tool that reported it, when `rule` names a wrapped tool.                               |
+| `tags`        | no       | `tag_list`                                                    | The rule's tags, lowercase, sorted.                                                        |
 
 ### `host_key`
 
@@ -448,12 +475,17 @@ One IPv4 or IPv6 address.
 
 **Not modeled:** Not a network (`ip_cidr`) and not a name that resolves to it (`resolves_to`).
 
+A range-list classification (cdncheck, httpx `cdn_name`) is an attribute of the address; a CDN or WAF seen in front of a name or service is a `protected_by` edge instead.
+
 **Identity:** `value`<br>**Parent scope:** —<br>**Checks:** `ip_address_version.1`<br>**Canonicalizations:** —
 
-| Property  | Required | Rule         | Meaning                                    |
-| --------- | -------- | ------------ | ------------------------------------------ |
-| `value`   | yes      | `ip`         | The canonical compressed address spelling. |
-| `version` | yes      | `ip_version` | 4 or 6, matching `value`.                  |
+| Property         | Required | Rule         | Meaning                                                                    |
+| ---------------- | -------- | ------------ | -------------------------------------------------------------------------- |
+| `value`          | yes      | `ip`         | The canonical compressed address spelling.                                 |
+| `version`        | yes      | `ip_version` | 4 or 6, matching `value`.                                                  |
+| `cdn_provider`   | no       | `tech_token` | The CDN whose published ranges hold the address, such as `cloudflare`.     |
+| `cloud_provider` | no       | `tech_token` | The cloud provider whose published ranges hold the address, such as `aws`. |
+| `waf_provider`   | no       | `tech_token` | The WAF vendor whose published ranges hold the address.                    |
 
 ### `ip_cidr`
 
@@ -561,12 +593,16 @@ A source-code repository on one hosting instance, keyed on the host, owner and n
 
 **Identity:** `host`, `owner`, `name`<br>**Parent scope:** —<br>**Checks:** `repository_owner_spelling.1`<br>**Canonicalizations:** —
 
-| Property   | Required | Rule                                            | Meaning                                                              |
-| ---------- | -------- | ----------------------------------------------- | -------------------------------------------------------------------- |
-| `host`     | yes      | `dns_name`                                      | The hosting instance's host name.                                    |
-| `name`     | yes      | `repo_name`                                     | The repository name, lowercase.                                      |
-| `owner`    | yes      | `repo_owner`                                    | The owner path, lowercase; only `gitlab` nests groups.               |
-| `platform` | yes      | one of `github`, `gitlab`, `bitbucket`, `gitea` | The hosting software, which selects the owner grammar; not identity. |
+| Property         | Required | Rule                                            | Meaning                                                              |
+| ---------------- | -------- | ----------------------------------------------- | -------------------------------------------------------------------- |
+| `host`           | yes      | `dns_name`                                      | The hosting instance's host name.                                    |
+| `name`           | yes      | `repo_name`                                     | The repository name, lowercase.                                      |
+| `owner`          | yes      | `repo_owner`                                    | The owner path, lowercase; only `gitlab` nests groups.               |
+| `platform`       | yes      | one of `github`, `gitlab`, `bitbucket`, `gitea` | The hosting software, which selects the owner grammar; not identity. |
+| `archived`       | no       | `boolean`                                       | Whether the repository is archived.                                  |
+| `default_branch` | no       | `git_ref_name`                                  | The default branch name.                                             |
+| `fork`           | no       | `boolean`                                       | Whether the repository is a fork.                                    |
+| `visibility`     | no       | one of `public`, `private`, `internal`          | The platform's visibility setting.                                   |
 
 ### `secret`
 
@@ -594,9 +630,11 @@ The application protocol a port speaks, scoped to that port through `has_service
 
 **Identity:** `name`<br>**Parent scope:** `has_service` (source)<br>**Checks:** `service_secure_flag.1`<br>**Canonicalizations:** —
 
-| Property | Required | Rule           | Meaning                                                     |
-| -------- | -------- | -------------- | ----------------------------------------------------------- |
-| `name`   | yes      | `service_name` | A member of the bundled Nmap-derived service-name registry. |
+| Property  | Required | Rule                 | Meaning                                                     |
+| --------- | -------- | -------------------- | ----------------------------------------------------------- |
+| `name`    | yes      | `service_name`       | A member of the bundled Nmap-derived service-name registry. |
+| `product` | no       | `printable_text_200` | The product a version probe names, such as `OpenSSH`.       |
+| `version` | no       | `tech_version`       | The version a version probe reports.                        |
 
 ### `spf_record`
 
@@ -631,9 +669,11 @@ A DNS name below a registrable domain, such as `api.example.com`.
 
 **Identity:** `value`<br>**Parent scope:** —<br>**Checks:** `dns_name_kind.1`<br>**Canonicalizations:** —
 
-| Property | Required | Rule       | Meaning                                                            |
-| -------- | -------- | ---------- | ------------------------------------------------------------------ |
-| `value`  | yes      | `dns_name` | The lowercase ASCII name without a trailing dot; IDNs in punycode. |
+| Property          | Required | Rule       | Meaning                                                                         |
+| ----------------- | -------- | ---------- | ------------------------------------------------------------------------------- |
+| `value`           | yes      | `dns_name` | The lowercase ASCII name without a trailing dot; IDNs in punycode.              |
+| `wildcard`        | no       | `boolean`  | True when random labels directly under this name resolve, a DNS wildcard.       |
+| `wildcard_answer` | no       | `boolean`  | True when this name's answer equals its parent wildcard's, so it may not exist. |
 
 ### `technology`
 
@@ -1049,11 +1089,12 @@ The service presented the certificate in a handshake.
 
 **Identity:** `mode`, `server_name`, `alpn_offered`, with `alpn_offered` hashed order-independently<br>**Sources:** `service`<br>**Targets:** `certificate`<br>**Self edge:** no<br>**Checks:** —<br>**Canonicalizations:** —
 
-| Property       | Required | Rule                                     | Meaning                                           |
-| -------------- | -------- | ---------------------------------------- | ------------------------------------------------- |
-| `alpn_offered` | yes      | `alpn_tokens`                            | The ALPN ids offered, hashed order-independently. |
-| `mode`         | yes      | one of `tls`, `dtls`, `starttls`, `quic` | How TLS was reached on the service.               |
-| `server_name`  | yes      | `dns_or_explicit_empty`                  | The SNI name offered, or empty when none was.     |
+| Property        | Required | Rule                                     | Meaning                                                              |
+| --------------- | -------- | ---------------------------------------- | -------------------------------------------------------------------- |
+| `alpn_offered`  | yes      | `alpn_tokens`                            | The ALPN ids offered, hashed order-independently.                    |
+| `mode`          | yes      | one of `tls`, `dtls`, `starttls`, `quic` | How TLS was reached on the service.                                  |
+| `server_name`   | yes      | `dns_or_explicit_empty`                  | The SNI name offered, or empty when none was.                        |
+| `name_mismatch` | no       | `boolean`                                | True when the certificate did not cover the name that was asked for. |
 
 ### `presents_host_key`
 

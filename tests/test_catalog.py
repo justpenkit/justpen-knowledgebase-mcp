@@ -128,7 +128,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "58d0da7d976fd4c6106f8daea1790272a5fdc2c88058aeecba99c4a9a3c8aaf8"
+    assert CATALOG_FINGERPRINT == "dff628c40d500ce6d427dc64d79f5ce823118f6f75dc923f6561f740174de5e5"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -271,6 +271,45 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("cwe", {"value": "CWE-1"}),
         ("cwe", {"value": "CWE-999999"}),
         ("cwe", {"value": "CWE-89", "name": "SQL Injection"}),
+        (
+            "cve",
+            {
+                "value": "CVE-2021-44228",
+                "cvss_score": 10,
+                "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+                "epss_score": 0.97556,
+                "epss_percentile": 1,
+                "kev_added": "2021-12-10",
+                "published": "2021-12-10T10:15:09.143Z",
+            },
+        ),
+        ("subdomain", {"value": "random.example.com", "wildcard": True, "wildcard_answer": False}),
+        ("ip_address", {"value": "104.16.0.1", "version": 4, "cdn_provider": "cloudflare", "cloud_provider": "aws"}),
+        (
+            "certificate",
+            {
+                "der_sha256": "b" * 64,
+                "subject_cn": "*.example.com",
+                "issuer_dn": "CN=R3,O=Let's Encrypt,C=US",
+                "not_before": "2026-01-01T00:00:00Z",
+                "not_after": "2026-04-01T00:00:00Z",
+                "serial": "3a2f",
+            },
+        ),
+        ("service", {"name": "ssh", "product": "OpenSSH", "version": "8.9p1"}),
+        (
+            "repository",
+            {
+                "platform": "github",
+                "host": "github.com",
+                "owner": "example-org",
+                "name": "web",
+                "default_branch": "main",
+                "visibility": "public",
+                "archived": False,
+                "fork": True,
+            },
+        ),
         (
             "endpoint",
             {
@@ -521,6 +560,14 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("cwe", {"value": "79"}),
         ("cwe", {"value": 79}),
         ("cwe", {"value": "CWE-79", "name": ""}),
+        ("cve", {"value": "CVE-2021-44228", "cvss_score": 9.85}),
+        ("cve", {"value": "CVE-2021-44228", "epss_score": "0.97"}),
+        ("cve", {"value": "CVE-2021-44228", "kev_added": "2021-12-10T00:00:00Z"}),
+        ("cve", {"value": "CVE-2021-44228", "published": "2021-12-10T10:15:09.143"}),
+        ("domain", {"value": "example.com", "wildcard": "yes"}),
+        ("ip_address", {"value": "104.16.0.1", "version": 4, "cdn_provider": "Cloudflare"}),
+        ("certificate", {"der_sha256": "b" * 64, "serial": "3A:2F"}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "o", "name": "n", "visibility": "Public"}),
         ("endpoint", {"url": "https://example.com/", "method": "GET", "status": "200"}),
         ("endpoint", {"url": "https://example.com/", "method": "GET", "status": 99}),
         ("endpoint", {"url": "https://example.com/", "method": "GET", "content_type": "text/html; charset=utf-8"}),
@@ -1648,3 +1695,21 @@ def test_a_plaintext_key_is_named_by_its_pointer_and_never_by_its_value() -> Non
 
     assert failure.value.message == "/properties/ctx/a~1b/Raw: a secret record never carries the secret itself"
     assert "hunter2" not in failure.value.message
+
+
+def test_ac10_attribute_properties_are_declared() -> None:
+    """AC-10: exploit metadata, HTTP metadata, CDN/WAF/cloud range classification on addresses,
+    wildcard DNS and CPE/version each have a declared, validated home."""
+    manifest = catalog_manifest()
+    expected = {
+        ("nodes", "cve"): {"cvss_score", "cvss_vector", "epss_score", "epss_percentile", "kev_added", "published"},
+        ("nodes", "finding"): {"cvss_score", "cvss_vector", "confidence", "tags", "scanner", "description"},
+        ("nodes", "endpoint"): {"status", "title", "content_length", "content_type", "webserver"},
+        ("nodes", "ip_address"): {"cdn_provider", "waf_provider", "cloud_provider"},
+        ("nodes", "domain"): {"wildcard", "wildcard_answer"},
+        ("nodes", "subdomain"): {"wildcard", "wildcard_answer"},
+        ("nodes", "technology"): {"cpe"},
+        ("relations", "runs_technology"): {"version", "cpe"},
+    }
+    for (kind, type_name), names in expected.items():
+        assert names <= set(manifest[kind][type_name]["optional"]), type_name
