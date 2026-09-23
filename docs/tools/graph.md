@@ -191,9 +191,11 @@ written under one another's name.
 it, keyed on the registry and the registry's own handle. A handle is unique
 within one RIR and never across them, so both properties are identity. Free-text
 organization names are not: "Google LLC", "Google Inc." and "Google" are the
-same holder, so `name` is an attribute a rescan patches in place. It is not
-required, because an RDAP entity's name can be redacted while the handle
-remains. `domain` is not a source here: domain registration is expressed by a
+same holder, so `name` is a declared optional property a rescan patches in
+place. It is not required, because an RDAP entity's name can be redacted while
+the handle remains. The `asn` and `ip_cidr` nodes declare the registry facts
+that describe the number resource itself: `name` or `netname`, the two-letter
+`country`, and the `rir` that assigned it. `domain` is not a source here: domain registration is expressed by a
 `whois_registration`, and a registrant organization has no RIR handle to key on.
 A handle is case-sensitive and is written exactly as the registry publishes it:
 RIPE and AFRINIC derive handles from the organisation name and keep its case, so

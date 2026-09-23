@@ -222,6 +222,7 @@ Every declared property that is not an enum names one of these rules. The versio
 | `http_url`               | 1       | Canonical absolute ASCII http/https URL with lowercase host, mandatory path, no userinfo, fragment, whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase percent escape. A query string is removed before identity and storage, so one endpoint holds one path; parameter names belong to parameter nodes.                                           |
 | `ip`                     | 1       | Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.                                                                                                                                                                                                                                                                               |
 | `ip_version`             | 1       | A strict JSON integer equal to 4 or 6.                                                                                                                                                                                                                                                                                                                                                |
+| `iso3166_alpha2`         | 1       | Two uppercase ASCII letters in the ISO 3166-1 alpha-2 shape, as registries publish a country: `US`, `DE`. Shape only; membership in the ISO list is not checked.                                                                                                                                                                                                                      |
 | `media_type`             | 1       | A lowercase media type essence `type/subtype` of RFC 6838 restricted names, without parameters: `text/html`, never `text/html; charset=utf-8` or `Text/HTML`.                                                                                                                                                                                                                         |
 | `method`                 | 1       | One to 32 characters matching an uppercase HTTP method token.                                                                                                                                                                                                                                                                                                                         |
 | `mta_sts`                | 1       | Printable ASCII of at most 4096 characters beginning with 'v=STSv1' followed by a semicolon, a normal space, or end of text: the TXT record at `_mta-sts.<domain>`, not the policy file body.                                                                                                                                                                                         |
@@ -262,9 +263,12 @@ An autonomous system number: the routing identity a network is announced from.
 
 **Identity:** `value`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
 
-| Property | Required | Rule  | Meaning                                               |
-| -------- | -------- | ----- | ----------------------------------------------------- |
-| `value`  | yes      | `asn` | The AS number as an integer, without the `AS` prefix. |
+| Property  | Required | Rule                                                | Meaning                                                                                   |
+| --------- | -------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `value`   | yes      | `asn`                                               | The AS number as an integer, without the `AS` prefix.                                     |
+| `country` | no       | `iso3166_alpha2`                                    | The country the registry records for the AS.                                              |
+| `name`    | no       | `printable_text_200`                                | The holder's AS name as the registry or routing data publishes it; the latest write wins. |
+| `rir`     | no       | one of `arin`, `ripe`, `apnic`, `lacnic`, `afrinic` | The regional registry that assigned the AS.                                               |
 
 ### `certificate`
 
@@ -450,10 +454,13 @@ One IPv4 or IPv6 network with an explicit prefix length, as allocated, announced
 
 **Identity:** `value`<br>**Parent scope:** —<br>**Checks:** `ip_cidr_version.1`<br>**Canonicalizations:** —
 
-| Property  | Required | Rule         | Meaning                                         |
-| --------- | -------- | ------------ | ----------------------------------------------- |
-| `value`   | yes      | `cidr`       | The canonical network spelling, host bits zero. |
-| `version` | yes      | `ip_version` | 4 or 6, matching `value`.                       |
+| Property  | Required | Rule                                                | Meaning                                                   |
+| --------- | -------- | --------------------------------------------------- | --------------------------------------------------------- |
+| `value`   | yes      | `cidr`                                              | The canonical network spelling, host bits zero.           |
+| `version` | yes      | `ip_version`                                        | 4 or 6, matching `value`.                                 |
+| `country` | no       | `iso3166_alpha2`                                    | The country the registry records for the network.         |
+| `netname` | no       | `printable_text_200`                                | The registry network name (RDAP `name`, WHOIS `netname`). |
+| `rir`     | no       | one of `arin`, `ripe`, `apnic`, `lacnic`, `afrinic` | The regional registry that allocated the network.         |
 
 ### `mta_sts_policy`
 
@@ -480,10 +487,11 @@ A number-resource holder known to a regional internet registry, keyed on the reg
 
 **Identity:** `registry`, `handle`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
 
-| Property   | Required | Rule                                                | Meaning                                                                     |
-| ---------- | -------- | --------------------------------------------------- | --------------------------------------------------------------------------- |
-| `handle`   | yes      | `rir_handle`                                        | The RIR object handle, case preserved exactly as the registry publishes it. |
-| `registry` | yes      | one of `arin`, `ripe`, `apnic`, `lacnic`, `afrinic` | The RIR that issued the handle.                                             |
+| Property   | Required | Rule                                                | Meaning                                                                             |
+| ---------- | -------- | --------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `handle`   | yes      | `rir_handle`                                        | The RIR object handle, case preserved exactly as the registry publishes it.         |
+| `registry` | yes      | one of `arin`, `ripe`, `apnic`, `lacnic`, `afrinic` | The RIR that issued the handle.                                                     |
+| `name`     | no       | `printable_text_200`                                | The organization's name as the registry publishes it; free text, so never identity. |
 
 ### `parameter`
 

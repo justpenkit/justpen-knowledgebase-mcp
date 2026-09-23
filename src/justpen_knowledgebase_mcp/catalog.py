@@ -58,6 +58,7 @@ _FORMATS: dict[str, int] = {
     "http_url": 1,
     "ip": 1,
     "ip_version": 1,
+    "iso3166_alpha2": 1,
     "media_type": 1,
     "method": 1,
     "mta_sts": 1,
@@ -134,6 +135,7 @@ _SCOPE_DKIM = {"relation": "has_dkim_selector", "endpoint": "source"}
 _SCOPE_PARAMETER = {"relation": "has_parameter", "endpoint": "source"}
 _SCOPE_MTA_STS = {"relation": "has_mta_sts_policy", "endpoint": "source"}
 _SCOPE_REGISTRATION = {"relation": "has_registration", "endpoint": "source"}
+_RIRS = ["arin", "ripe", "apnic", "lacnic", "afrinic"]
 _CAA_ORDER: dict[str, object] = {
     "property": "parameters",
     "algorithm": "sha256",
@@ -155,7 +157,11 @@ _ALPN_ORDER: dict[str, object] = {
 }
 
 _NODES: dict[str, dict[str, Any]] = {
-    "asn": {"identity": _identity(["value"]), "required": {"value": "asn"}},
+    "asn": {
+        "identity": _identity(["value"]),
+        "required": {"value": "asn"},
+        "optional": {"name": "printable_text_200", "country": "iso3166_alpha2", "rir": _RIRS},
+    },
     "certificate": {
         "identity": _identity(["der_sha256"]),
         "required": {"der_sha256": "sha256"},
@@ -226,6 +232,7 @@ _NODES: dict[str, dict[str, Any]] = {
     "ip_cidr": {
         "identity": _identity(["value"]),
         "required": {"value": "cidr", "version": "ip_version"},
+        "optional": {"netname": "printable_text_200", "country": "iso3166_alpha2", "rir": _RIRS},
         "checks": ["ip_cidr_version.1"],
     },
     "mta_sts_policy": {
@@ -235,10 +242,8 @@ _NODES: dict[str, dict[str, Any]] = {
     },
     "organization": {
         "identity": _identity(["registry", "handle"]),
-        "required": {
-            "registry": ["arin", "ripe", "apnic", "lacnic", "afrinic"],
-            "handle": "rir_handle",
-        },
+        "required": {"registry": _RIRS, "handle": "rir_handle"},
+        "optional": {"name": "printable_text_200"},
     },
     "parameter": {
         "identity": _identity(["name", "location"], scope=_SCOPE_PARAMETER),
@@ -1153,6 +1158,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         ),
         "http_url": _valid_url,
         "ip": lambda text: _parse_ip(text) is not None,
+        "iso3166_alpha2": lambda text: re.fullmatch(r"[A-Z]{2}", text) is not None,
         "media_type": lambda text: _MEDIA_TYPE.fullmatch(text) is not None,
         "method": lambda text: re.fullmatch(r"[A-Z][A-Z0-9!#$%&'*+.^_`|~-]{0,31}", text) is not None,
         "mta_sts": _valid_mta_sts,

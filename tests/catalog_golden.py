@@ -88,6 +88,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ("2001:DB8::1", "2001:0db8::1", "192.168.001.1", "fe80::1%en0", "192.0.2.1/32"),
     ),
     "ip_version": ((4, 6), (5, "4", True)),
+    "iso3166_alpha2": (("US", "DE", "EU"), ("us", "USA", "U", "", "U1")),
     "media_type": (
         ("text/html", "application/vnd.api+json", "image/svg+xml"),
         ("text/html; charset=utf-8", "Text/HTML", "text", "text/", "/html", "text/html "),

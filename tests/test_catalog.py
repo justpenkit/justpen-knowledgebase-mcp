@@ -128,7 +128,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "6f83089eaaf69c87e23a3122dd344116899c229190f13c4ddecee0215754a588"
+    assert CATALOG_FINGERPRINT == "437163a565ab7908bc83ad02cc5c32c629a73d0d81bdd4f0c29f4a21f818bd2a"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -200,6 +200,9 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("ip_cidr", {"value": "2001:db8::/128", "version": 6}),
         ("asn", {"value": 0}),
         ("asn", {"value": 4294967295}),
+        ("asn", {"value": 15169, "name": "GOOGLE", "country": "US", "rir": "arin"}),
+        ("ip_cidr", {"value": "8.8.8.0/24", "version": 4, "netname": "GOGL", "country": "US", "rir": "arin"}),
+        ("organization", {"registry": "arin", "handle": "GOGL", "name": "Google LLC"}),
         ("spf_record", {"value": "v=spf1"}),
         ("spf_record", {"value": "v=spf1  include:example.com -all"}),
         ("port", {"number": 0, "transport": "tcp"}),
@@ -365,6 +368,10 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("asn", {"value": 4294967296}),
         ("asn", {"value": True}),
         ("asn", {"value": "64512"}),
+        ("asn", {"value": 15169, "country": "us"}),
+        ("asn", {"value": 15169, "rir": "RIPE"}),
+        ("ip_cidr", {"value": "8.8.8.0/24", "version": 4, "netname": ""}),
+        ("organization", {"registry": "arin", "handle": "GOGL", "name": None}),
         ("spf_record", {"value": "v=spf10"}),
         ("spf_record", {"value": " v=spf1"}),
         ("spf_record", {"value": "v=spf1\t-all"}),

@@ -89,6 +89,10 @@ DOCS: dict[str, Any] = {
         ),
         "ip": "Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.",
         "ip_version": "A strict JSON integer equal to 4 or 6.",
+        "iso3166_alpha2": (
+            "Two uppercase ASCII letters in the ISO 3166-1 alpha-2 shape, as registries publish a country: "
+            "`US`, `DE`. Shape only; membership in the ISO list is not checked."
+        ),
         "media_type": (
             "A lowercase media type essence `type/subtype` of RFC 6838 restricted names, without parameters: "
             "`text/html`, never `text/html; charset=utf-8` or `Text/HTML`."
@@ -247,7 +251,12 @@ DOCS: dict[str, Any] = {
                 "Not the organization holding it (`organization` through `operated_by`) and not the prefixes it "
                 "announces (`ip_cidr` through `announced_by`)."
             ),
-            "properties": {"value": "The AS number as an integer, without the `AS` prefix."},
+            "properties": {
+                "value": "The AS number as an integer, without the `AS` prefix.",
+                "name": "The holder's AS name as the registry or routing data publishes it; the latest write wins.",
+                "country": "The country the registry records for the AS.",
+                "rir": "The regional registry that assigned the AS.",
+            },
         },
         "certificate": {
             "summary": "One X.509 certificate, identified by the SHA-256 of its DER encoding.",
@@ -387,6 +396,9 @@ DOCS: dict[str, Any] = {
             "properties": {
                 "value": "The canonical network spelling, host bits zero.",
                 "version": "4 or 6, matching `value`.",
+                "netname": "The registry network name (RDAP `name`, WHOIS `netname`).",
+                "country": "The country the registry records for the network.",
+                "rir": "The regional registry that allocated the network.",
             },
         },
         "mta_sts_policy": {
@@ -409,6 +421,7 @@ DOCS: dict[str, Any] = {
             "properties": {
                 "registry": "The RIR that issued the handle.",
                 "handle": "The RIR object handle, case preserved exactly as the registry publishes it.",
+                "name": "The organization's name as the registry publishes it; free text, so never identity.",
             },
         },
         "parameter": {
