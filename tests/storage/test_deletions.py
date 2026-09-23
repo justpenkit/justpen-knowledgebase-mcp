@@ -148,6 +148,26 @@ async def scoped_graph(kb, relation_type):
             1,
             0,
         ),
+        "has_registration": (
+            [
+                {"type": "domain", "properties": {"value": "example.com"}},
+                {
+                    "type": "whois_registration",
+                    "properties": {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"},
+                },
+            ],
+            [
+                {
+                    "type": "has_registration",
+                    "source_ref": {"node_index": 0},
+                    "target_ref": {"node_index": 1},
+                    "properties": {},
+                }
+            ],
+            0,
+            1,
+            0,
+        ),
     }
     assert set(definitions) == set(scope_relations().values()), "a scope relation has no delete fixture"
     nodes, relations, parent_index, child_index, relation_index = definitions[relation_type]

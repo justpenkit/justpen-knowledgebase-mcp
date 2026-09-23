@@ -70,6 +70,11 @@ DOCS: dict[str, Any] = {
             "and display names are rejected. A local part is case-sensitive on the wire; this rule requires "
             "the lowercase spelling anyway, so one mailbox is one node."
         ),
+        "epp_status_list": (
+            "A non-empty array of EPP domain status codes in their camelCase spelling, from RFC 5731 and the "
+            "RFC 3915 grace periods, sorted ascending with no duplicate. Convert RDAP's spaced words: "
+            "`client transfer prohibited` is `clientTransferProhibited`, `active` is `ok`."
+        ),
         "http_fingerprint_value": (
             "Either a signed 32-bit decimal integer written in ASCII without a leading zero or a plus sign, for "
             "a MurmurHash3 favicon hash, or exactly 64 lowercase hexadecimal characters for a response digest. "
@@ -104,7 +109,16 @@ DOCS: dict[str, Any] = {
         "phone_e164": "An E.164 number: `+`, a leading digit from 1 through 9, and in total 2 to 15 digits.",
         "printable_text_1024": "A string of 1-1024 printable Unicode characters.",
         "printable_text_200": "A string of 1-200 printable Unicode characters.",
+        "public_suffix": (
+            "A lowercase ASCII zone under which names are registered, per the bundled ICANN PSL: one more "
+            "label makes a registrable domain, so `com` and `co.uk` qualify and `example.com` does not."
+        ),
         "redirect_status": "A strict JSON integer in 301, 302, 303, 307, or 308.",
+        "registry_domain_id": (
+            "An RFC 5730 repository object id in ASCII, as the registry publishes it in the RDAP `handle` or the "
+            "WHOIS `Registry Domain ID`: 1-80 letters, digits or underscores, a hyphen, and a 1-8 character "
+            "alphanumeric repository suffix, such as `2138514_DOMAIN_COM-VRSN`. Case is preserved."
+        ),
         "repo_name": (
             "A 1-100 character lowercase ASCII repository name from letters, digits, dot, underscore and "
             "hyphen, holding at least one alphanumeric character and never the reserved `.` or `..`. Hosting "
@@ -152,6 +166,10 @@ DOCS: dict[str, Any] = {
         "uint16": "A strict JSON integer from 0 through 65535.",
         "uint32": "A strict JSON integer from 0 through 4294967295.",
         "uint63": "A strict JSON integer from 0 through 9223372036854775807.",
+        "utc_timestamp": (
+            "An instant in UTC as `YYYY-MM-DDTHH:MM:SSZ` with an optional 1-6 digit fraction before the `Z`. "
+            "Offsets are rejected, so one instant has one spelling and stored values sort and compare as text."
+        ),
     },
     "checks": {
         "bucket_name_spelling.1": (
@@ -170,6 +188,10 @@ DOCS: dict[str, Any] = {
             "`value` must classify as this type against the bundled PSL: a registrable domain for `domain`, a "
             "name below one for `subdomain`."
         ),
+        "has_registration_suffix_match.1": (
+            "The registration's `registry` must be the zone of its domain: the domain's `value` without its "
+            "first label."
+        ),
         "has_subdomain_suffix.1": "The target's `value` must end in `.` plus the source's `value`.",
         "http_fingerprint_value_kind.1": (
             "`favicon_mmh3` requires the signed 32-bit integer spelling; `body_sha256` and `header_sha256` "
@@ -177,6 +199,10 @@ DOCS: dict[str, Any] = {
         ),
         "ip_address_version.1": "`version` must equal the version of the address in `value`.",
         "ip_cidr_version.1": "`version` must equal the version of the network in `value`.",
+        "registry_domain_id_assigned.1": (
+            "`registry_domain_id` is rejected when its part before the last hyphen is all zeros or a redaction "
+            "word such as `REDACTED`, `NONE`, `NA`, `UNKNOWN`, `PRIVATE`, `WITHHELD` or `NOTDISCLOSED`, in any case."
+        ),
         "registrar_iana_assigned.1": (
             "`iana_id` must be at least 1, because 0 is what an agent emits for a missing field."
         ),
@@ -271,7 +297,7 @@ DOCS: dict[str, Any] = {
             "summary": "A registrable domain name as the bundled public suffix list classifies it, such as `example.co.uk`.",
             "excludes": (
                 "Not a name below a registrable domain (`subdomain`) and not a public suffix. Registration "
-                "facts are not properties of the name."
+                "dates, status and DNSSEC state belong to a `whois_registration`, not to the name."
             ),
             "properties": {"value": "The lowercase ASCII name without a trailing dot; IDNs in punycode."},
         },
@@ -483,6 +509,31 @@ DOCS: dict[str, Any] = {
                 "value": "The fingerprint: 62 characters for JARM, 32 for JA3S.",
             },
         },
+        "whois_registration": {
+            "summary": (
+                "One registry-level registration of a registrable domain, known by the repository object id the "
+                "registry assigns (RDAP `handle`, WHOIS `Registry Domain ID`) and scoped through `has_registration`."
+            ),
+            "excludes": (
+                "Not the domain name, which outlives registrations; not the registrant, since person and company "
+                "types are out of scope; and not a WHOIS or RDAP response, which is evidence."
+            ),
+            "notes": (
+                "A drop and re-registration gets a new object id, so a new node, and the old one keeps its dates. "
+                "When the registry publishes no id, or only a redaction placeholder, write no registration: keep "
+                "the response as evidence on the domain and never invent a key."
+            ),
+            "properties": {
+                "registry": "The zone the name is registered in, such as `com` or `co.uk`: the domain without its first label.",
+                "registry_domain_id": "The registry's repository object id for this registration, exactly as published.",
+                "registration_created": "When the registration was created (RDAP `registration` event).",
+                "registration_updated": "When the registry last changed it (RDAP `last changed` event).",
+                "registration_expires": "When it expires unless renewed (RDAP `expiration` event).",
+                "epp_status": "The EPP status codes the registry reports, sorted.",
+                "dnssec_signed": "Whether the registry holds DS records for the name (RDAP `delegationSigned`).",
+                "whois_server": "The registry's port-43 WHOIS server, never the registrar's.",
+            },
+        },
         "txt_record": {
             "summary": "A generic TXT value a name publishes, when no dedicated type accepts it.",
             "excludes": (
@@ -612,6 +663,11 @@ DOCS: dict[str, Any] = {
         "has_parameter": {
             "summary": "The endpoint accepts the parameter; the scope relation of `parameter`.",
             "excludes": "Not a parameter value.",
+            "properties": {},
+        },
+        "has_registration": {
+            "summary": "The domain has this registration; the scope relation of `whois_registration`.",
+            "excludes": "Not a registrar relationship, which is `registered_through` from the registration.",
             "properties": {},
         },
         "has_service": {

@@ -61,6 +61,7 @@ NODE_TYPES = {
     "repository",
     "secret",
     "storage_bucket",
+    "whois_registration",
 }
 RELATION_TYPES = {
     "resolves_to",
@@ -107,6 +108,7 @@ RELATION_TYPES = {
     "has_mta_sts_policy",
     "owns_repository",
     "presents_host_key",
+    "has_registration",
 }
 
 
@@ -126,7 +128,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "a5e45b09dcc86018f952d2e36e04c7aa988059db5d0ba432ea352af37fe22116"
+    assert CATALOG_FINGERPRINT == "3492dda4bc7305341c569f4b3921ea6f2cd76a693615d8761e00c865ab06da74"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -722,9 +724,11 @@ def test_relation_endpoint_matrices_are_exact() -> None:
                 "identity_tenant",
                 "secret",
                 "mta_sts_policy",
+                "whois_registration",
             ],
             ["finding"],
         ),
+        "has_registration": (["domain"], ["whois_registration"]),
         "presents_certificate": (["service"], ["certificate"]),
         "presents_host_key": (["service"], ["host_key"]),
         "serves_endpoint": (["service"], ["endpoint"]),
@@ -1020,12 +1024,14 @@ def test_scope_declarations_are_derived_rather_than_mirrored_by_hand() -> None:
         "dkim_record": "has_dkim_selector",
         "parameter": "has_parameter",
         "mta_sts_policy": "has_mta_sts_policy",
+        "whois_registration": "has_registration",
     }
     order = catalog_module.scope_order()
     assert set(order) == set(catalog_module.scope_relations())
     assert order.index("port") < order.index("service") < order.index("finding")
     assert order.index("parameter") < order.index("finding")
     assert order.index("dkim_record") < order.index("finding")
+    assert order.index("whois_registration") < order.index("finding")
 
 
 def test_scope_order_refuses_a_cycle_instead_of_emitting_a_partial_order(monkeypatch: pytest.MonkeyPatch) -> None:

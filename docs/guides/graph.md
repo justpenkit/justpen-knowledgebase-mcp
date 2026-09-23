@@ -115,8 +115,8 @@ the parameter, the finding and all three relations together.
 Delete a scoped child with `cascade: true` before deleting its scope relation or
 parent node. The cascade removes the child's incident scope relation. The server
 rejects deletion of that relation or parent while the child exists, preventing
-orphan ports, services, findings, DKIM records, parameters, and MTA-STS
-policies. A chain deletes innermost first: an endpoint with a parameter that
+orphan ports, services, findings, DKIM records, parameters, MTA-STS policies,
+and domain registrations. A chain deletes innermost first: an endpoint with a parameter that
 carries a finding takes three deletes, finding, parameter, endpoint, and the two
 outer ones are refused until the level below them is gone.
 

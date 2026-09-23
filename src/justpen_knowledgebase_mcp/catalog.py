@@ -8,6 +8,7 @@ import ipaddress
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from itertools import pairwise
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
@@ -51,6 +52,7 @@ _FORMATS: dict[str, int] = {
     "dns_name": 1,
     "dns_or_explicit_empty": 1,
     "email_address": 1,
+    "epp_status_list": 1,
     "http_fingerprint_value": 1,
     "http_status": 1,
     "http_url": 1,
@@ -64,7 +66,9 @@ _FORMATS: dict[str, int] = {
     "phone_e164": 1,
     "printable_text_1024": 1,
     "printable_text_200": 1,
+    "public_suffix": 1,
     "redirect_status": 1,
+    "registry_domain_id": 1,
     "repo_name": 1,
     "repo_owner": 1,
     "rir_handle": 1,
@@ -82,6 +86,7 @@ _FORMATS: dict[str, int] = {
     "uint16": 1,
     "uint32": 1,
     "uint63": 1,
+    "utc_timestamp": 1,
 }
 
 
@@ -128,6 +133,7 @@ _SCOPE_FINDING = {"relation": "has_finding", "endpoint": "source"}
 _SCOPE_DKIM = {"relation": "has_dkim_selector", "endpoint": "source"}
 _SCOPE_PARAMETER = {"relation": "has_parameter", "endpoint": "source"}
 _SCOPE_MTA_STS = {"relation": "has_mta_sts_policy", "endpoint": "source"}
+_SCOPE_REGISTRATION = {"relation": "has_registration", "endpoint": "source"}
 _CAA_ORDER: dict[str, object] = {
     "property": "parameters",
     "algorithm": "sha256",
@@ -296,6 +302,19 @@ _NODES: dict[str, dict[str, Any]] = {
         "required": {"kind": ["jarm", "ja3s"], "value": "tls_fingerprint_value"},
         "checks": ["tls_fingerprint_length.1"],
     },
+    "whois_registration": {
+        "identity": _identity(["registry", "registry_domain_id"], scope=_SCOPE_REGISTRATION),
+        "required": {"registry": "public_suffix", "registry_domain_id": "registry_domain_id"},
+        "optional": {
+            "registration_created": "utc_timestamp",
+            "registration_updated": "utc_timestamp",
+            "registration_expires": "utc_timestamp",
+            "epp_status": "epp_status_list",
+            "dnssec_signed": "boolean",
+            "whois_server": "dns_name",
+        },
+        "checks": ["registry_domain_id_assigned.1"],
+    },
     "txt_record": {
         "identity": _identity(["value"]),
         "required": {"value": "txt_value"},
@@ -366,6 +385,7 @@ _RELATIONS = {
             "identity_tenant",
             "secret",
             "mta_sts_policy",
+            "whois_registration",
         ],
         ["finding"],
     ),
@@ -381,6 +401,7 @@ _RELATIONS = {
     "has_nameserver": _relation(_D, _D, self_edge=True),
     "has_open_port": _relation(["ip_address"], ["port"]),
     "has_parameter": _relation(["endpoint"], ["parameter"]),
+    "has_registration": _relation(["domain"], ["whois_registration"], checks=["has_registration_suffix_match.1"]),
     "has_service": _relation(["port"], ["service"]),
     "has_soa_primary": _relation(_D, _D, self_edge=True),
     "has_spf": _relation(_D, ["spf_record"]),
@@ -682,6 +703,12 @@ def _endpoint_subdomain_suffix(_relation: Mapping[str, Any], source: EndpointVie
         raise ExpectedValidationError(_ENDPOINT_FAILED)
 
 
+def _endpoint_registration_suffix(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    suffix = cast("str", source.properties["value"]).partition(".")[2]
+    if target.properties["registry"] != suffix:
+        raise ExpectedValidationError(_ENDPOINT_FAILED)
+
+
 def _endpoint_contains_ip(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
     network = _parse_cidr(cast("str", source.properties["value"]))
     address = _parse_ip(cast("str", target.properties["value"]))
@@ -716,6 +743,16 @@ def _proper_subnet(
     return isinstance(target, ipaddress.IPv6Network) and target != source and target.subnet_of(source)
 
 
+# The repository-object part of a ROID that means "not published" rather than naming an object.
+_PLACEHOLDER_ROID_PARTS = frozenset({"redacted", "none", "na", "unknown", "private", "withheld", "notdisclosed"})
+
+
+def _cross_field_whois_registration(_type_name: str, properties: dict[str, Any]) -> None:
+    local = cast("str", properties["registry_domain_id"]).rpartition("-")[0]
+    if local.strip("0") == "" or local.casefold() in _PLACEHOLDER_ROID_PARTS:
+        raise ExpectedValidationError("/properties/registry_domain_id: a placeholder is not a registry object id")
+
+
 def _cross_field_technology(_type_name: str, properties: dict[str, Any]) -> None:
     cpe = properties.get("cpe")
     if type(cpe) is str and _cpe_version(cpe) not in ("*", "-"):
@@ -733,6 +770,7 @@ _CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
     "ip_address_version.1": _cross_field_ip_address,
     "ip_cidr_version.1": _cross_field_ip_cidr,
     "registrar_iana_assigned.1": _cross_field_registrar,
+    "registry_domain_id_assigned.1": _cross_field_whois_registration,
     "repository_owner_spelling.1": _cross_field_repository,
     "secret_plaintext_keys.1": _cross_field_secret,
     "service_secure_flag.1": _cross_field_service,
@@ -746,6 +784,7 @@ _CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
 _ENDPOINT_CHECKS: dict[str, Callable[[Mapping[str, Any], EndpointView, EndpointView], None]] = {
     "contains_cidr_proper_subnet.1": _endpoint_contains_cidr,
     "contains_ip_member.1": _endpoint_contains_ip,
+    "has_registration_suffix_match.1": _endpoint_registration_suffix,
     "has_subdomain_suffix.1": _endpoint_subdomain_suffix,
 }
 
@@ -1070,6 +1109,8 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         return type(value) is bool
     if rule == "mx_pattern_list":
         return _valid_sorted_set(value, _valid_mx_pattern)
+    if rule == "epp_status_list":
+        return value != [] and _valid_sorted_set(value, _EPP_STATUSES.__contains__)
     if rule == "alpn_tokens":
         return _valid_alpn_tokens(value)
     if rule == "caa_parameters":
@@ -1101,6 +1142,8 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "phone_e164": lambda text: re.fullmatch(r"\+[1-9][0-9]{1,14}", text) is not None,
         "printable_text_200": lambda text: 1 <= len(text) <= 200 and text.isprintable(),
         "printable_text_1024": lambda text: 1 <= len(text) <= 1024 and text.isprintable(),
+        "public_suffix": _valid_public_suffix,
+        "registry_domain_id": lambda text: _ROID.fullmatch(text) is not None,
         "repo_name": _valid_repo_name,
         "repo_owner": _valid_repo_owner,
         "rir_handle": lambda text: re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]", text) is not None,
@@ -1116,6 +1159,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
             5 <= len(text) <= 128 and re.fullmatch(r"TLS_[A-Z0-9]+(?:_[A-Z0-9]+)*", text) is not None
         ),
         "txt_value": lambda text: 1 <= len(text) <= 4096 and all(0x20 <= ord(char) <= 0x7E for char in text),
+        "utc_timestamp": _valid_utc_timestamp,
     }
     validator = validators.get(rule)
     return validator is not None and validator(value)
@@ -1141,6 +1185,58 @@ def _valid_mx_pattern(value: str) -> bool:
     """An RFC 8461 `mx` pattern: a host name, or `*.` followed by one, matched a label at a time."""
     name = value.removeprefix("*.")
     return _dns_kind(name) is not None
+
+
+# RFC 5731 domain statuses and the RFC 3915 grace-period statuses, in their EPP camelCase spelling.
+_EPP_STATUSES = frozenset(
+    {
+        "addPeriod",
+        "autoRenewPeriod",
+        "clientDeleteProhibited",
+        "clientHold",
+        "clientRenewProhibited",
+        "clientTransferProhibited",
+        "clientUpdateProhibited",
+        "inactive",
+        "ok",
+        "pendingCreate",
+        "pendingDelete",
+        "pendingRenew",
+        "pendingRestore",
+        "pendingTransfer",
+        "pendingUpdate",
+        "redemptionPeriod",
+        "renewPeriod",
+        "serverDeleteProhibited",
+        "serverHold",
+        "serverRenewProhibited",
+        "serverTransferProhibited",
+        "serverUpdateProhibited",
+        "transferPeriod",
+    }
+)
+# RFC 5730 repository object id, ASCII only: `2138514_DOMAIN_COM-VRSN`, `DOM000000113746-FRNIC`.
+_ROID = re.compile(r"[A-Za-z0-9_]{1,80}-[A-Za-z0-9]{1,8}")
+_UTC_TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z")
+
+
+def _valid_public_suffix(value: str) -> bool:
+    """A zone names are registered under: one more label makes a registrable domain."""
+    labels = value.split(".")
+    if not value.isascii() or not all(_valid_normal_dns_label(label) for label in labels):
+        return False
+    return _dns_kind(f"a.{value}") == "domain"
+
+
+def _valid_utc_timestamp(value: str) -> bool:
+    """One spelling per instant: UTC with `Z`, no offset, and a date and time that exist."""
+    if _UTC_TIMESTAMP.fullmatch(value) is None:
+        return False
+    try:
+        datetime.strptime(value[:19] + "+0000", "%Y-%m-%dT%H:%M:%S%z")
+    except ValueError:
+        return False
+    return True
 
 
 def _valid_dkim_selector(value: str) -> bool:
@@ -1356,7 +1452,7 @@ def _schema_for_rule(rule: str | list[str]) -> dict[str, Any]:
         return integer_rules[rule]
     if rule == "boolean":
         return {"type": "boolean", "format": rule}
-    if rule == "mx_pattern_list":
+    if rule in ("mx_pattern_list", "epp_status_list"):
         return {"type": "array", "items": {"type": "string"}, "uniqueItems": True, "format": rule}
     if rule == "alpn_tokens":
         return {"type": "array", "items": {"type": "string"}, "format": rule}

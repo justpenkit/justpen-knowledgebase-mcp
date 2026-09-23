@@ -31,14 +31,14 @@ telemetry only; it never partitions graph data.
     records, technologies, TLS cipher suites and fingerprints, HTTP fingerprints,
     SSH host keys, registrars, organizations, weaknesses, ports and services,
     findings, parameters, certificates, endpoints, CVEs, storage buckets,
-    identity tenants, repositories, exposed secrets, MTA-STS policies, and
-    email and phone contacts.
+    identity tenants, repositories, exposed secrets, MTA-STS policies, domain
+    registrations, and email and phone contacts.
 - Unscoped identity maps a natural identity to one node per workspace. Port,
-    service, finding, DKIM record, parameter, and MTA-STS policy identity also
-    includes the UUID of its single parent.
+    service, finding, DKIM record, parameter, MTA-STS policy, and domain
+    registration identity also includes the UUID of its single parent.
 - New scoped children and their `has_open_port`, `has_service`, `has_finding`,
-    `has_dkim_selector`, `has_parameter`, or `has_mta_sts_policy` relation commit
-    atomically and cannot be re-parented.
+    `has_dkim_selector`, `has_parameter`, `has_mta_sts_policy`, or
+    `has_registration` relation commit atomically and cannot be re-parented.
 - Evidence IDs are `e_` plus the lowercase SHA-256 of the exact stored bytes.
 - Writes and delete admission are atomic. Large native I/O continues as durable
     jobs with explicit pending, failure, retry, and retention state.

@@ -53,6 +53,22 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ("abuse@example.com", "first.last+tag@mail.example.co.uk"),
         ("Abuse@example.com", "abuse@localhost", "a@b@example.com", ".abuse@example.com", "abuse name@example.com"),
     ),
+    "epp_status_list": (
+        (
+            ["ok"],
+            ["clientDeleteProhibited", "clientTransferProhibited", "serverUpdateProhibited"],
+            ["redemptionPeriod"],
+        ),
+        (
+            [],
+            ["clientTransferProhibited", "clientDeleteProhibited"],
+            ["ok", "ok"],
+            ["client transfer prohibited"],
+            ["active"],
+            ["serverRecoverProhibited"],
+            "ok",
+        ),
+    ),
     "http_fingerprint_value": (("-1752256170", "0", "a" * 64), ("+1", "A" * 64, "01", "-0", "2147483648")),
     "http_status": ((100, 200, 599), (99, 600, "200", True, 200.0)),
     "http_url": (
@@ -94,7 +110,15 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     "phone_e164": (("+14155552671", "+12"), ("14155552671", "+0155552671", "+1", "+" + "9" * 16, "+1 415 555")),
     "printable_text_1024": (("x", "x" * 1024), ("", "x" * 1025, "line\nbreak", 1)),
     "printable_text_200": (("x", "x" * 200), ("", "x" * 201, "a\tb")),
+    "public_suffix": (
+        ("com", "co.uk", "internal", "xn--p1ai"),
+        ("example.com", "Com", "com.", "", "ck", "c_m", "xn--a"),
+    ),
     "redirect_status": ((301, 302, 303, 307, 308), (300, 304, "301", True)),
+    "registry_domain_id": (
+        ("2138514_DOMAIN_COM-VRSN", "DOM000000113746-FRNIC", "D1234567-TLD", "REDACTED-REDACTED"),
+        ("google.com.br", "REDACTED FOR PRIVACY", "N/A", "D1234567", "-VRSN", "D1-TOOLONGSUF", "D\u00e9-X"),
+    ),
     "repo_name": (("web-app", ".github", "n" * 100), ("..", ".", "Web", "n" * 101)),
     "repo_owner": (("example-org", "group/sub"), ("Example", "-x", "g" * 101, "")),
     "rir_handle": (("ORG-GOGL-1-ARIN", "ORG-nG51-RIPE", "A1"), ("A", "ORG-", "ORG_1", "-ORG-1", "X" * 65)),
@@ -115,6 +139,19 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     "uint16": ((0, 65535), (-1, 65536, True, "1")),
     "uint32": ((0, 86400, 4294967295), (-1, 4294967296, True, "86400")),
     "uint63": ((0, 2**63 - 1), (-1, 2**63, True, 1.5)),
+    "utc_timestamp": (
+        ("1995-08-14T04:00:00Z", "2026-09-23T01:31:57.079Z", "2024-02-29T23:59:59.123456Z"),
+        (
+            "1995-08-14T04:00:00+00:00",
+            "1995-08-14 04:00:00Z",
+            "1995-08-14T04:00:00",
+            "2025-02-29T00:00:00Z",
+            "2026-13-01T00:00:00Z",
+            "2026-01-01T24:00:00Z",
+            "2026-01-01T00:00:00.1234567Z",
+            "1995-08-14t04:00:00z",
+        ),
+    ),
 }
 
 # Check id -> (records the whole validation accepts, records the check itself rejects). Every
@@ -164,6 +201,18 @@ CHECKS: dict[str, tuple[tuple[Record, ...], tuple[Record, ...]]] = {
     "registrar_iana_assigned.1": (
         (("registrar", {"iana_id": 292, "name": "MarkMonitor Inc."}),),
         (("registrar", {"iana_id": 0, "name": "unset"}),),
+    ),
+    "registry_domain_id_assigned.1": (
+        (
+            ("whois_registration", {"registry": "com", "registry_domain_id": "2138514_DOMAIN_COM-VRSN"}),
+            ("whois_registration", {"registry": "fr", "registry_domain_id": "DOM000000113746-FRNIC"}),
+        ),
+        (
+            ("whois_registration", {"registry": "com", "registry_domain_id": "REDACTED-REDACTED"}),
+            ("whois_registration", {"registry": "com", "registry_domain_id": "0-XX"}),
+            ("whois_registration", {"registry": "com", "registry_domain_id": "0000000-VRSN"}),
+            ("whois_registration", {"registry": "io", "registry_domain_id": "NotDisclosed-IO"}),
+        ),
     ),
     "repository_owner_spelling.1": (
         (
@@ -249,6 +298,32 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
                 {},
                 ("ip_cidr", {"value": "192.0.2.0/24", "version": 4}),
                 ("ip_address", {"value": "2001:db8::1", "version": 6}),
+            ),
+        ),
+    ),
+    "has_registration_suffix_match.1": (
+        (
+            (
+                {},
+                ("domain", {"value": "example.com"}),
+                ("whois_registration", {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}),
+            ),
+            (
+                {},
+                ("domain", {"value": "example.co.uk"}),
+                ("whois_registration", {"registry": "co.uk", "registry_domain_id": "EXAMPLE1-UK"}),
+            ),
+        ),
+        (
+            (
+                {},
+                ("domain", {"value": "example.co.uk"}),
+                ("whois_registration", {"registry": "uk", "registry_domain_id": "EXAMPLE1-UK"}),
+            ),
+            (
+                {},
+                ("domain", {"value": "example.com"}),
+                ("whois_registration", {"registry": "net", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}),
             ),
         ),
     ),

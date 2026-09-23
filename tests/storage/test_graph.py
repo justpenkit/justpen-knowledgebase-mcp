@@ -494,7 +494,7 @@ async def test_unlimited_lifetime_links_and_owner_bound_pagination(tmp_path):
         rest = await kb.types(TypesRequest(kind="nodes", cursor=types["next_cursor"]))
         assert rest["next_cursor"] is None
         counts = {item["type"]: item["count"] for item in [*types["types"], *rest["types"]]}
-        assert len(counts) == 31
+        assert len(counts) == len(catalog_module.catalog_manifest()["nodes"])
         assert counts["ip_address"] == 1
         assert counts["endpoint"] == 0
 
@@ -864,6 +864,75 @@ async def test_endpoint_value_errors_come_after_the_type_and_property_gates(tmp_
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         with pytest.raises(InvalidParamsError, match=message):
             await kb.write(write(request))
+
+
+async def test_a_registration_is_scoped_to_one_domain_and_keyed_by_its_registry_id(tmp_path):
+    """BC-1: a registration needs its `has_registration` edge in the same write, cannot move to a
+    second domain, and a re-registration under a new registry id is a second node."""
+    registration = {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}
+    domain = {"type": "domain", "properties": {"value": "example.com"}}
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        with pytest.raises(InvalidParamsError, match="exactly one has_registration"):
+            await kb.write(write({"nodes": [domain, {"type": "whois_registration", "properties": registration}]}))
+
+        edge = {"type": "has_registration", "source_ref": {"node_index": 0}, "target_ref": {"node_index": 1}}
+        created = await kb.write(
+            write(
+                {
+                    "nodes": [domain, {"type": "whois_registration", "properties": registration}],
+                    "relations": [{**edge, "properties": {}}],
+                }
+            )
+        )
+        other = await kb.write(write({"nodes": [{"type": "domain", "properties": {"value": "example.net"}}]}))
+        with pytest.raises(InvalidParamsError, match="different parent"):
+            await kb.write(
+                write(
+                    {
+                        "relations": [
+                            {
+                                "type": "has_registration",
+                                "source_ref": {"id": other["nodes"][0]["id"]},
+                                "target_ref": {"id": created["nodes"][1]["id"]},
+                                "properties": {},
+                            }
+                        ]
+                    }
+                )
+            )
+        with pytest.raises(InvalidParamsError, match="relation endpoint constraint failed"):
+            await kb.write(
+                write(
+                    {
+                        "nodes": [
+                            {"type": "domain", "properties": {"value": "example.org"}},
+                            {"type": "whois_registration", "properties": registration},
+                        ],
+                        "relations": [{**edge, "properties": {}}],
+                    }
+                )
+            )
+        renewed = {**registration, "registration_expires": "2027-08-13T04:00:00Z"}
+        again = await kb.write(
+            write(
+                {
+                    "nodes": [domain, {"type": "whois_registration", "properties": renewed}],
+                    "relations": [{**edge, "properties": {}}],
+                }
+            )
+        )
+        dropped = {"registry": "com", "registry_domain_id": "9999999_DOMAIN_COM-VRSN"}
+        reregistered = await kb.write(
+            write(
+                {
+                    "nodes": [domain, {"type": "whois_registration", "properties": dropped}],
+                    "relations": [{**edge, "properties": {}}],
+                }
+            )
+        )
+
+        assert again["nodes"][1]["id"] == created["nodes"][1]["id"]
+        assert reregistered["nodes"][1]["id"] != created["nodes"][1]["id"]
 
 
 async def test_cname_cycles_and_self_edges_are_preserved(tmp_path):

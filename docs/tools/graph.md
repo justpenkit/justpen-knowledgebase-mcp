@@ -45,7 +45,8 @@ returns that declaration, including the format rule behind every required
 property and the id of every check and canonicalization a type runs, so an
 agent can read the contract instead of guessing it. A few relations also check
 endpoint **values**: `has_subdomain` requires the target to end in the source,
-`contains_ip` and `contains_cidr` require real containment. A type may also
+`contains_ip` and `contains_cidr` require real containment, and
+`has_registration` requires the registration's zone to be its domain's. A type may also
 declare `optional` properties: each is validated whenever it is present, and it
 may be absent but never null. Properties outside both maps are accepted as
 submitted and are not validated.
@@ -54,8 +55,9 @@ submitted and are not validated.
 identity fields, or relation endpoints, which are immutable. It also reports an
 identity hash collision or inconsistent stored scope, including multiple or
 incomplete parent relations. Re-parenting a scoped child is invalid. Creating a
-new `port`, `service`, `finding`, `dkim_record`, `mta_sts_policy`, or
-`parameter` without exactly one same-request scope relation is also invalid.
+new `port`, `service`, `finding`, `dkim_record`, `mta_sts_policy`, `parameter`,
+or `whois_registration` without exactly one same-request scope relation is also
+invalid.
 
 `service.properties.name` must be a member of the bundled, versioned
 Nmap-derived service-name registry; the server does not normalize an arbitrary
@@ -75,7 +77,7 @@ removes one child and merges a different child. Known catalog and mutation
 errors identify the field and rule without returning submitted values.
 
 Deleting `has_open_port`, `has_service`, `has_finding`, `has_dkim_selector`,
-`has_mta_sts_policy`, or `has_parameter`, or deleting its parent node, returns
+`has_mta_sts_policy`, `has_parameter`, or `has_registration`, or deleting its parent node, returns
 `CONFLICT` while the scoped child still exists. Delete the child first with `cascade: true`; the
 cascade removes its incident scope relation.
 
@@ -214,11 +216,23 @@ no title for it.
 registrable-domain fact and a subdomain has no registrar. A `registrar` is keyed
 on its IANA id, which survives the renames and acquisitions that make the name
 unstable; `0` is rejected because it is what an agent emits for a missing field.
-Registration dates and EPP status describe the registration rather than the
-registrar, so they belong on the `domain` node as attributes, where a renewal
-patches them in place instead of stranding them on an edge after a transfer.
 Many ccTLD responses carry no IANA id at all, and those domains simply get no
 registrar node.
+
+Registration dates, EPP status and DNSSEC state describe one registration of the
+name, not the name itself, so they live on a `whois_registration` node reached
+from the `domain` through `has_registration`. The node is keyed on the zone the
+name is registered in (`registry`, the domain without its first label) and the
+repository object id the registry assigns, published as the RDAP `handle` or the
+WHOIS `Registry Domain ID`. A renewal keeps the id, so it patches the node in
+place; a drop and re-registration gets a new id and therefore a new node, and the
+earlier registration keeps its own dates. Many ccTLD registries publish no id,
+redact it (RFC 9537 lists it in `redacted`), or publish a placeholder such as
+`REDACTED`. Write no `whois_registration` then: keep the response as evidence
+linked to the `domain`, and never invent a key from the name or a redaction
+string, which `registry_domain_id_assigned.1` refuses. `whois_server` is the
+registry's WHOIS server; the `Registrar WHOIS Server` line of a WHOIS response
+describes the registrar and stays in evidence.
 
 `technology` and `tls_cipher_suite` are workspace-global shared-vocabulary
 nodes referenced by every host that matches. Neither is a `has_finding` source:
