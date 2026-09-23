@@ -23,6 +23,10 @@ The same contract is tabulated on
 type with its identity, parent scope, required properties and allowed endpoints,
 plus the format rules, the checks, the canonicalizations and a node-to-relation matrix. Read
 this page for the conventions and the reasoning; read that one to look a type up.
+[ASM and OSINT coverage](../reference/asm-coverage.md) shows, field by field, which
+property each supported tool's output belongs in, and
+[Catalog v3 design review](../reference/catalog-review.md) records why each type
+is shaped as it is.
 
 ## `kb_write`
 

@@ -830,7 +830,7 @@ The secret is a credential for the principal: a mailbox, account, tenant, reposi
 
 **Not modeled:** Not a person. Never the secret itself: plaintext-bearing keys are refused, and the secret node holds only its digest.
 
-Identity is (`username`, `breach`), so one pair exposed in two breaches is two edges. The breach token joins spellings within one corpus only; across corpora the same breach stays two tokens. Send `""` for a value the source does not give, never a guess.
+Identity is (`username`, `breach`), so one pair exposed in two breaches is two edges. The breach token joins spellings within one corpus only; across corpora the same breach stays two tokens. Send `""` for a value the source does not give, never a guess. Link evidence only after replacing every secret-bearing field with `[REDACTED]`.
 
 **Identity:** `username`, `breach`<br>**Sources:** `secret`<br>**Targets:** `email_address`, `cloud_account`, `identity_tenant`, `repository`, `service`, `endpoint`, `storage_bucket`, `cloud_resource`<br>**Self edge:** no<br>**Checks:** `secret_plaintext_keys.1`<br>**Canonicalizations:** —
 

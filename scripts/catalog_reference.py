@@ -10,6 +10,8 @@ misleading an agent.
 
 from __future__ import annotations
 
+import importlib.util
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -292,11 +294,185 @@ def render() -> str:
     return "\n".join(sections)
 
 
+ROOT = Path(__file__).resolve().parent.parent
+COVERAGE_PAGE = Path("docs/reference/asm-coverage.md")
+FIXTURES = Path("tests/fixtures/asm")
+
+# Loaded by path, as the tests load this module: `scripts` is not an installed package.
+_TRANSFORMS_SPEC = importlib.util.spec_from_file_location("asm_transforms", ROOT / "scripts" / "asm_transforms.py")
+if _TRANSFORMS_SPEC is None or _TRANSFORMS_SPEC.loader is None:
+    raise RuntimeError("scripts/asm_transforms.py cannot be loaded")
+asm_transforms = importlib.util.module_from_spec(_TRANSFORMS_SPEC)
+_TRANSFORMS_SPEC.loader.exec_module(asm_transforms)
+
+# Where a finding hangs and what separates two results of one rule, per source (plan §2(g)).
+FINDING_PARENTS = [
+    ("nuclei `http`, `headless`", "`endpoint` of `matched-at`, query removed", "`matcher-name`, else `extractor-name`"),
+    ("nuclei `dns`", "the `domain` or `subdomain` of `host`", "`matcher-name`, else `extractor-name`"),
+    ("nuclei `tcp` (network), `javascript`", "`port` of `ip`:`port`", "`matcher-name`, else `extractor-name`"),
+    ("nuclei `ssl`", "`port` of `ip`:`port`", "`<host>:<matcher-name>` for a named host, so virtual hosts stay apart"),
+    ("nuclei DAST result", "`parameter` named by `fuzzing_parameter` under the endpoint", "`matcher-name`"),
+    ("nuclei `whois`", "`domain` of `host`", "`matcher-name`"),
+    (
+        "BBOT FINDING with a URL",
+        "`endpoint` of the URL, query removed",
+        "the wrapped tool's sub-id, else `digest16(description)`",
+    ),
+    ("BBOT FINDING without a URL", "the `domain`, `subdomain` or `ip_address` of `host`", "as above"),
+    ("BBOT trufflehog FINDING", "as above", "the first 16 hex characters of the secret's `value_sha256`"),
+    ("Manual finding", "the node the analyst names", "chosen by the analyst, empty when the rule has one result"),
+]
+
+
+def _sink_text(sink: object) -> str:
+    if isinstance(sink, str):
+        return sink.replace("_", " ")
+    item = cast("dict[str, str]", sink)
+    if "node" in item:
+        return f"`{item['node']}.{item['property']}`"
+    if "relation" in item:
+        return f"`{item['relation']}.{item['property']}` (edge)"
+    return f"`{item['meta']}` (write metadata)"
+
+
+def _row_note(row: dict[str, Any]) -> str:
+    notes: list[str] = []
+    if row.get("redact"):
+        notes.append("redacted before ingest")
+    if row.get("each"):
+        notes.append("each member")
+    if row.get("when"):
+        notes.append(f"only when `{row['when']}`")
+    if row.get("documented_only"):
+        notes.append("documented, absent from the fixture")
+    if row.get("reason"):
+        notes.append(str(row["reason"]))
+    return "; ".join(notes) or EMPTY
+
+
+def _source_lines(name: str) -> list[str]:
+    text = (ROOT / FIXTURES / name / "SOURCE.md").read_text(encoding="utf-8")
+    return [line for line in text.splitlines() if line.startswith(("- **Command:**", "- **Version:**"))]
+
+
+def _source_section(name: str) -> list[str]:
+    mapping = json.loads((ROOT / FIXTURES / name / "mapping.json").read_text(encoding="utf-8"))
+    rows = [
+        [f"`{row['path']}`", _sink_text(row["sink"]), _code(row.get("transform", [])), _row_note(row)]
+        for row in mapping["rows"]
+    ]
+    lines = [f"### `{name}`", "", *_source_lines(name), f"- **Files:** {_code(sorted(mapping['files']))}", ""]
+    lines.extend([_table(["Field", "Sink", "Transforms", "Notes"], rows), ""])
+    derived = mapping.get("derived", [])
+    if derived:
+        lines.extend(["Constants a write carries that no field holds:", ""])
+        lines.extend(
+            [
+                _table(
+                    ["Sink", "Values", "Reason"],
+                    [
+                        [
+                            _sink_text(item["sink"]),
+                            ", ".join(f"`{json.dumps(value)}`" for value in item["values"]),
+                            item["reason"],
+                        ]
+                        for item in derived
+                    ],
+                ),
+                "",
+            ]
+        )
+    return lines
+
+
+def _doc_line(function: object) -> str:
+    return (getattr(function, "__doc__", None) or "").strip().splitlines()[0]
+
+
+def render_coverage() -> str:
+    """Return the ASM and OSINT coverage page, generated from the coverage fixtures."""
+    sources = sorted(path.name for path in (ROOT / FIXTURES).iterdir() if (path / "mapping.json").is_file())
+    secret_rows = [
+        [f"`{source}`", _code(sorted(fields))] for source, fields in sorted(asm_transforms.SECRET_FIELDS.items())
+    ]
+    derivations = [
+        [f"`{source}`", f"`{path}`", _code(chain), f"`{sink.split('.', 1)[1]}`"]
+        for source, path, chain, sink in sorted(asm_transforms.REDACTED_DERIVATIONS)
+    ]
+    sections = [
+        "# ASM and OSINT coverage",
+        "",
+        "Every table below is generated from the coverage fixtures under `tests/fixtures/asm/`, one per"
+        " source. Each fixture holds output derived from the tool's documented schema, a mapping that sends"
+        " every emitted field to a catalog property, to evidence or to `non storable` with a reason, and"
+        " the `kb_write` batches an agent sends for that output. The test suite holds the three to each other"
+        " in both directions: an unmapped field, a mapped value that no write carries and a written value no"
+        " field explains all fail. Regenerate the page with `make docs-catalog`.",
+        "",
+        "A mapping is a recipe for agents, not an ingestion adapter: the server accepts whatever passes the"
+        " [catalog](catalog.md), and these tables show which property each field belongs in.",
+        "",
+        "## Secrets and redaction",
+        "",
+        "Scanner-reported secret fields are replaced with `[REDACTED]` before the output is ingested as"
+        " evidence. The secret's digest is computed first, from the unredacted value, and is the only form"
+        " the graph keeps. These fields are redacted per source:",
+        "",
+        _table(["Source", "Redacted fields"], secret_rows),
+        "",
+        "Only these derivations may carry a value out of a redacted field, and each strips the secret:",
+        "",
+        _table(["Source", "Field", "Transforms", "Sink"], derivations),
+        "",
+        "Three residuals are accepted and stated rather than hidden. A secret carried in a URL path, such"
+        " as a webhook token, stays in `endpoint.url`, because only the query is removed. Raw HTTP bodies"
+        " and headers are evidence and are full-text indexed. A password digest is an unsalted SHA-256 of a"
+        " guessable value, reversible by dictionary.",
+        "",
+        "## Finding identity per source",
+        "",
+        "A `finding` is keyed on `rule` and `matcher` under its parent, so the parent and the discriminator"
+        " are fixed per source:",
+        "",
+        _table(["Result", "Parent", "Matcher"], FINDING_PARENTS),
+        "",
+        "## Sources",
+        "",
+    ]
+    for name in sources:
+        sections.extend(_source_section(name))
+    sections.extend(
+        [
+            "## Transforms",
+            "",
+            "The closed set a mapping may apply, left to right, from `scripts/asm_transforms.py`:",
+            "",
+            _table(
+                ["Transform", "What it does"],
+                [[f"`{name}`", _doc_line(function)] for name, function in sorted(asm_transforms.TRANSFORMS.items())],
+            ),
+            "",
+            "## Conditions",
+            "",
+            "A row with a condition writes its value only when the record meets it, and otherwise leaves the value"
+            " in evidence:",
+            "",
+            _table(
+                ["Condition", "Meaning"],
+                [[f"`{name}`", _doc_line(function)] for name, function in sorted(asm_transforms.CONDITIONS.items())],
+            ),
+            "",
+        ]
+    )
+    return "\n".join(sections)
+
+
 def main() -> None:
-    """Write the reference page beside the rest of the documentation."""
-    target = Path(__file__).resolve().parent.parent / PAGE
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(render(), encoding="utf-8")
+    """Write the reference pages beside the rest of the documentation."""
+    for page, content in ((PAGE, render()), (COVERAGE_PAGE, render_coverage())):
+        target = ROOT / page
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
 
 
 if __name__ == "__main__":

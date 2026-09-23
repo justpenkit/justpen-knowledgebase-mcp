@@ -95,8 +95,23 @@ def _formatted(markdown: str) -> str:
 
 
 def test_the_committed_page_is_what_the_generator_produces(page: str) -> None:
-    """Byte for byte after formatting (AC-3). Regenerate with `make docs-catalog`."""
+    """Byte for byte after formatting. Regenerate with `make docs-catalog`."""
     assert page == _formatted(render())
+
+
+def test_the_committed_coverage_page_is_what_the_generator_produces() -> None:
+    """The coverage page is generated from the fixtures, so a changed mapping fails until regenerated."""
+    committed = (ROOT / catalog_reference.COVERAGE_PAGE).read_text(encoding="utf-8")
+    assert committed == _formatted(catalog_reference.render_coverage())
+
+
+def test_the_coverage_page_lists_every_source_and_transform() -> None:
+    page = (ROOT / catalog_reference.COVERAGE_PAGE).read_text(encoding="utf-8")
+    sources = sorted(path.name for path in (ROOT / catalog_reference.FIXTURES).iterdir() if path.is_dir())
+    for name in sources:
+        assert f"### `{name}`" in page, name
+    for name in catalog_reference.asm_transforms.TRANSFORMS:
+        assert f"`{name}`" in page, name
 
 
 def test_every_node_type_is_listed_with_its_identity_scope_and_required_map(page: str) -> None:
@@ -157,7 +172,7 @@ def _type_sections(page: str, heading: str) -> dict[str, str]:
 
 @pytest.mark.parametrize(("kind", "heading"), [("nodes", "Node type details"), ("relations", "Relation type details")])
 def test_every_type_section_shows_props_identity_and_checks(page: str, kind: str, heading: str) -> None:
-    """AC-2: each type's section states what it models and excludes, its identity and scope, the
+    """Each type's section states what it models and excludes, its identity and scope, the
     checks and canonicalizations that run on it, and every property with its rule and meaning."""
     definitions = catalog_manifest()[kind]
     sections = _type_sections(page, heading)
@@ -231,3 +246,29 @@ def test_the_parent_scope_prose_enumerates_exactly_the_scoped_types(graph_page: 
 def test_the_page_lists_the_registry_digests_the_fingerprint_binds(page: str) -> None:
     rows = {row[0].strip("`"): row[1].strip("`") for row in _rows(page, "Bundled registries")}
     assert rows == catalog_manifest()["registries"]
+
+
+REVIEW_PAGE = "docs/reference/catalog-review.md"
+V3_NODES = {"whois_registration", "cloud_account", "cloud_resource"}
+V3_RELATIONS = {"has_registration", "hosted_on", "in_account", "authenticates", "links_to"}
+
+
+def test_the_review_ledger_covers_every_type_and_defect() -> None:
+    """Every type has a verdict, exactly the v3 additions are marked new, and every defect row names
+    a regression test that exists."""
+    ledger = (ROOT / REVIEW_PAGE).read_text(encoding="utf-8")
+    manifest = catalog_manifest()
+    for heading, kind, added, v2_count in (
+        ("Node types", "nodes", V3_NODES, 31),
+        ("Relation types", "relations", V3_RELATIONS, 44),
+    ):
+        rows = {row[0].strip("`"): row[1] for row in _rows(ledger, heading)}
+        assert set(rows) == set(manifest[kind]), heading
+        assert {name for name, verdict in rows.items() if verdict == "new in v3"} == added, heading
+        assert len(rows) - len(added) == v2_count, heading
+    defects = _rows(ledger, "Defects")
+    assert {row[0] for row in defects} >= {"B1", "B2", *(f"D-{number:02d}" for number in range(1, 21))}
+    for row in defects:
+        path, _separator, test_name = row[-1].strip("`").partition("::")
+        source = (ROOT / path).read_text(encoding="utf-8")
+        assert re.search(rf"^(async )?def {re.escape(test_name)}\(", source, re.MULTILINE), row[0]

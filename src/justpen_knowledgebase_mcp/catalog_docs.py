@@ -759,7 +759,8 @@ DOCS: dict[str, Any] = {
             "notes": (
                 "Identity is (`username`, `breach`), so one pair exposed in two breaches is two edges. The breach "
                 "token joins spellings within one corpus only; across corpora the same breach stays two tokens. "
-                'Send `""` for a value the source does not give, never a guess.'
+                'Send `""` for a value the source does not give, never a guess. Link evidence only after '
+                "replacing every secret-bearing field with `[REDACTED]`."
             ),
             "properties": {
                 "username": "The login name the credential is for, as the source spells it, or empty.",
