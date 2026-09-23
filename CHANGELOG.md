@@ -1,3 +1,51 @@
+## v0.4.0 (2026-09-23)
+
+### BREAKING CHANGE
+
+- service secure, previously stored as submitted for services that do not require it, must now be a boolean.
+- updating the bundled PSL or service registry changes the catalog fingerprint; existing workspaces are then refused.
+- the listed cve, finding, ip_address, domain, subdomain, certificate, presents_certificate, service and repository properties, previously stored as submitted, are now validated and reject null.
+- finding requires rule (finding_rule) and matcher (finding_matcher_or_empty); its identity is (rule, matcher) under the parent and title is no longer identity; severity also accepts unknown.
+- secret nodes and exposes_secret edges reject plaintext-bearing keys (value, secret, plaintext, password, token, key, credential, match, raw, rawv2, redacted, line) in any case and at any depth; secret kind, detector, verified and key_id, previously stored as submitted, are now validated.
+- spf_record values longer than 4096 characters are now rejected.
+- port number 0, asn value 0 and IPv4-mapped IPv6 addresses (in ip_address values and http_url hosts) are now rejected.
+- an endpoint url whose query string fails http_url (a space, angle brackets, an invalid or lowercase percent escape, non-ASCII) is now rejected instead of stored without it.
+- organization name and asn name, country and rir, and ip_cidr netname, country and rir, previously stored as submitted, are now validated and reject null.
+- registered_through accepts only a whois_registration source (was domain); has_contact from domain or subdomain no longer accepts the roles registrant, admin, tech or billing, which attach to whois_registration.
+- the cpe23_or_empty format is removed; technology.cpe must be a product-level cpe23 string, and runs_technology cpe (cpe23) and version (tech_version), previously stored as submitted, are now validated.
+- endpoint status, title, content_length, content_type and webserver, certificate self_signed, cwe name, mta_sts_policy mode, max_age and mx, and federates_with namespace_type, previously stored as submitted, are now validated and reject null.
+- kb_types formats values are objects {version, description} instead of strings.
+- catalog v3; workspaces created with catalog v2 are refused at open and are not migrated.
+
+### Feat
+
+- **catalog**: bind the bundled registries into the fingerprint
+- **catalog**: model credential principals and crawl links
+- **catalog**: add cloud account and cloud resource types
+- **catalog**: declare ASM attribute properties
+- **catalog**: key findings on rule and matcher
+- **catalog**: declare RDAP number-resource attributes
+- **catalog**: move registrar and registrant contacts to registrations
+- **catalog**: model domain registrations as scoped nodes
+- **catalog**: validate technology CPE and per-host version
+- **catalog**: validate the documented attribute conventions
+- **catalog**: declare validated optional properties
+- **catalog**: describe every type and format outside the fingerprint
+- **catalog**: publish check and canonicalization ids
+- **catalog**: bump the catalog contract to v3
+
+### Fix
+
+- **release**: keep forced terminal colour out of parsed output
+- **catalog**: keep the wildcard answer flag off registrable domains
+- **catalog**: accept hyphens in endpoint URL paths and queries
+- **catalog**: declare the service secure flag
+- **catalog**: accept underscore labels in endpoint hosts
+- **catalog**: refuse secret plaintext in any case or depth
+- **catalog**: bound spf_record values at 4096 characters
+- **catalog**: reject placeholder and IPv4-mapped spellings
+- **catalog**: validate an endpoint query before removing it
+
 ## v0.3.0 (2026-09-22)
 
 ### BREAKING CHANGE
