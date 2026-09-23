@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Any, cast
 from .catalog_docs import CAPS as _DOC_CAPS, DOCS as _DOCS
 from .errors import ExpectedValidationError
 from .mutations import validate_properties
-from .psl import classify_dns_name
-from .service_names import is_service_name, secure_required
+from .psl import classify_dns_name, rules_digest
+from .service_names import is_service_name, registry_digest, secure_required
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -1258,6 +1258,7 @@ def _build_catalog(
     checks: Mapping[str, object],
     endpoint_checks: Mapping[str, object],
     canonicalizations: Mapping[str, object],
+    registries: Mapping[str, str],
 ) -> dict[str, Any]:
     """Assemble the fingerprinted contract from the type tables and the rule tables.
 
@@ -1269,7 +1270,12 @@ def _build_catalog(
     unused = {*checks, *endpoint_checks, *canonicalizations}
     if any(type(version) is not int or version < 1 for version in formats.values()):
         raise RuntimeError("every format carries a positive integer behavior version")
-    built: dict[str, Any] = {"common": _COMMON, "formats": dict(formats), "version": CATALOG_VERSION}
+    built: dict[str, Any] = {
+        "common": _COMMON,
+        "formats": dict(formats),
+        "registries": dict(registries),
+        "version": CATALOG_VERSION,
+    }
     for kind, definitions in (("nodes", nodes), ("relations", relations)):
         built[kind] = {}
         for name, definition in definitions.items():
@@ -1290,7 +1296,12 @@ def _build_catalog(
     return built
 
 
-_CATALOG = _build_catalog(_NODES, _RELATIONS, _FORMATS, _CHECKS, _ENDPOINT_CHECKS, _CANONICALIZATIONS)
+# The bundled registries decide what `dns_name` and `service_name` accept, so their parsed content is
+# part of the contract: refreshing the PSL or the service whitelist refuses workspaces written under
+# the old one instead of silently reclassifying their names (BC-3).
+_REGISTRIES = {"public_suffix_list": rules_digest(), "service_names": registry_digest()}
+
+_CATALOG = _build_catalog(_NODES, _RELATIONS, _FORMATS, _CHECKS, _ENDPOINT_CHECKS, _CANONICALIZATIONS, _REGISTRIES)
 
 # The canonical serialized contract is immutable; callers receive a fresh tree.
 CATALOG_JSON = json.dumps(_CATALOG, sort_keys=True, separators=(",", ":"), ensure_ascii=True)

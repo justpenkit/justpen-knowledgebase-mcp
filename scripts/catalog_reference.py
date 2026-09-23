@@ -222,6 +222,17 @@ def render() -> str:
             [[f"`{name}`", _common_value(common[name]), meanings[name]] for name in sorted(common)],
         ),
         "",
+        "## Bundled registries",
+        "",
+        "`dns_name` classifies names against the bundled ICANN public suffix list, and `service_name`"
+        " accepts the bundled service whitelist. The SHA-256 of each registry's parsed content is part of"
+        " the fingerprinted contract, so refreshing either refuses workspaces written under the old one.",
+        "",
+        _table(
+            ["Registry", "Parsed-content SHA-256"],
+            [[f"`{name}`", f"`{digest}`"] for name, digest in sorted(manifest["registries"].items())],
+        ),
+        "",
         "## Node types",
         "",
         "Identity is what makes two writes the same node. A parent scope adds the parent's UUID to"

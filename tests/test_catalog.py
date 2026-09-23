@@ -11,6 +11,7 @@ from typing import cast
 import pytest
 
 import justpen_knowledgebase_mcp.catalog as catalog_module
+from justpen_knowledgebase_mcp import psl, service_names
 from justpen_knowledgebase_mcp.catalog import (
     CATALOG_FINGERPRINT,
     CATALOG_VERSION,
@@ -134,7 +135,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "3cd3199e73f6d36e519fd0b643bced67ed6fa7fb61eab4c788892192a1470bd0"
+    assert CATALOG_FINGERPRINT == "145cbbf41be12607bfc28386e6871ba195acc3121759ecda7d5d9d408bfae1bf"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1297,6 +1298,7 @@ def test_catalog_view_is_one_shared_object_matching_the_isolated_manifest() -> N
         ("relations", "caa_issue", "identity", "order_independent"),
         ("common",),
         ("formats",),
+        ("registries",),
     ],
 )
 def test_catalog_view_mappings_refuse_mutation_at_every_depth(path: tuple[str, ...]) -> None:
@@ -1529,6 +1531,7 @@ def _rebuilt(**changes: object) -> str:
         "checks": catalog_module._CHECKS,
         "endpoint_checks": catalog_module._ENDPOINT_CHECKS,
         "canonicalizations": catalog_module._CANONICALIZATIONS,
+        "registries": catalog_module._REGISTRIES,
     }
     tables.update(changes)
     built = catalog_module._build_catalog(**tables)  # type: ignore[arg-type]
@@ -1562,6 +1565,8 @@ def test_renaming_or_versioning_a_rule_id_changes_the_contract() -> None:
     assert _rebuilt(formats=formats) != catalog_module.CATALOG_JSON
     bumped = {**catalog_module._FORMATS, "http_url": 2}
     assert _rebuilt(formats=bumped) != catalog_module.CATALOG_JSON
+    refreshed = {**catalog_module._REGISTRIES, "public_suffix_list": "0" * 64}
+    assert _rebuilt(registries=refreshed) != catalog_module.CATALOG_JSON
 
 
 @pytest.mark.parametrize(
@@ -1798,3 +1803,24 @@ def test_overlapping_cloud_hostname_patterns_are_refused_at_import(
     monkeypatch.setitem(catalog_module._CLOUD_HOST_PATTERNS, "overlap", pattern)
     with pytest.raises(RuntimeError, match="may overlap"):
         catalog_module._ensure_cloud_patterns_disjoint()
+
+
+def test_registry_digests_hash_parsed_content_not_file_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BC-3: a checkout that turns LF into CRLF parses to the same rules and so the same digest,
+    while any change to the rules themselves moves the digest and with it the fingerprint."""
+    snapshot = psl._read_resource_bytes(psl._SNAPSHOT_RESOURCE)
+    assert psl._parse_rules(snapshot.replace(b"\n", b"\r\n")) == psl._parse_rules(snapshot)
+    assert catalog_module.catalog_manifest()["registries"] == {
+        "public_suffix_list": psl.rules_digest(),
+        "service_names": service_names.registry_digest(),
+    }
+    rules = psl._load_rules()
+    widened = psl._Rules(rules.exact | {"example"}, rules.wildcards, rules.exceptions)
+    before = psl.rules_digest()
+    monkeypatch.setattr(psl, "_load_rules", lambda: widened)
+    assert psl.rules_digest() != before
+    registry = service_names._load_registry()
+    flipped = service_names._Registry(registry.names, registry.secure_required_names ^ {"ssh"})
+    service_before = service_names.registry_digest()
+    monkeypatch.setattr(service_names, "_load_registry", lambda: flipped)
+    assert service_names.registry_digest() != service_before

@@ -226,3 +226,8 @@ def test_the_parent_scope_prose_enumerates_exactly_the_scoped_types(graph_page: 
 
     assert _listed(graph_page, "Creating a new ", " without exactly") == sorted(scoped)
     assert _listed(graph_page, "Deleting `has_", ", or deleting its parent node") == sorted(scoped.values())
+
+
+def test_the_page_lists_the_registry_digests_the_fingerprint_binds(page: str) -> None:
+    rows = {row[0].strip("`"): row[1].strip("`") for row in _rows(page, "Bundled registries")}
+    assert rows == catalog_manifest()["registries"]

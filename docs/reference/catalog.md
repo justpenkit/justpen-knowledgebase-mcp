@@ -31,6 +31,15 @@ The catalog declares **34 node types** and **49 relation types**. Conventions th
 | `properties_bytes`      | 65536           | Maximum size of one canonical properties object, in UTF-8 bytes.                               |
 | `required_nonnull`      | true            | A required property may not be null or absent.                                                 |
 
+## Bundled registries
+
+`dns_name` classifies names against the bundled ICANN public suffix list, and `service_name` accepts the bundled service whitelist. The SHA-256 of each registry's parsed content is part of the fingerprinted contract, so refreshing either refuses workspaces written under the old one.
+
+| Registry             | Parsed-content SHA-256                                             |
+| -------------------- | ------------------------------------------------------------------ |
+| `public_suffix_list` | `8fb96dafe8035fe8b7a98bc7f532fb885c20c92397782f75fec60979f4dc6fca` |
+| `service_names`      | `12ceb1efcec0b70c784e5764d88034a2fb7b159320b9c867514e454b5483f276` |
+
 ## Node types
 
 Identity is what makes two writes the same node. A parent scope adds the parent's UUID to that identity, so the same properties under two parents are two nodes.

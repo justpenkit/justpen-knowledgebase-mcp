@@ -76,6 +76,18 @@ def _load_rules() -> _Rules:
     return _parse_rules(snapshot)
 
 
+def rules_digest() -> str:
+    """Hash the parsed rule set, not the file bytes, so a line-ending change on checkout moves nothing."""
+    rules = _load_rules()
+    canonical = {
+        "exact": sorted(rules.exact),
+        "wildcards": sorted(rules.wildcards),
+        "exceptions": sorted(rules.exceptions),
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("ascii")).hexdigest()
+
+
 def _public_suffix_length(labels: list[str], rules: _Rules) -> int | None:
     exception_lengths: list[int] = []
     rule_length = 0
