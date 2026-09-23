@@ -437,7 +437,7 @@ def test_evidence_link_page_refuses_rather_than_encoding_a_kindless_cursor(monke
 
 @pytest.mark.parametrize("kind", ["nodes", "relations"])
 def test_a_full_types_page_keeps_a_quarter_of_the_response_budget(kind):
-    """Pre-mortem 3: every page carries each type's descriptions and every format's, so one page of
+    """Every page carries each type's descriptions and every format's, so one page of
     the whole catalog must stay at most three quarters of the 256 KiB success envelope."""
     db = database(cursor(value=(NODE, 1)))
     result = graph.graph_types(db, Mock(deadline=0), TypesRequest(kind=kind, limit=100))

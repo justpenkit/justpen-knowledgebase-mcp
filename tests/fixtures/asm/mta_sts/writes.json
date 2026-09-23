@@ -1,0 +1,41 @@
+[
+  {
+    "file": "mta-sts.txt",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.com"
+          },
+          "source": "mta_sts"
+        },
+        {
+          "type": "mta_sts_policy",
+          "properties": {
+            "value": "v=STSv1; id=20260901T000000;",
+            "mode": "enforce",
+            "max_age": 604800,
+            "mx": [
+              "*.mx.example.net",
+              "mail.example.com"
+            ]
+          },
+          "source": "mta_sts"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_mta_sts_policy",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,97 @@
+[
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "asn",
+          "properties": {
+            "value": 64496,
+            "name": "EXAMPLE-NET",
+            "country": "US"
+          },
+          "observed_at": "2026-09-20T10:24:03.771202Z",
+          "source": "asnmap"
+        },
+        {
+          "type": "ip_cidr",
+          "properties": {
+            "value": "192.0.2.0/24",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:24:03.771202Z",
+          "source": "asnmap"
+        },
+        {
+          "type": "ip_cidr",
+          "properties": {
+            "value": "2001:db8::/32",
+            "version": 6
+          },
+          "observed_at": "2026-09-20T10:24:03.771202Z",
+          "source": "asnmap"
+        }
+      ],
+      "relations": [
+        {
+          "type": "announced_by",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 0
+          },
+          "properties": {}
+        },
+        {
+          "type": "announced_by",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 0
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "asn",
+          "properties": {
+            "value": 64497,
+            "name": "EXAMPLE-ORG",
+            "country": "NL"
+          },
+          "observed_at": "2026-09-20T10:24:04.018834Z",
+          "source": "asnmap"
+        },
+        {
+          "type": "ip_cidr",
+          "properties": {
+            "value": "198.51.100.0/24",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:24:04.018834Z",
+          "source": "asnmap"
+        }
+      ],
+      "relations": [
+        {
+          "type": "announced_by",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 0
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

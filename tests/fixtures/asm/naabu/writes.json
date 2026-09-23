@@ -1,0 +1,132 @@
+[
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "198.51.100.20",
+            "version": 4,
+            "cdn_provider": "cloudfront"
+          },
+          "observed_at": "2026-09-20T10:20:11.204918Z",
+          "source": "naabu"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 443,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-20T10:20:11.204918Z",
+          "source": "naabu"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "www.example.com"
+          },
+          "observed_at": "2026-09-20T10:20:11.204918Z",
+          "source": "naabu"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 0
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.10",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:20:11.518772Z",
+          "source": "naabu"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 22,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-20T10:20:11.518772Z",
+          "source": "naabu"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.10",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:20:11.519003Z",
+          "source": "naabu"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 443,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-20T10:20:11.519003Z",
+          "source": "naabu"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

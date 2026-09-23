@@ -1,0 +1,545 @@
+[
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.com"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.10",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "2001:db8::10",
+            "version": 6
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "mail.example.com"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "ns1.example.com"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "ns2.example.net"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "spf_record",
+          "properties": {
+            "value": "v=spf1 include:_spf.example.net -all"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "txt_record",
+          "properties": {
+            "value": "example-site-verification=Zx8Wq3PzLm"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.net"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.org"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "email_address",
+          "properties": {
+            "value": "security@example.com"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://iodef.example.com/report",
+            "method": "POST"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "asn",
+          "properties": {
+            "value": 64496,
+            "name": "EXAMPLE-NET",
+            "country": "US"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "ip_cidr",
+          "properties": {
+            "value": "192.0.2.0/24",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "dnsx"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_mail_exchange",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {
+            "preference": 10
+          }
+        },
+        {
+          "type": "has_nameserver",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_nameserver",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 5
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_soa_primary",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_spf",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_txt_record",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 7
+          },
+          "properties": {}
+        },
+        {
+          "type": "caa_issue",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {
+            "flags": 0,
+            "parameters": [
+              {
+                "name": "accounturi",
+                "value": "https://acme.example.net/acct/1234"
+              },
+              {
+                "name": "validationmethods",
+                "value": "dns-01"
+              }
+            ]
+          }
+        },
+        {
+          "type": "caa_issue",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 9
+          },
+          "properties": {
+            "flags": 0,
+            "parameters": []
+          }
+        },
+        {
+          "type": "caa_issuewild",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 9
+          },
+          "properties": {
+            "flags": 0,
+            "parameters": []
+          }
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 10
+          },
+          "properties": {
+            "role": "iodef"
+          }
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 11
+          },
+          "properties": {
+            "role": "iodef"
+          }
+        },
+        {
+          "type": "announced_by",
+          "source_ref": {
+            "node_index": 13
+          },
+          "target_ref": {
+            "node_index": 12
+          },
+          "properties": {}
+        },
+        {
+          "type": "contains_ip",
+          "source_ref": {
+            "node_index": 13
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "app.example.com"
+          },
+          "observed_at": "2026-09-20T10:15:31.004512Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "my-lb-1234567890abcdef.elb.us-east-2.amazonaws.com"
+          },
+          "observed_at": "2026-09-20T10:15:31.004512Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "cloud_resource",
+          "properties": {
+            "service": "aws_elb",
+            "hostname": "my-lb-1234567890abcdef.elb.us-east-2.amazonaws.com",
+            "region": "us-east-2"
+          },
+          "observed_at": "2026-09-20T10:15:31.004512Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "198.51.100.40",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:15:31.004512Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "198.51.100.41",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:15:31.004512Z",
+          "source": "dnsx"
+        }
+      ],
+      "relations": [
+        {
+          "type": "cname_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "hosted_on",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "hosted_on",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "shop.example.com"
+          },
+          "observed_at": "2026-09-20T10:15:31.2Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "shops.example.net"
+          },
+          "observed_at": "2026-09-20T10:15:31.2Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "203.0.113.30",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:15:31.2Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "technology",
+          "properties": {
+            "name": "sucuri"
+          },
+          "observed_at": "2026-09-20T10:15:31.2Z",
+          "source": "dnsx"
+        }
+      ],
+      "relations": [
+        {
+          "type": "cname_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "protected_by",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {
+            "kind": "waf"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.com"
+          },
+          "observed_at": "2026-09-20T10:15:31.5Z",
+          "source": "dnsx"
+        },
+        {
+          "type": "dmarc_record",
+          "properties": {
+            "value": "v=DMARC1; p=reject; rua=mailto:dmarc-reports@example.com"
+          },
+          "observed_at": "2026-09-20T10:15:31.5Z",
+          "source": "dnsx"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_dmarc",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

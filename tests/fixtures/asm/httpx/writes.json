@@ -1,0 +1,536 @@
+[
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "www.example.com"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "198.51.100.20",
+            "version": 4,
+            "cdn_provider": "cloudfront"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "198.51.100.21",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "2001:db8::20",
+            "version": 6
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 443,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "service",
+          "properties": {
+            "name": "http",
+            "secure": true
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/",
+            "method": "GET",
+            "status": 200,
+            "title": "Example Domain",
+            "content_length": 1256,
+            "content_type": "text/html",
+            "webserver": "nginx/1.18.0"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "technology",
+          "properties": {
+            "name": "amazon-cloudfront"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "technology",
+          "properties": {
+            "name": "nginx"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "http_fingerprint",
+          "properties": {
+            "kind": "favicon_mmh3",
+            "value": "-1752256170"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "http_fingerprint",
+          "properties": {
+            "kind": "body_sha256",
+            "value": "e2c60e5d35e1fecb9e178fecbc4b83b9237d01646f6ac18d0fc1191084a0988d"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "http_fingerprint",
+          "properties": {
+            "kind": "header_sha256",
+            "value": "af5b2e7cc88538514c5381d918558a58c745b082a35fe67cf2488415cc947559"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "tls_fingerprint",
+          "properties": {
+            "kind": "jarm",
+            "value": "29d29d15d29d29d00042d42d000000cd600c085f5e4e6a2a3a3e8a1e4d2abc"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "asn",
+          "properties": {
+            "value": 16509,
+            "name": "AMAZON-02",
+            "country": "US"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "ip_cidr",
+          "properties": {
+            "value": "198.51.100.0/24",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "d111111abcdef8.cloudfront.net"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        },
+        {
+          "type": "cloud_resource",
+          "properties": {
+            "service": "aws_cloudfront",
+            "hostname": "d111111abcdef8.cloudfront.net"
+          },
+          "observed_at": "2026-09-20T10:15:30.123456Z",
+          "source": "httpx"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_service",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 5
+          },
+          "properties": {}
+        },
+        {
+          "type": "serves_endpoint",
+          "source_ref": {
+            "node_index": 5
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {}
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 6
+          },
+          "target_ref": {
+            "node_index": 7
+          },
+          "properties": {}
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 6
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {
+            "version": "1.18.0"
+          }
+        },
+        {
+          "type": "protected_by",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 7
+          },
+          "properties": {
+            "kind": "cdn"
+          }
+        },
+        {
+          "type": "has_http_fingerprint",
+          "source_ref": {
+            "node_index": 6
+          },
+          "target_ref": {
+            "node_index": 9
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_http_fingerprint",
+          "source_ref": {
+            "node_index": 6
+          },
+          "target_ref": {
+            "node_index": 10
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_http_fingerprint",
+          "source_ref": {
+            "node_index": 6
+          },
+          "target_ref": {
+            "node_index": 11
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_tls_fingerprint",
+          "source_ref": {
+            "node_index": 5
+          },
+          "target_ref": {
+            "node_index": 12
+          },
+          "properties": {}
+        },
+        {
+          "type": "announced_by",
+          "source_ref": {
+            "node_index": 14
+          },
+          "target_ref": {
+            "node_index": 13
+          },
+          "properties": {}
+        },
+        {
+          "type": "contains_ip",
+          "source_ref": {
+            "node_index": 14
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "contains_ip",
+          "source_ref": {
+            "node_index": 14
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "cname_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 15
+          },
+          "properties": {}
+        },
+        {
+          "type": "hosted_on",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 16
+          },
+          "properties": {}
+        },
+        {
+          "type": "hosted_on",
+          "source_ref": {
+            "node_index": 15
+          },
+          "target_ref": {
+            "node_index": 16
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "api.example.com"
+          },
+          "observed_at": "2026-09-20T10:16:02.5Z",
+          "source": "httpx"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "203.0.113.5",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:16:02.5Z",
+          "source": "httpx"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 8080,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-20T10:16:02.5Z",
+          "source": "httpx"
+        },
+        {
+          "type": "service",
+          "properties": {
+            "name": "http",
+            "secure": false
+          },
+          "observed_at": "2026-09-20T10:16:02.5Z",
+          "source": "httpx"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "http://api.example.com:8080/login",
+            "method": "GET",
+            "status": 301,
+            "title": "301 Moved Permanently",
+            "content_length": 231,
+            "content_type": "text/html",
+            "webserver": "Apache"
+          },
+          "observed_at": "2026-09-20T10:16:02.5Z",
+          "source": "httpx"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://api.example.com/login",
+            "method": "GET"
+          },
+          "observed_at": "2026-09-20T10:16:02.5Z",
+          "source": "httpx"
+        },
+        {
+          "type": "technology",
+          "properties": {
+            "name": "apache-http-server"
+          },
+          "observed_at": "2026-09-20T10:16:02.5Z",
+          "source": "httpx"
+        },
+        {
+          "type": "http_fingerprint",
+          "properties": {
+            "kind": "body_sha256",
+            "value": "4be17d99b8596a79c4edebb636880147e31ad99b494cc3eb69c5ba629de044f9"
+          },
+          "observed_at": "2026-09-20T10:16:02.5Z",
+          "source": "httpx"
+        },
+        {
+          "type": "http_fingerprint",
+          "properties": {
+            "kind": "header_sha256",
+            "value": "190c4bb6665d717fddb1ce1fd0799e910b7f84c096bdc3f28ef9b51f04d23dc0"
+          },
+          "observed_at": "2026-09-20T10:16:02.5Z",
+          "source": "httpx"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_service",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        },
+        {
+          "type": "serves_endpoint",
+          "source_ref": {
+            "node_index": 3
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {}
+        },
+        {
+          "type": "redirects_to",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 5
+          },
+          "properties": {
+            "status": 301
+          }
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_http_fingerprint",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 7
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_http_fingerprint",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

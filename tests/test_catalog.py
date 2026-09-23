@@ -6,7 +6,7 @@ import copy
 import json
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -1417,7 +1417,7 @@ def _published_ids(key: str) -> set[str]:
 
 
 def test_every_format_check_and_canonicalization_has_golden_cases() -> None:
-    """A published id without cases, or cases for an id nobody publishes, fails here (AC-12)."""
+    """A published id without cases, or cases for an id nobody publishes, fails here."""
     assert set(golden.FORMATS) == set(catalog_manifest()["formats"])
     assert set(golden.CHECKS).isdisjoint(golden.ENDPOINT_CHECKS)
     assert {*golden.CHECKS, *golden.ENDPOINT_CHECKS} == _published_ids("checks")
@@ -1524,18 +1524,19 @@ def test_endpoint_values_are_checked_only_by_the_relation_that_declares_them() -
         check_endpoint_values("hostname_of", {}, far, far)
 
 
-def _rebuilt(**changes: object) -> str:
-    tables: dict[str, object] = {
-        "nodes": catalog_module._NODES,
-        "relations": catalog_module._RELATIONS,
-        "formats": catalog_module._FORMATS,
-        "checks": catalog_module._CHECKS,
-        "endpoint_checks": catalog_module._ENDPOINT_CHECKS,
-        "canonicalizations": catalog_module._CANONICALIZATIONS,
-        "registries": catalog_module._REGISTRIES,
-    }
-    tables.update(changes)
-    built = catalog_module._build_catalog(**tables)  # type: ignore[arg-type]
+def _rebuilt(
+    *,
+    nodes: Mapping[str, Mapping[str, Any]] = catalog_module._NODES,
+    relations: Mapping[str, Mapping[str, Any]] = catalog_module._RELATIONS,
+    formats: Mapping[str, int] = catalog_module._FORMATS,
+    checks: Mapping[str, object] = catalog_module._CHECKS,
+    endpoint_checks: Mapping[str, object] = catalog_module._ENDPOINT_CHECKS,
+    canonicalizations: Mapping[str, object] = catalog_module._CANONICALIZATIONS,
+    registries: Mapping[str, str] = catalog_module._REGISTRIES,
+) -> str:
+    built = catalog_module._build_catalog(
+        nodes, relations, formats, checks, endpoint_checks, canonicalizations, registries
+    )
     return json.dumps(built, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
@@ -1550,7 +1551,7 @@ def test_the_builder_reproduces_the_published_contract() -> None:
 
 
 def test_renaming_or_versioning_a_rule_id_changes_the_contract() -> None:
-    """Pre-mortem 1: the fingerprint covers ids and versions, so a rename or a bump moves it."""
+    """The fingerprint covers ids and versions, so a rename or a bump moves it."""
     run = catalog_module._CHECKS["dns_name_kind.1"]
     checks = {key: value for key, value in catalog_module._CHECKS.items() if key != "dns_name_kind.1"}
     nodes = _with_rule(catalog_module._NODES, "domain", "checks", ["dns_name_kind.2"])
@@ -1592,7 +1593,7 @@ def test_renaming_or_versioning_a_rule_id_changes_the_contract() -> None:
         ({"formats": {**catalog_module._FORMATS, "http_url": 0}}, "positive integer behavior version"),
     ],
 )
-def test_the_builder_refuses_a_dangling_misplaced_or_unused_rule(changes: dict[str, object], message: str) -> None:
+def test_the_builder_refuses_a_dangling_misplaced_or_unused_rule(changes: dict[str, Any], message: str) -> None:
     with pytest.raises(RuntimeError, match=message):
         _rebuilt(**changes)
 
@@ -1622,7 +1623,7 @@ def test_every_rule_id_is_described() -> None:
 
 @pytest.mark.parametrize("kind", ["nodes", "relations"])
 def test_every_type_and_property_is_described(kind: str) -> None:
-    """AC-1: every type says what it models and what it does not, and every declared property,
+    """Every type says what it models and what it does not, and every declared property,
     format and rule has its own description."""
     for type_name, definition in catalog_manifest()[kind].items():
         docs = catalog_module.type_description(kind, type_name)
@@ -1670,7 +1671,8 @@ def _view_with(monkeypatch: pytest.MonkeyPatch, kind: str, type_name: str, key: 
     """Serve validation from a rebuilt catalog in which one type declares something extra."""
     table = catalog_module._NODES if kind == "nodes" else catalog_module._RELATIONS
     changed = {**table, type_name: {**table[type_name], key: value}}
-    view = catalog_module._read_only(json.loads(_rebuilt(**{kind: changed})))
+    rebuilt = _rebuilt(nodes=changed) if kind == "nodes" else _rebuilt(relations=changed)
+    view = catalog_module._read_only(json.loads(rebuilt))
     monkeypatch.setattr(catalog_module, "_CATALOG_VIEW", view)
 
 
@@ -1688,7 +1690,7 @@ def _view_with(monkeypatch: pytest.MonkeyPatch, kind: str, type_name: str, key: 
 def test_declared_optional_properties_are_validated_when_present(
     monkeypatch: pytest.MonkeyPatch, properties: dict[str, object], *, accepted: bool
 ) -> None:
-    """AC-7: an invalid declared attribute is rejected, an absent one and an undeclared key are
+    """An invalid declared attribute is rejected, an absent one and an undeclared key are
     accepted, and null is never a value: clearing is `remove_properties`."""
     _view_with(monkeypatch, "nodes", "domain", "optional", {"note": "printable_text_200"})
     if accepted:
@@ -1713,7 +1715,8 @@ def test_optional_properties_reach_the_discovery_schema_but_not_its_required_lis
 
 def _catalog_with(kind: str, type_name: str, **changes: object) -> dict[str, object]:
     table = catalog_module._NODES if kind == "nodes" else catalog_module._RELATIONS
-    return json.loads(_rebuilt(**{kind: {**table, type_name: {**table[type_name], **changes}}}))
+    changed = {**table, type_name: {**table[type_name], **changes}}
+    return json.loads(_rebuilt(nodes=changed) if kind == "nodes" else _rebuilt(relations=changed))
 
 
 @pytest.mark.parametrize(
@@ -1751,7 +1754,7 @@ def test_a_plaintext_key_is_named_by_its_pointer_and_never_by_its_value() -> Non
 
 
 def test_ac10_attribute_properties_are_declared() -> None:
-    """AC-10: exploit metadata, HTTP metadata, CDN/WAF/cloud range classification on addresses,
+    """Exploit metadata, HTTP metadata, CDN/WAF/cloud range classification on addresses,
     wildcard DNS and CPE/version each have a declared, validated home."""
     manifest = catalog_manifest()
     expected = {
@@ -1766,6 +1769,9 @@ def test_ac10_attribute_properties_are_declared() -> None:
     }
     for (kind, type_name), names in expected.items():
         assert names <= set(manifest[kind][type_name]["optional"]), type_name
+    # A registrable domain's parent is a public suffix, which has no wildcard answer to compare (D-23).
+    assert "wildcard_answer" not in manifest["nodes"]["domain"]["optional"]
+    assert "wildcard_answer" in manifest["nodes"]["subdomain"]["optional"]
 
 
 def test_every_cloud_hostname_pattern_has_one_example_that_matches_only_it() -> None:
@@ -1807,7 +1813,7 @@ def test_overlapping_cloud_hostname_patterns_are_refused_at_import(
 
 
 def test_registry_digests_hash_parsed_content_not_file_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """BC-3: a checkout that turns LF into CRLF parses to the same rules and so the same digest,
+    """A checkout that turns LF into CRLF parses to the same rules and so the same digest,
     while any change to the rules themselves moves the digest and with it the fingerprint."""
     snapshot = psl._read_resource_bytes(psl._SNAPSHOT_RESOURCE)
     assert psl._parse_rules(snapshot.replace(b"\n", b"\r\n")) == psl._parse_rules(snapshot)
@@ -1825,3 +1831,41 @@ def test_registry_digests_hash_parsed_content_not_file_bytes(monkeypatch: pytest
     service_before = service_names.registry_digest()
     monkeypatch.setattr(service_names, "_load_registry", lambda: flipped)
     assert service_names.registry_digest() != service_before
+
+
+V3_NODE_TYPES = {"whois_registration", "cloud_account", "cloud_resource"}
+V3_RELATION_TYPES = {"has_registration", "hosted_on", "in_account", "authenticates", "links_to"}
+
+
+def test_every_type_declares_identity_checks_and_description() -> None:
+    """Every type catalog v3 adds declares what it models, a required map that holds its identity,
+    and the checks that keep one real thing one node."""
+    manifest = catalog_manifest()
+    for kind, added in (("nodes", V3_NODE_TYPES), ("relations", V3_RELATION_TYPES)):
+        for type_name in added:
+            definition = manifest[kind][type_name]
+            docs = catalog_module.type_description(kind, type_name)
+            assert docs["summary"], type_name
+            assert docs["excludes"], type_name
+            assert set(definition["identity"]["properties"]) <= set(definition["required"]), type_name
+            if kind == "nodes":
+                assert definition["required"], type_name
+                assert definition["checks"], type_name
+            else:
+                assert definition["sources"], type_name
+                assert definition["targets"], type_name
+    assert manifest["relations"]["has_registration"]["checks"] == ["has_registration_suffix_match.1"]
+    assert manifest["relations"]["in_account"]["checks"] == ["in_account_provider_match.1"]
+    assert "secret_plaintext_keys.1" in manifest["relations"]["authenticates"]["checks"]
+
+
+def test_osint_areas_are_typed_and_person_company_are_absent() -> None:
+    """WHOIS registrations, typed credentials, code repositories and cloud assets have homes, and
+    person and company types stay out of scope by decision."""
+    manifest = catalog_manifest()
+    assert {"whois_registration", "secret", "repository", "cloud_account", "cloud_resource"} <= set(manifest["nodes"])
+    assert {"authenticates", "exposes_secret", "registered_through", "in_account"} <= set(manifest["relations"])
+    assert "kind" in manifest["nodes"]["secret"]["optional"]
+    banned = ("person", "people", "individual", "company", "employee", "contact_person")
+    for kind in ("nodes", "relations"):
+        assert not [name for name in manifest[kind] if any(word in name for word in banned)], kind

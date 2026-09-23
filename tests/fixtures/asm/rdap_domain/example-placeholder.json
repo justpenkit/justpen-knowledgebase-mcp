@@ -1,0 +1,185 @@
+{
+  "objectClassName": "domain",
+  "handle": "REDACTED-REDACTED",
+  "ldhName": "example.org",
+  "links": [
+    {
+      "value": "https://rdap.publicinterestregistry.org/rdap/domain/example.org",
+      "rel": "self",
+      "href": "https://rdap.publicinterestregistry.org/rdap/domain/example.org",
+      "type": "application/rdap+json"
+    }
+  ],
+  "status": [
+    "client transfer prohibited",
+    "server delete prohibited"
+  ],
+  "entities": [
+    {
+      "objectClassName": "entity",
+      "handle": "9999",
+      "roles": [
+        "registrar"
+      ],
+      "publicIds": [
+        {
+          "type": "IANA Registrar ID",
+          "identifier": "9999"
+        }
+      ],
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Example Registrar, Inc."
+          ]
+        ]
+      ],
+      "entities": [
+        {
+          "objectClassName": "entity",
+          "roles": [
+            "abuse"
+          ],
+          "vcardArray": [
+            "vcard",
+            [
+              [
+                "version",
+                {},
+                "text",
+                "4.0"
+              ],
+              [
+                "fn",
+                {},
+                "text",
+                "Abuse Desk"
+              ],
+              [
+                "tel",
+                {
+                  "type": "voice"
+                },
+                "uri",
+                "tel:+1.3105550102"
+              ],
+              [
+                "email",
+                {},
+                "text",
+                "abuse@example.org"
+              ]
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "objectClassName": "entity",
+      "roles": [
+        "registrant"
+      ],
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "REDACTED FOR PRIVACY"
+          ],
+          [
+            "email",
+            {},
+            "text",
+            "registrant@example.org"
+          ]
+        ]
+      ]
+    }
+  ],
+  "events": [
+    {
+      "eventAction": "registration",
+      "eventDate": "1995-08-31T04:00:00Z"
+    },
+    {
+      "eventAction": "expiration",
+      "eventDate": "2027-08-30T04:00:00Z"
+    },
+    {
+      "eventAction": "last changed",
+      "eventDate": "2026-07-28T16:48:31Z"
+    },
+    {
+      "eventAction": "last update of RDAP database",
+      "eventDate": "2026-09-23T03:25:44Z"
+    }
+  ],
+  "secureDNS": {
+    "zoneSigned": true,
+    "delegationSigned": false
+  },
+  "nameservers": [
+    {
+      "objectClassName": "nameserver",
+      "ldhName": "ns1.example.net"
+    },
+    {
+      "objectClassName": "nameserver",
+      "ldhName": "ns2.example.net"
+    }
+  ],
+  "port43": "whois.publicinterestregistry.org",
+  "rdapConformance": [
+    "rdap_level_0",
+    "icann_rdap_technical_implementation_guide_1",
+    "icann_rdap_response_profile_1"
+  ],
+  "notices": [
+    {
+      "title": "Terms of Service",
+      "description": [
+        "Service subject to Terms of Use."
+      ],
+      "links": [
+        {
+          "href": "https://www.example.net/rdap/terms-of-service",
+          "type": "text/html",
+          "value": "https://rdap.publicinterestregistry.org/rdap/domain/example.org",
+          "rel": "terms-of-service"
+        }
+      ]
+    },
+    {
+      "title": "Status Codes",
+      "description": [
+        "For more information on domain status codes, please visit https://icann.org/epp"
+      ],
+      "links": [
+        {
+          "href": "https://icann.org/epp",
+          "type": "text/html",
+          "value": "https://rdap.publicinterestregistry.org/rdap/domain/example.org",
+          "rel": "glossary"
+        }
+      ]
+    }
+  ]
+}

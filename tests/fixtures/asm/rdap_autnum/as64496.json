@@ -1,0 +1,289 @@
+{
+  "handle": "AS64496",
+  "startAutnum": 64496,
+  "endAutnum": 64496,
+  "name": "EXAMPLE-AS",
+  "country": "NL",
+  "status": [
+    "active"
+  ],
+  "entities": [
+    {
+      "handle": "ORG-EA1-RIPE",
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Example Networks B.V."
+          ],
+          [
+            "kind",
+            {},
+            "text",
+            "org"
+          ],
+          [
+            "adr",
+            {
+              "label": "Example Street 1\n1000 AA Example City\nNETHERLANDS"
+            },
+            "text",
+            [
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              ""
+            ]
+          ],
+          [
+            "tel",
+            {
+              "type": "voice"
+            },
+            "text",
+            "+1 703 555 0101"
+          ]
+        ]
+      ],
+      "roles": [
+        "registrant"
+      ],
+      "links": [
+        {
+          "value": "https://rdap.db.ripe.net/autnum/64496",
+          "rel": "self",
+          "href": "https://rdap.db.ripe.net/entity/ORG-EA1-RIPE"
+        },
+        {
+          "value": "http://www.ripe.net/data-tools/support/documentation/terms",
+          "rel": "copyright",
+          "href": "http://www.ripe.net/data-tools/support/documentation/terms"
+        }
+      ],
+      "objectClassName": "entity"
+    },
+    {
+      "handle": "EXAMPLE-MNT",
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "EXAMPLE-MNT"
+          ],
+          [
+            "kind",
+            {},
+            "text",
+            "individual"
+          ]
+        ]
+      ],
+      "roles": [
+        "registrant"
+      ],
+      "links": [
+        {
+          "value": "https://rdap.db.ripe.net/autnum/64496",
+          "rel": "self",
+          "href": "https://rdap.db.ripe.net/entity/EXAMPLE-MNT"
+        },
+        {
+          "value": "http://www.ripe.net/data-tools/support/documentation/terms",
+          "rel": "copyright",
+          "href": "http://www.ripe.net/data-tools/support/documentation/terms"
+        }
+      ],
+      "objectClassName": "entity"
+    },
+    {
+      "handle": "EA1-RIPE",
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Example Admin"
+          ],
+          [
+            "kind",
+            {},
+            "text",
+            "group"
+          ]
+        ]
+      ],
+      "roles": [
+        "administrative",
+        "technical"
+      ],
+      "links": [
+        {
+          "value": "https://rdap.db.ripe.net/autnum/64496",
+          "rel": "self",
+          "href": "https://rdap.db.ripe.net/entity/EA1-RIPE"
+        },
+        {
+          "value": "http://www.ripe.net/data-tools/support/documentation/terms",
+          "rel": "copyright",
+          "href": "http://www.ripe.net/data-tools/support/documentation/terms"
+        }
+      ],
+      "objectClassName": "entity"
+    },
+    {
+      "handle": "AR1-RIPE",
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Example Abuse Role"
+          ],
+          [
+            "kind",
+            {},
+            "text",
+            "group"
+          ],
+          [
+            "tel",
+            {
+              "type": "voice"
+            },
+            "text",
+            "+1 703 555 0102"
+          ],
+          [
+            "email",
+            {
+              "type": "abuse"
+            },
+            "text",
+            "abuse@example.net"
+          ]
+        ]
+      ],
+      "roles": [
+        "abuse"
+      ],
+      "links": [
+        {
+          "value": "https://rdap.db.ripe.net/autnum/64496",
+          "rel": "self",
+          "href": "https://rdap.db.ripe.net/entity/AR1-RIPE"
+        },
+        {
+          "value": "http://www.ripe.net/data-tools/support/documentation/terms",
+          "rel": "copyright",
+          "href": "http://www.ripe.net/data-tools/support/documentation/terms"
+        }
+      ],
+      "objectClassName": "entity"
+    }
+  ],
+  "links": [
+    {
+      "value": "https://rdap.db.ripe.net/autnum/64496",
+      "rel": "self",
+      "href": "https://rdap.db.ripe.net/autnum/64496",
+      "type": "application/rdap+json"
+    }
+  ],
+  "events": [
+    {
+      "eventAction": "registration",
+      "eventDate": "2002-08-13T12:58:13Z"
+    },
+    {
+      "eventAction": "last changed",
+      "eventDate": "2026-03-19T09:33:32Z"
+    }
+  ],
+  "rdapConformance": [
+    "nro_rdap_profile_asn_flat_0",
+    "cidr0",
+    "rdap_level_0",
+    "nro_rdap_profile_0",
+    "redacted"
+  ],
+  "notices": [
+    {
+      "title": "Filtered",
+      "description": [
+        "This output has been filtered."
+      ]
+    },
+    {
+      "title": "Terms and Conditions",
+      "description": [
+        "This is the RIPE Database query service. The objects are in RDAP format."
+      ],
+      "links": [
+        {
+          "value": "https://rdap.db.ripe.net/autnum/64496",
+          "rel": "terms-of-service",
+          "href": "http://www.ripe.net/db/support/db-terms-conditions.pdf",
+          "type": "application/pdf"
+        }
+      ]
+    }
+  ],
+  "remarks": [
+    {
+      "description": [
+        "Example peering policy: announce documentation prefixes only."
+      ]
+    }
+  ],
+  "port43": "whois.ripe.net",
+  "objectClassName": "autnum",
+  "redacted": [
+    {
+      "name": {
+        "description": "Personal e-mail information"
+      },
+      "reason": {
+        "description": "Personal data"
+      },
+      "prePath": "$.entities[?(@.handle=='EA1-RIPE')].vcardArray[1][?(@[0]=='e-mail')]",
+      "method": "removal"
+    }
+  ]
+}

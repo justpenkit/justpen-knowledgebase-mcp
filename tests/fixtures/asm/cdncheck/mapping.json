@@ -1,0 +1,158 @@
+{
+  "source": "cdncheck",
+  "files": {
+    "output.jsonl": "jsonl"
+  },
+  "rows": [
+    {
+      "path": "timestamp",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "input",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_subdomain"
+      ]
+    },
+    {
+      "path": "input",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_domain"
+      ]
+    },
+    {
+      "path": "ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      }
+    },
+    {
+      "path": "ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "cdn",
+      "sink": "non_storable",
+      "reason": "implied by cdn_name, which names the provider"
+    },
+    {
+      "path": "waf",
+      "sink": "non_storable",
+      "reason": "implied by waf_name, which names the provider"
+    },
+    {
+      "path": "cloud",
+      "sink": "non_storable",
+      "reason": "implied by cloud_name, which names the provider"
+    },
+    {
+      "path": "cdn_name",
+      "sink": {
+        "node": "ip_address",
+        "property": "cdn_provider"
+      },
+      "transform": [
+        "detector_token",
+        "if_ip_input"
+      ]
+    },
+    {
+      "path": "cdn_name",
+      "sink": {
+        "node": "technology",
+        "property": "name"
+      },
+      "transform": [
+        "detector_token",
+        "if_name_input"
+      ]
+    },
+    {
+      "path": "waf_name",
+      "sink": {
+        "node": "ip_address",
+        "property": "waf_provider"
+      },
+      "transform": [
+        "detector_token",
+        "if_ip_input"
+      ]
+    },
+    {
+      "path": "waf_name",
+      "sink": {
+        "node": "technology",
+        "property": "name"
+      },
+      "transform": [
+        "detector_token",
+        "if_name_input"
+      ]
+    },
+    {
+      "path": "cloud_name",
+      "sink": {
+        "node": "ip_address",
+        "property": "cloud_provider"
+      },
+      "transform": [
+        "detector_token",
+        "if_ip_input"
+      ]
+    },
+    {
+      "path": "cloud_name",
+      "sink": {
+        "node": "technology",
+        "property": "name"
+      },
+      "transform": [
+        "detector_token",
+        "if_name_input"
+      ]
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "relation": "protected_by",
+        "property": "kind"
+      },
+      "values": [
+        "cdn"
+      ],
+      "reason": "cdn_name on a name input: the field name fixes the kind (waf_name would give waf)"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "cdncheck"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

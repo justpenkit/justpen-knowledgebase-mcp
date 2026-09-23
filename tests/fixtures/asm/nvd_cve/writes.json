@@ -1,0 +1,170 @@
+[
+  {
+    "file": "CVE-2021-44228.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "cve",
+          "properties": {
+            "value": "CVE-2021-44228",
+            "published": "2021-12-10T10:15:09.143Z",
+            "cvss_score": 10,
+            "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+            "kev_added": "2021-12-10"
+          },
+          "observed_at": "2026-09-23T03:14:51.281Z",
+          "source": "nvd"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-20"
+          },
+          "observed_at": "2026-09-23T03:14:51.281Z",
+          "source": "nvd"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-400"
+          },
+          "observed_at": "2026-09-23T03:14:51.281Z",
+          "source": "nvd"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-502"
+          },
+          "observed_at": "2026-09-23T03:14:51.281Z",
+          "source": "nvd"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-917"
+          },
+          "observed_at": "2026-09-23T03:14:51.281Z",
+          "source": "nvd"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "CVE-2025-24813.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "cve",
+          "properties": {
+            "value": "CVE-2025-24813",
+            "published": "2025-03-10T17:15:35.067Z",
+            "cvss_score": 9.8,
+            "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+            "kev_added": "2025-04-01"
+          },
+          "observed_at": "2026-09-23T03:15:28.972Z",
+          "source": "nvd"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-44"
+          },
+          "observed_at": "2026-09-23T03:15:28.972Z",
+          "source": "nvd"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-502"
+          },
+          "observed_at": "2026-09-23T03:15:28.972Z",
+          "source": "nvd"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-706"
+          },
+          "observed_at": "2026-09-23T03:15:28.972Z",
+          "source": "nvd"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

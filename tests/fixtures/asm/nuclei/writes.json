@@ -1,0 +1,736 @@
+[
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "www.example.com"
+          },
+          "observed_at": "2026-09-20T10:30:00.100523Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.10",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:30:00.100523Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 443,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-20T10:30:00.100523Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "service",
+          "properties": {
+            "name": "http",
+            "secure": true
+          },
+          "observed_at": "2026-09-20T10:30:00.100523Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/",
+            "method": "GET"
+          },
+          "observed_at": "2026-09-20T10:30:00.100523Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:http-missing-security-headers",
+            "matcher": "x-frame-options",
+            "title": "HTTP Missing Security Headers",
+            "severity": "info",
+            "scanner": "nuclei",
+            "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.\n",
+            "tags": [
+              "generic",
+              "headers",
+              "misconfig",
+              "vuln"
+            ]
+          },
+          "observed_at": "2026-09-20T10:30:00.100523Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-693"
+          },
+          "observed_at": "2026-09-20T10:30:00.100523Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:http-missing-security-headers",
+            "matcher": "content-security-policy",
+            "title": "HTTP Missing Security Headers",
+            "severity": "info",
+            "scanner": "nuclei",
+            "description": "This template searches for missing HTTP security headers. The impact of these missing headers can vary.\n",
+            "tags": [
+              "generic",
+              "headers",
+              "misconfig",
+              "vuln"
+            ]
+          },
+          "observed_at": "2026-09-20T10:30:00.100611Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "confluence.example.com"
+          },
+          "observed_at": "2026-09-20T10:30:01.23412Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.40",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:30:01.23412Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 443,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-20T10:30:01.23412Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "service",
+          "properties": {
+            "name": "http",
+            "secure": true
+          },
+          "observed_at": "2026-09-20T10:30:01.23412Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://confluence.example.com/pages/createpage.action",
+            "method": "POST"
+          },
+          "observed_at": "2026-09-20T10:30:01.23412Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:CVE-2021-26084",
+            "matcher": "",
+            "title": "Confluence Server - Remote Code Execution",
+            "severity": "critical",
+            "scanner": "nuclei",
+            "description": "Confluence Server and Data Center contain an OGNL injection vulnerability that could allow an authenticated user, and in some instances an unauthenticated user, to execute arbitrary code on a Confluence Server or Data Center instance. The affected versions are before version 6.13.23, from version 6.14.0 before 7.4.11, from version 7.5.0 before 7.11.6, and from  version 7.12.0 before 7.12.5. The vulnerable endpoints can be accessed by a non-administrator user or unauthenticated user if 'Allow people to sign up to create their account' is enabled. To check whether this is enabled go to COG > User Management > User Signup Options.",
+            "tags": [
+              "atlassian",
+              "confluence",
+              "cve",
+              "cve2021",
+              "injection",
+              "kev",
+              "ognl",
+              "rce",
+              "vkev",
+              "vuln"
+            ],
+            "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+            "cvss_score": 9.8
+          },
+          "observed_at": "2026-09-20T10:30:01.23412Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "cve",
+          "properties": {
+            "value": "CVE-2021-26084",
+            "epss_score": 0.99999,
+            "epss_percentile": 0.99992
+          },
+          "observed_at": "2026-09-20T10:30:01.23412Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-917"
+          },
+          "observed_at": "2026-09-20T10:30:01.23412Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:prototype-pollution-check",
+            "matcher": "",
+            "title": "Prototype Pollution Check",
+            "severity": "medium",
+            "scanner": "nuclei",
+            "tags": [
+              "headless",
+              "vuln"
+            ]
+          },
+          "observed_at": "2026-09-20T10:30:04.5Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/search",
+            "method": "GET"
+          },
+          "observed_at": "2026-09-20T10:30:06.75Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "parameter",
+          "properties": {
+            "name": "q",
+            "location": "query"
+          },
+          "observed_at": "2026-09-20T10:30:06.75Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:reflected-xss",
+            "matcher": "",
+            "title": "Reflected Cross-Site Scripting",
+            "severity": "medium",
+            "scanner": "nuclei",
+            "tags": [
+              "dast",
+              "rxss",
+              "vuln",
+              "xss"
+            ]
+          },
+          "observed_at": "2026-09-20T10:30:06.75Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "a.example.com"
+          },
+          "observed_at": "2026-09-20T10:30:08.001Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:weak-cipher-suites",
+            "matcher": "a.example.com:tls-1.0",
+            "title": "Weak Cipher Suites Detection",
+            "severity": "low",
+            "scanner": "nuclei",
+            "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+            "tags": [
+              "misconfig",
+              "ssl",
+              "tls",
+              "vuln"
+            ]
+          },
+          "observed_at": "2026-09-20T10:30:08.001Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "b.example.com"
+          },
+          "observed_at": "2026-09-20T10:30:08.002Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:weak-cipher-suites",
+            "matcher": "b.example.com:tls-1.0",
+            "title": "Weak Cipher Suites Detection",
+            "severity": "low",
+            "scanner": "nuclei",
+            "description": "A weak cipher is defined as an encryption/decryption algorithm that uses a key of insufficient length. Using an insufficient length for a key in an encryption/decryption algorithm opens up the possibility (or probability) that the encryption scheme could be broken.",
+            "tags": [
+              "misconfig",
+              "ssl",
+              "tls",
+              "vuln"
+            ]
+          },
+          "observed_at": "2026-09-20T10:30:08.002Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:deprecated-tls",
+            "matcher": "tls_1.1",
+            "title": "Deprecated TLS Detection",
+            "severity": "info",
+            "scanner": "nuclei",
+            "description": "Both TLS 1.1 and SSLv3 are deprecated in favor of stronger encryption.\n",
+            "tags": [
+              "ssl",
+              "tls",
+              "vuln"
+            ]
+          },
+          "observed_at": "2026-09-20T10:30:08.4Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.20",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:30:09.1Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 22,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-20T10:30:09.1Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:openssh-detect",
+            "matcher": "",
+            "title": "OpenSSH Service - Detect",
+            "severity": "info",
+            "scanner": "nuclei",
+            "description": "OpenSSH service was detected.\n",
+            "tags": [
+              "detect",
+              "detection",
+              "discovery",
+              "network",
+              "openssh",
+              "seclists",
+              "ssh",
+              "tcp"
+            ],
+            "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N"
+          },
+          "observed_at": "2026-09-20T10:30:09.1Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-200"
+          },
+          "observed_at": "2026-09-20T10:30:09.1Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:ssh-password-auth",
+            "matcher": "",
+            "title": "SSH Password-based Authentication",
+            "severity": "info",
+            "scanner": "nuclei",
+            "tags": [
+              "discovery",
+              "enum",
+              "js",
+              "network",
+              "ssh"
+            ]
+          },
+          "observed_at": "2026-09-20T10:30:09.8Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.com"
+          },
+          "observed_at": "2026-09-20T10:30:11.3Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:dmarc-detect",
+            "matcher": "",
+            "title": "DNS DMARC - Detect",
+            "severity": "info",
+            "scanner": "nuclei",
+            "description": "DNS DMARC information was detected.\n",
+            "tags": [
+              "discovery",
+              "dmarc",
+              "dns"
+            ],
+            "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N"
+          },
+          "observed_at": "2026-09-20T10:30:11.3Z",
+          "source": "nuclei"
+        },
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:whois-registrar-expiry",
+            "matcher": "expiration-date",
+            "title": "WHOIS Registrar and Expiry - Extract",
+            "severity": "unknown",
+            "scanner": "nuclei",
+            "tags": [
+              "recon",
+              "whois"
+            ]
+          },
+          "observed_at": "2026-09-20T10:30:12.6Z",
+          "source": "nuclei"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_service",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        },
+        {
+          "type": "serves_endpoint",
+          "source_ref": {
+            "node_index": 3
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 5
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 5
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 7
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 7
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 8
+          },
+          "target_ref": {
+            "node_index": 9
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 9
+          },
+          "target_ref": {
+            "node_index": 10
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_service",
+          "source_ref": {
+            "node_index": 10
+          },
+          "target_ref": {
+            "node_index": 11
+          },
+          "properties": {}
+        },
+        {
+          "type": "serves_endpoint",
+          "source_ref": {
+            "node_index": 11
+          },
+          "target_ref": {
+            "node_index": 12
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 12
+          },
+          "target_ref": {
+            "node_index": 13
+          },
+          "properties": {}
+        },
+        {
+          "type": "affected_by",
+          "source_ref": {
+            "node_index": 13
+          },
+          "target_ref": {
+            "node_index": 14
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 13
+          },
+          "target_ref": {
+            "node_index": 15
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 16
+          },
+          "properties": {}
+        },
+        {
+          "type": "serves_endpoint",
+          "source_ref": {
+            "node_index": 3
+          },
+          "target_ref": {
+            "node_index": 17
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_parameter",
+          "source_ref": {
+            "node_index": 17
+          },
+          "target_ref": {
+            "node_index": 18
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 18
+          },
+          "target_ref": {
+            "node_index": 19
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 20
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 22
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 21
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 23
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 24
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 25
+          },
+          "target_ref": {
+            "node_index": 26
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 26
+          },
+          "target_ref": {
+            "node_index": 27
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 27
+          },
+          "target_ref": {
+            "node_index": 28
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 26
+          },
+          "target_ref": {
+            "node_index": 29
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 30
+          },
+          "target_ref": {
+            "node_index": 31
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 31
+          },
+          "target_ref": {
+            "node_index": 28
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "node_index": 30
+          },
+          "target_ref": {
+            "node_index": 32
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

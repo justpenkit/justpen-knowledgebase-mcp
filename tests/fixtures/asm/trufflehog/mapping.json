@@ -1,0 +1,308 @@
+{
+  "source": "trufflehog",
+  "files": {
+    "git.jsonl": "jsonl",
+    "s3.jsonl": "jsonl"
+  },
+  "rows": [
+    {
+      "path": "SourceID",
+      "sink": "non_storable",
+      "reason": "the scan's internal source counter, meaningless outside the run"
+    },
+    {
+      "path": "SourceType",
+      "sink": "non_storable",
+      "reason": "the numeric protobuf enum behind SourceName"
+    },
+    {
+      "path": "SourceName",
+      "sink": "evidence"
+    },
+    {
+      "path": "DetectorType",
+      "sink": "non_storable",
+      "reason": "the numeric protobuf enum behind DetectorName"
+    },
+    {
+      "path": "DetectorName",
+      "sink": {
+        "node": "secret",
+        "property": "detector"
+      },
+      "transform": [
+        "detector_token"
+      ]
+    },
+    {
+      "path": "DetectorName",
+      "sink": {
+        "node": "secret",
+        "property": "kind"
+      },
+      "transform": [
+        "trufflehog_secret_kind"
+      ]
+    },
+    {
+      "path": "DetectorDescription",
+      "sink": "evidence"
+    },
+    {
+      "path": "DecoderName",
+      "sink": "evidence"
+    },
+    {
+      "path": "Verified",
+      "sink": {
+        "node": "secret",
+        "property": "verified"
+      }
+    },
+    {
+      "path": "Verified",
+      "sink": {
+        "relation": "authenticates",
+        "property": "verified"
+      }
+    },
+    {
+      "path": "VerificationError",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "VerificationFromCache",
+      "sink": "evidence"
+    },
+    {
+      "path": "Raw",
+      "sink": {
+        "node": "secret",
+        "property": "value_sha256"
+      },
+      "transform": [
+        "trufflehog_secret_part",
+        "sha256_hex"
+      ],
+      "redact": true
+    },
+    {
+      "path": "Raw",
+      "sink": {
+        "node": "secret",
+        "property": "key_id"
+      },
+      "transform": [
+        "trufflehog_public_part"
+      ],
+      "redact": true
+    },
+    {
+      "path": "RawV2",
+      "sink": "non_storable",
+      "reason": "the key id and the secret joined; the digest and key_id carry what may be stored",
+      "redact": true
+    },
+    {
+      "path": "Redacted",
+      "sink": "non_storable",
+      "reason": "the display form of the credential; key_id carries the public half",
+      "redact": true
+    },
+    {
+      "path": "ExtraData.resource_type",
+      "sink": "evidence"
+    },
+    {
+      "path": "ExtraData.rotation_guide",
+      "sink": "evidence"
+    },
+    {
+      "path": "ExtraData.account",
+      "sink": {
+        "node": "cloud_account",
+        "property": "account_id"
+      }
+    },
+    {
+      "path": "ExtraData.user_id",
+      "sink": "evidence"
+    },
+    {
+      "path": "ExtraData.arn",
+      "sink": {
+        "node": "cloud_account",
+        "property": "account_id"
+      },
+      "transform": [
+        "arn_account"
+      ]
+    },
+    {
+      "path": "ExtraData.*",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "StructuredData",
+      "sink": "evidence"
+    },
+    {
+      "path": "SecretParts.*",
+      "sink": "non_storable",
+      "reason": "the credential's raw components, secret included",
+      "redact": true
+    },
+    {
+      "path": "SourceMetadata.Data.Git.commit",
+      "sink": "evidence"
+    },
+    {
+      "path": "SourceMetadata.Data.Git.file",
+      "sink": {
+        "relation": "exposes_secret",
+        "property": "location"
+      },
+      "transform": [
+        "trufflehog_git_location"
+      ]
+    },
+    {
+      "path": "SourceMetadata.Data.Git.email",
+      "sink": "non_storable",
+      "reason": "commit author name and address: person data"
+    },
+    {
+      "path": "SourceMetadata.Data.Git.repository",
+      "sink": {
+        "node": "repository",
+        "property": "host"
+      },
+      "transform": [
+        "url_host"
+      ]
+    },
+    {
+      "path": "SourceMetadata.Data.Git.repository",
+      "sink": {
+        "node": "repository",
+        "property": "owner"
+      },
+      "transform": [
+        "repo_url_owner"
+      ]
+    },
+    {
+      "path": "SourceMetadata.Data.Git.repository",
+      "sink": {
+        "node": "repository",
+        "property": "name"
+      },
+      "transform": [
+        "repo_url_name"
+      ]
+    },
+    {
+      "path": "SourceMetadata.Data.Git.timestamp",
+      "sink": "evidence"
+    },
+    {
+      "path": "SourceMetadata.Data.Git.line",
+      "sink": "evidence"
+    },
+    {
+      "path": "SourceMetadata.Data.Git.repository_local_path",
+      "sink": "non_storable",
+      "reason": "the scanner's temporary clone directory"
+    },
+    {
+      "path": "SourceMetadata.Data.S3.bucket",
+      "sink": {
+        "node": "storage_bucket",
+        "property": "name"
+      }
+    },
+    {
+      "path": "SourceMetadata.Data.S3.file",
+      "sink": {
+        "relation": "exposes_secret",
+        "property": "location"
+      }
+    },
+    {
+      "path": "SourceMetadata.Data.S3.link",
+      "sink": "evidence"
+    },
+    {
+      "path": "SourceMetadata.Data.S3.email",
+      "sink": "non_storable",
+      "reason": "the object owner's display name: person or account holder data"
+    },
+    {
+      "path": "SourceMetadata.Data.S3.timestamp",
+      "sink": "evidence"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "repository",
+        "property": "platform"
+      },
+      "values": [
+        "github"
+      ],
+      "reason": "the git remote's host is github.com"
+    },
+    {
+      "sink": {
+        "node": "cloud_account",
+        "property": "provider"
+      },
+      "values": [
+        "aws"
+      ],
+      "reason": "the AWS detector names an AWS account"
+    },
+    {
+      "sink": {
+        "node": "storage_bucket",
+        "property": "provider"
+      },
+      "values": [
+        "aws_s3"
+      ],
+      "reason": "the s3 source reads Amazon S3 buckets"
+    },
+    {
+      "sink": {
+        "relation": "authenticates",
+        "property": "username"
+      },
+      "values": [
+        ""
+      ],
+      "reason": "an access key logs in as itself; trufflehog reports no login name"
+    },
+    {
+      "sink": {
+        "relation": "authenticates",
+        "property": "breach"
+      },
+      "values": [
+        ""
+      ],
+      "reason": "a scanner hit is not published in a breach corpus"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "trufflehog"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

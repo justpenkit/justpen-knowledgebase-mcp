@@ -1,0 +1,565 @@
+[
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.com"
+          },
+          "observed_at": "2026-09-20T12:00:00.104215Z",
+          "source": "bbot"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.10",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T12:00:00.104215Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.org",
+            "wildcard": true
+          },
+          "observed_at": "2026-09-20T12:00:41.52Z",
+          "source": "bbot"
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "dev.example.com"
+          },
+          "observed_at": "2026-09-20T12:00:42.018Z",
+          "source": "bbot"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.50",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T12:00:42.018Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "dev.example.com",
+            "wildcard": true
+          },
+          "observed_at": "2026-09-20T12:01:03.77Z",
+          "source": "bbot"
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "api.dev.example.com",
+            "wildcard_answer": false
+          },
+          "observed_at": "2026-09-20T12:01:04.105Z",
+          "source": "bbot"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.52",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T12:01:04.105Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "shop.example.org",
+            "wildcard_answer": true
+          },
+          "observed_at": "2026-09-20T12:00:12.9Z",
+          "source": "bbot"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "198.51.100.7",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T12:00:12.9Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "www.example.com"
+          },
+          "observed_at": "2026-09-20T12:00:13.4Z",
+          "source": "bbot"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.10",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T12:00:13.4Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "www.example.com"
+          },
+          "observed_at": "2026-09-20T12:01:20.25Z",
+          "source": "bbot"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.10",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T12:01:20.25Z",
+          "source": "bbot"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 443,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-20T12:01:20.25Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/",
+            "method": "GET",
+            "status": 200,
+            "title": "Example Domain"
+          },
+          "observed_at": "2026-09-20T12:01:21.6Z",
+          "source": "bbot"
+        },
+        {
+          "type": "http_fingerprint",
+          "properties": {
+            "kind": "body_sha256",
+            "value": "8112d44cde18b432e89be788180f686e4040be0e2e360c54982a2a163a1a49ef"
+          },
+          "observed_at": "2026-09-20T12:01:21.6Z",
+          "source": "bbot"
+        },
+        {
+          "type": "http_fingerprint",
+          "properties": {
+            "kind": "header_sha256",
+            "value": "3d09048892b9ac649c4bbb6cfac4ac6d95d002d20de5e4bc72338d0cf73df5ad"
+          },
+          "observed_at": "2026-09-20T12:01:21.6Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_http_fingerprint",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_http_fingerprint",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/static/app.js",
+            "method": "GET",
+            "status": 200
+          },
+          "observed_at": "2026-09-20T12:01:22.31Z",
+          "source": "bbot"
+        },
+        {
+          "type": "http_fingerprint",
+          "properties": {
+            "kind": "body_sha256",
+            "value": "6c64191a7c6a25080b3497bb5e030fbe35d0c25594e06370ebac0ab621d7f763"
+          },
+          "observed_at": "2026-09-20T12:01:22.31Z",
+          "source": "bbot"
+        },
+        {
+          "type": "http_fingerprint",
+          "properties": {
+            "kind": "header_sha256",
+            "value": "da3b2ab4fefdaf066102144bff0675d2039b2e60c9e90036a5252f9550a19e50"
+          },
+          "observed_at": "2026-09-20T12:01:22.31Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_http_fingerprint",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_http_fingerprint",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "links_to",
+          "source_ref": {
+            "ref": "8:0"
+          },
+          "target_ref": {
+            "node_index": 0
+          },
+          "properties": {
+            "element": ""
+          }
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/login",
+            "method": "GET",
+            "status": 200,
+            "title": "Sign in"
+          },
+          "observed_at": "2026-09-20T12:01:22.47Z",
+          "source": "bbot"
+        },
+        {
+          "type": "http_fingerprint",
+          "properties": {
+            "kind": "body_sha256",
+            "value": "5d0508a535f33ec3e5bb88abb323805633db53317a6e45a7e29121666919c7dc"
+          },
+          "observed_at": "2026-09-20T12:01:22.47Z",
+          "source": "bbot"
+        },
+        {
+          "type": "http_fingerprint",
+          "properties": {
+            "kind": "header_sha256",
+            "value": "ae03ec7a44d155c3ba7156241b60d293a62b45e9ed10075951efea9d35d218b3"
+          },
+          "observed_at": "2026-09-20T12:01:22.47Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_http_fingerprint",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_http_fingerprint",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "links_to",
+          "source_ref": {
+            "ref": "8:0"
+          },
+          "target_ref": {
+            "node_index": 0
+          },
+          "properties": {
+            "element": ""
+          }
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "nuclei:http-missing-security-headers",
+            "matcher": "x-frame-options",
+            "title": "http-missing-security-headers",
+            "severity": "info",
+            "confidence": "high",
+            "scanner": "bbot",
+            "description": "template: [http-missing-security-headers], name: [x-frame-options]"
+          },
+          "observed_at": "2026-09-20T12:02:20.2Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "ref": "8:0"
+          },
+          "target_ref": {
+            "node_index": 0
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "trufflehog:aws",
+            "matcher": "78314b11be2e5815",
+            "title": "TruffleHog - AWS",
+            "severity": "high",
+            "confidence": "confirmed",
+            "scanner": "bbot"
+          },
+          "observed_at": "2026-09-20T12:02:31.9Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "ref": "9:0"
+          },
+          "target_ref": {
+            "node_index": 0
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "finding",
+          "properties": {
+            "rule": "bbot:badsecrets",
+            "matcher": "badsecrets-known-secret",
+            "title": "BadSecrets - Known Secret",
+            "severity": "high",
+            "confidence": "confirmed",
+            "scanner": "bbot"
+          },
+          "observed_at": "2026-09-20T12:02:32.3Z",
+          "source": "bbot"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_finding",
+          "source_ref": {
+            "ref": "10:0"
+          },
+          "target_ref": {
+            "node_index": 0
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,451 @@
+{
+  "source": "httpx",
+  "files": {
+    "output.jsonl": "jsonl"
+  },
+  "rows": [
+    {
+      "path": "timestamp",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "url",
+      "sink": {
+        "node": "endpoint",
+        "property": "url"
+      },
+      "transform": [
+        "url_with_path"
+      ]
+    },
+    {
+      "path": "input",
+      "sink": "evidence"
+    },
+    {
+      "path": "host",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ]
+    },
+    {
+      "path": "host_ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      }
+    },
+    {
+      "path": "host_ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "port",
+      "sink": {
+        "node": "port",
+        "property": "number"
+      },
+      "transform": [
+        "int_value"
+      ]
+    },
+    {
+      "path": "scheme",
+      "sink": {
+        "node": "service",
+        "property": "name"
+      },
+      "transform": [
+        "scheme_service"
+      ]
+    },
+    {
+      "path": "scheme",
+      "sink": {
+        "node": "service",
+        "property": "secure"
+      },
+      "transform": [
+        "scheme_secure"
+      ]
+    },
+    {
+      "path": "path",
+      "sink": "non_storable",
+      "reason": "the path is part of the endpoint url"
+    },
+    {
+      "path": "method",
+      "sink": {
+        "node": "endpoint",
+        "property": "method"
+      }
+    },
+    {
+      "path": "location",
+      "sink": {
+        "node": "endpoint",
+        "property": "url"
+      }
+    },
+    {
+      "path": "final_url",
+      "sink": {
+        "node": "endpoint",
+        "property": "url"
+      },
+      "documented_only": true
+    },
+    {
+      "path": "status_code",
+      "sink": {
+        "node": "endpoint",
+        "property": "status"
+      }
+    },
+    {
+      "path": "content_length",
+      "sink": {
+        "node": "endpoint",
+        "property": "content_length"
+      }
+    },
+    {
+      "path": "content_type",
+      "sink": {
+        "node": "endpoint",
+        "property": "content_type"
+      },
+      "transform": [
+        "media_type_essence"
+      ]
+    },
+    {
+      "path": "title",
+      "sink": {
+        "node": "endpoint",
+        "property": "title"
+      }
+    },
+    {
+      "path": "webserver",
+      "sink": {
+        "node": "endpoint",
+        "property": "webserver"
+      }
+    },
+    {
+      "path": "header.*",
+      "sink": "evidence"
+    },
+    {
+      "path": "body",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "raw_header",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "a",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      },
+      "each": true
+    },
+    {
+      "path": "a",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "each": true,
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "aaaa",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      },
+      "each": true
+    },
+    {
+      "path": "aaaa",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "each": true,
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "cname",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "each": true,
+      "transform": [
+        "strip_trailing_dot"
+      ]
+    },
+    {
+      "path": "cname",
+      "sink": {
+        "node": "cloud_resource",
+        "property": "hostname"
+      },
+      "each": true,
+      "transform": [
+        "strip_trailing_dot"
+      ]
+    },
+    {
+      "path": "cname",
+      "sink": {
+        "node": "cloud_resource",
+        "property": "service"
+      },
+      "each": true,
+      "transform": [
+        "cloud_service"
+      ]
+    },
+    {
+      "path": "cdn",
+      "sink": "non_storable",
+      "reason": "implied by cdn_name, which names the provider"
+    },
+    {
+      "path": "cdn_name",
+      "sink": {
+        "node": "ip_address",
+        "property": "cdn_provider"
+      },
+      "transform": [
+        "detector_token"
+      ]
+    },
+    {
+      "path": "cdn_type",
+      "sink": "non_storable",
+      "reason": "selects which provider property cdn_name feeds; every record in this fixture is `cdn`, so cdn_name maps to cdn_provider"
+    },
+    {
+      "path": "asn.as_number",
+      "sink": {
+        "node": "asn",
+        "property": "value"
+      },
+      "transform": [
+        "asn_number"
+      ]
+    },
+    {
+      "path": "asn.as_name",
+      "sink": {
+        "node": "asn",
+        "property": "name"
+      }
+    },
+    {
+      "path": "asn.as_country",
+      "sink": {
+        "node": "asn",
+        "property": "country"
+      }
+    },
+    {
+      "path": "asn.as_range",
+      "sink": {
+        "node": "ip_cidr",
+        "property": "value"
+      },
+      "each": true
+    },
+    {
+      "path": "asn.as_range",
+      "sink": {
+        "node": "ip_cidr",
+        "property": "version"
+      },
+      "each": true,
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "tech",
+      "sink": {
+        "node": "technology",
+        "property": "name"
+      },
+      "each": true,
+      "transform": [
+        "wappalyzer_name_slug"
+      ]
+    },
+    {
+      "path": "tech",
+      "sink": {
+        "relation": "runs_technology",
+        "property": "version"
+      },
+      "each": true,
+      "transform": [
+        "wappalyzer_version"
+      ]
+    },
+    {
+      "path": "favicon",
+      "sink": {
+        "node": "http_fingerprint",
+        "property": "value"
+      }
+    },
+    {
+      "path": "favicon_md5",
+      "sink": "non_storable",
+      "reason": "favicon_mmh3 is the pivot the catalog keys; md5 duplicates it"
+    },
+    {
+      "path": "favicon_path",
+      "sink": "evidence"
+    },
+    {
+      "path": "favicon_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "jarm_hash",
+      "sink": {
+        "node": "tls_fingerprint",
+        "property": "value"
+      }
+    },
+    {
+      "path": "hash.body_sha256",
+      "sink": {
+        "node": "http_fingerprint",
+        "property": "value"
+      }
+    },
+    {
+      "path": "hash.header_sha256",
+      "sink": {
+        "node": "http_fingerprint",
+        "property": "value"
+      }
+    },
+    {
+      "path": "words",
+      "sink": "non_storable",
+      "reason": "volatile response metric"
+    },
+    {
+      "path": "lines",
+      "sink": "non_storable",
+      "reason": "volatile response metric"
+    },
+    {
+      "path": "time",
+      "sink": "non_storable",
+      "reason": "volatile response metric"
+    },
+    {
+      "path": "failed",
+      "sink": "non_storable",
+      "reason": "only successful probes are written"
+    },
+    {
+      "path": "knowledgebase.*",
+      "sink": "evidence"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "port",
+        "property": "transport"
+      },
+      "values": [
+        "tcp"
+      ],
+      "reason": "httpx probes over TCP"
+    },
+    {
+      "sink": {
+        "node": "http_fingerprint",
+        "property": "kind"
+      },
+      "values": [
+        "favicon_mmh3",
+        "body_sha256",
+        "header_sha256"
+      ],
+      "reason": "the field name fixes the fingerprint kind"
+    },
+    {
+      "sink": {
+        "node": "tls_fingerprint",
+        "property": "kind"
+      },
+      "values": [
+        "jarm"
+      ],
+      "reason": "jarm_hash is a JARM fingerprint"
+    },
+    {
+      "sink": {
+        "relation": "redirects_to",
+        "property": "status"
+      },
+      "values": [
+        301
+      ],
+      "reason": "the status_code of the record whose location names the target"
+    },
+    {
+      "sink": {
+        "relation": "protected_by",
+        "property": "kind"
+      },
+      "values": [
+        "cdn"
+      ],
+      "reason": "cdn_type cdn with a cdn_name on the probed host"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "httpx"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

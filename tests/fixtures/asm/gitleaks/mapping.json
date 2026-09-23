@@ -1,0 +1,179 @@
+{
+  "source": "gitleaks",
+  "files": {
+    "gitleaks.json": "json"
+  },
+  "rows": [
+    {
+      "path": "RuleID",
+      "sink": {
+        "node": "secret",
+        "property": "detector"
+      },
+      "transform": [
+        "detector_token"
+      ]
+    },
+    {
+      "path": "RuleID",
+      "sink": {
+        "node": "secret",
+        "property": "kind"
+      },
+      "transform": [
+        "gitleaks_secret_kind"
+      ]
+    },
+    {
+      "path": "Description",
+      "sink": "evidence"
+    },
+    {
+      "path": "StartLine",
+      "sink": "evidence"
+    },
+    {
+      "path": "EndLine",
+      "sink": "evidence"
+    },
+    {
+      "path": "StartColumn",
+      "sink": "evidence"
+    },
+    {
+      "path": "EndColumn",
+      "sink": "evidence"
+    },
+    {
+      "path": "Line",
+      "sink": "non_storable",
+      "reason": "the whole source line, secret included; `json:\"-\"` keeps it out of the report",
+      "redact": true,
+      "documented_only": true
+    },
+    {
+      "path": "Match",
+      "sink": "non_storable",
+      "reason": "the matched text, secret included",
+      "redact": true
+    },
+    {
+      "path": "Secret",
+      "sink": {
+        "node": "secret",
+        "property": "value_sha256"
+      },
+      "transform": [
+        "sha256_hex"
+      ],
+      "redact": true
+    },
+    {
+      "path": "File",
+      "sink": {
+        "relation": "exposes_secret",
+        "property": "location"
+      },
+      "transform": [
+        "gitleaks_location"
+      ]
+    },
+    {
+      "path": "SymlinkFile",
+      "sink": "evidence"
+    },
+    {
+      "path": "Commit",
+      "sink": "evidence"
+    },
+    {
+      "path": "Link",
+      "sink": {
+        "node": "repository",
+        "property": "host"
+      },
+      "transform": [
+        "url_host"
+      ]
+    },
+    {
+      "path": "Link",
+      "sink": {
+        "node": "repository",
+        "property": "owner"
+      },
+      "transform": [
+        "repo_url_owner"
+      ]
+    },
+    {
+      "path": "Link",
+      "sink": {
+        "node": "repository",
+        "property": "name"
+      },
+      "transform": [
+        "repo_url_name"
+      ]
+    },
+    {
+      "path": "Entropy",
+      "sink": "non_storable",
+      "reason": "a scanner-internal score of the secret"
+    },
+    {
+      "path": "Author",
+      "sink": "non_storable",
+      "reason": "commit author name: person data"
+    },
+    {
+      "path": "Email",
+      "sink": "non_storable",
+      "reason": "commit author address: person data"
+    },
+    {
+      "path": "Date",
+      "sink": "evidence"
+    },
+    {
+      "path": "Message",
+      "sink": "evidence"
+    },
+    {
+      "path": "Tags",
+      "sink": "evidence"
+    },
+    {
+      "path": "Fingerprint",
+      "sink": "evidence"
+    },
+    {
+      "path": "Fragment.*",
+      "sink": "non_storable",
+      "reason": "never set on a reported finding (`omitempty` drops the nil pointer); it would carry the scanned text",
+      "redact": true,
+      "documented_only": true
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "repository",
+        "property": "platform"
+      },
+      "values": [
+        "github"
+      ],
+      "reason": "gitleaks built the Link for the github platform"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "gitleaks"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

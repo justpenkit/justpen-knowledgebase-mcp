@@ -1,0 +1,209 @@
+{
+  "source": "entra_realm",
+  "files": {
+    "openid-configuration.json": "json",
+    "getuserrealm.json": "json"
+  },
+  "rows": [
+    {
+      "path": "issuer",
+      "sink": {
+        "node": "identity_tenant",
+        "property": "tenant_id"
+      },
+      "transform": [
+        "openid_tenant_id"
+      ]
+    },
+    {
+      "path": "token_endpoint",
+      "sink": {
+        "node": "identity_tenant",
+        "property": "tenant_id"
+      },
+      "transform": [
+        "openid_tenant_id"
+      ]
+    },
+    {
+      "path": "token_endpoint_auth_methods_supported",
+      "sink": "evidence"
+    },
+    {
+      "path": "jwks_uri",
+      "sink": "evidence"
+    },
+    {
+      "path": "response_modes_supported",
+      "sink": "evidence"
+    },
+    {
+      "path": "subject_types_supported",
+      "sink": "evidence"
+    },
+    {
+      "path": "id_token_signing_alg_values_supported",
+      "sink": "evidence"
+    },
+    {
+      "path": "response_types_supported",
+      "sink": "evidence"
+    },
+    {
+      "path": "scopes_supported",
+      "sink": "evidence"
+    },
+    {
+      "path": "request_uri_parameter_supported",
+      "sink": "evidence"
+    },
+    {
+      "path": "userinfo_endpoint",
+      "sink": "evidence"
+    },
+    {
+      "path": "authorization_endpoint",
+      "sink": "evidence"
+    },
+    {
+      "path": "device_authorization_endpoint",
+      "sink": "evidence"
+    },
+    {
+      "path": "http_logout_supported",
+      "sink": "evidence"
+    },
+    {
+      "path": "frontchannel_logout_supported",
+      "sink": "evidence"
+    },
+    {
+      "path": "end_session_endpoint",
+      "sink": "evidence"
+    },
+    {
+      "path": "claims_supported",
+      "sink": "evidence"
+    },
+    {
+      "path": "kerberos_endpoint",
+      "sink": "evidence"
+    },
+    {
+      "path": "mtls_endpoint_aliases.token_endpoint",
+      "sink": "evidence"
+    },
+    {
+      "path": "tls_client_certificate_bound_access_tokens",
+      "sink": "evidence"
+    },
+    {
+      "path": "tenant_region_scope",
+      "sink": "evidence"
+    },
+    {
+      "path": "cloud_instance_name",
+      "sink": "evidence"
+    },
+    {
+      "path": "cloud_graph_host_name",
+      "sink": "evidence"
+    },
+    {
+      "path": "msgraph_host",
+      "sink": "evidence"
+    },
+    {
+      "path": "rbac_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "State",
+      "sink": "non_storable",
+      "reason": "an undocumented getuserrealm code with no published meaning; it stays in evidence"
+    },
+    {
+      "path": "UserState",
+      "sink": "non_storable",
+      "reason": "an undocumented getuserrealm code with no published meaning; it stays in evidence"
+    },
+    {
+      "path": "Login",
+      "sink": "evidence"
+    },
+    {
+      "path": "NameSpaceType",
+      "sink": {
+        "relation": "federates_with",
+        "property": "namespace_type"
+      },
+      "transform": [
+        "lower"
+      ]
+    },
+    {
+      "path": "DomainName",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ]
+    },
+    {
+      "path": "FederationGlobalVersion",
+      "sink": "non_storable",
+      "reason": "an undocumented getuserrealm code with no published meaning; it stays in evidence"
+    },
+    {
+      "path": "AuthURL",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "url_host"
+      ]
+    },
+    {
+      "path": "FederationBrandName",
+      "sink": "non_storable",
+      "reason": "the tenant's display brand, a company name; company types are out of scope"
+    },
+    {
+      "path": "AuthNForwardType",
+      "sink": "non_storable",
+      "reason": "an undocumented getuserrealm code with no published meaning; it stays in evidence"
+    },
+    {
+      "path": "CloudInstanceName",
+      "sink": "evidence"
+    },
+    {
+      "path": "CloudInstanceIssuerUri",
+      "sink": "evidence"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "identity_tenant",
+        "property": "provider"
+      },
+      "values": [
+        "entra_id"
+      ],
+      "reason": "the OpenID configuration comes from login.microsoftonline.com, the Entra ID authority"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "entra_realm"
+      ],
+      "reason": "the source that produced the output"
+    }
+  ]
+}

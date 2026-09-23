@@ -1,0 +1,90 @@
+{
+  "source": "first_epss",
+  "files": {
+    "epss.json": "json"
+  },
+  "rows": [
+    {
+      "path": "status",
+      "sink": "non_storable",
+      "reason": "the API call's status"
+    },
+    {
+      "path": "status-code",
+      "sink": "non_storable",
+      "reason": "the API call's HTTP status"
+    },
+    {
+      "path": "version",
+      "sink": "non_storable",
+      "reason": "the API's version, not a fact about the CVE"
+    },
+    {
+      "path": "access",
+      "sink": "non_storable",
+      "reason": "the API's access level"
+    },
+    {
+      "path": "total",
+      "sink": "non_storable",
+      "reason": "paging of the API response"
+    },
+    {
+      "path": "offset",
+      "sink": "non_storable",
+      "reason": "paging of the API response"
+    },
+    {
+      "path": "limit",
+      "sink": "non_storable",
+      "reason": "paging of the API response"
+    },
+    {
+      "path": "data[].cve",
+      "sink": {
+        "node": "cve",
+        "property": "value"
+      }
+    },
+    {
+      "path": "data[].epss",
+      "sink": {
+        "node": "cve",
+        "property": "epss_score"
+      },
+      "transform": [
+        "float_value"
+      ]
+    },
+    {
+      "path": "data[].percentile",
+      "sink": {
+        "node": "cve",
+        "property": "epss_percentile"
+      },
+      "transform": [
+        "float_value"
+      ]
+    },
+    {
+      "path": "data[].date",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "first-epss"
+      ],
+      "reason": "the API that produced the output"
+    }
+  ]
+}

@@ -1298,7 +1298,7 @@ def _build_catalog(
 
 # The bundled registries decide what `dns_name` and `service_name` accept, so their parsed content is
 # part of the contract: refreshing the PSL or the service whitelist refuses workspaces written under
-# the old one instead of silently reclassifying their names (BC-3).
+# the old one instead of silently reclassifying their names.
 _REGISTRIES = {"public_suffix_list": rules_digest(), "service_names": registry_digest()}
 
 _CATALOG = _build_catalog(_NODES, _RELATIONS, _FORMATS, _CHECKS, _ENDPOINT_CHECKS, _CANONICALIZATIONS, _REGISTRIES)

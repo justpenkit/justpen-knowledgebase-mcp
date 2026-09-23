@@ -1,0 +1,567 @@
+{
+  "source": "github_repository",
+  "files": {
+    "repository.json": "json"
+  },
+  "rows": [
+    {
+      "path": "id",
+      "sink": "evidence"
+    },
+    {
+      "path": "node_id",
+      "sink": "evidence"
+    },
+    {
+      "path": "name",
+      "sink": {
+        "node": "repository",
+        "property": "name"
+      },
+      "transform": [
+        "lower"
+      ]
+    },
+    {
+      "path": "full_name",
+      "sink": "non_storable",
+      "reason": "owner and name joined by `/`; both are mapped"
+    },
+    {
+      "path": "private",
+      "sink": "non_storable",
+      "reason": "implied by visibility"
+    },
+    {
+      "path": "owner.login",
+      "sink": {
+        "node": "repository",
+        "property": "owner"
+      },
+      "transform": [
+        "lower"
+      ]
+    },
+    {
+      "path": "owner.id",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.node_id",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.avatar_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.gravatar_id",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.html_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.followers_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.following_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.gists_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.starred_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.subscriptions_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.organizations_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.repos_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.events_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.received_events_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.type",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.user_view_type",
+      "sink": "evidence"
+    },
+    {
+      "path": "owner.site_admin",
+      "sink": "evidence"
+    },
+    {
+      "path": "html_url",
+      "sink": {
+        "node": "repository",
+        "property": "host"
+      },
+      "transform": [
+        "url_host"
+      ]
+    },
+    {
+      "path": "description",
+      "sink": "evidence"
+    },
+    {
+      "path": "fork",
+      "sink": {
+        "node": "repository",
+        "property": "fork"
+      }
+    },
+    {
+      "path": "url",
+      "sink": "evidence"
+    },
+    {
+      "path": "forks_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "keys_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "collaborators_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "teams_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "hooks_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "issue_events_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "events_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "assignees_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "branches_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "tags_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "blobs_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "git_tags_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "git_refs_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "trees_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "statuses_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "languages_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "stargazers_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "contributors_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "subscribers_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "subscription_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "commits_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "git_commits_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "comments_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "issue_comment_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "contents_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "compare_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "merges_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "archive_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "downloads_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "issues_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "pulls_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "milestones_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "notifications_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "labels_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "releases_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "deployments_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "created_at",
+      "sink": "evidence"
+    },
+    {
+      "path": "updated_at",
+      "sink": "evidence"
+    },
+    {
+      "path": "pushed_at",
+      "sink": "evidence"
+    },
+    {
+      "path": "git_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "ssh_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "clone_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "svn_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "homepage",
+      "sink": "evidence"
+    },
+    {
+      "path": "size",
+      "sink": "evidence"
+    },
+    {
+      "path": "stargazers_count",
+      "sink": "evidence"
+    },
+    {
+      "path": "watchers_count",
+      "sink": "evidence"
+    },
+    {
+      "path": "language",
+      "sink": "evidence"
+    },
+    {
+      "path": "has_issues",
+      "sink": "evidence"
+    },
+    {
+      "path": "has_projects",
+      "sink": "evidence"
+    },
+    {
+      "path": "has_downloads",
+      "sink": "evidence"
+    },
+    {
+      "path": "has_wiki",
+      "sink": "evidence"
+    },
+    {
+      "path": "has_pages",
+      "sink": "evidence"
+    },
+    {
+      "path": "has_discussions",
+      "sink": "evidence"
+    },
+    {
+      "path": "forks_count",
+      "sink": "evidence"
+    },
+    {
+      "path": "mirror_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "archived",
+      "sink": {
+        "node": "repository",
+        "property": "archived"
+      }
+    },
+    {
+      "path": "disabled",
+      "sink": "evidence"
+    },
+    {
+      "path": "open_issues_count",
+      "sink": "evidence"
+    },
+    {
+      "path": "license.key",
+      "sink": "evidence"
+    },
+    {
+      "path": "license.name",
+      "sink": "evidence"
+    },
+    {
+      "path": "license.spdx_id",
+      "sink": "evidence"
+    },
+    {
+      "path": "license.url",
+      "sink": "evidence"
+    },
+    {
+      "path": "license.node_id",
+      "sink": "evidence"
+    },
+    {
+      "path": "allow_forking",
+      "sink": "evidence"
+    },
+    {
+      "path": "is_template",
+      "sink": "evidence"
+    },
+    {
+      "path": "web_commit_signoff_required",
+      "sink": "evidence"
+    },
+    {
+      "path": "has_pull_requests",
+      "sink": "evidence"
+    },
+    {
+      "path": "pull_request_creation_policy",
+      "sink": "evidence"
+    },
+    {
+      "path": "topics",
+      "sink": "evidence"
+    },
+    {
+      "path": "visibility",
+      "sink": {
+        "node": "repository",
+        "property": "visibility"
+      }
+    },
+    {
+      "path": "forks",
+      "sink": "evidence"
+    },
+    {
+      "path": "open_issues",
+      "sink": "evidence"
+    },
+    {
+      "path": "watchers",
+      "sink": "evidence"
+    },
+    {
+      "path": "default_branch",
+      "sink": {
+        "node": "repository",
+        "property": "default_branch"
+      }
+    },
+    {
+      "path": "temp_clone_token",
+      "sink": "non_storable",
+      "reason": "a short-lived clone token when the caller is authenticated",
+      "redact": true
+    },
+    {
+      "path": "custom_properties.*",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.login",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.id",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.node_id",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.avatar_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.gravatar_id",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.html_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.followers_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.following_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.gists_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.starred_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.subscriptions_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.organizations_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.repos_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.events_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.received_events_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.type",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.user_view_type",
+      "sink": "evidence"
+    },
+    {
+      "path": "organization.site_admin",
+      "sink": "evidence"
+    },
+    {
+      "path": "network_count",
+      "sink": "evidence"
+    },
+    {
+      "path": "subscribers_count",
+      "sink": "evidence"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "repository",
+        "property": "platform"
+      },
+      "values": [
+        "github"
+      ],
+      "reason": "the object comes from the GitHub REST API"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "github"
+      ],
+      "reason": "the API that produced the output"
+    }
+  ]
+}

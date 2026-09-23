@@ -1,0 +1,171 @@
+{
+  "objectClassName": "domain",
+  "ldhName": "example.io",
+  "links": [
+    {
+      "value": "https://rdap.identitydigital.services/rdap/domain/example.io",
+      "rel": "self",
+      "href": "https://rdap.identitydigital.services/rdap/domain/example.io",
+      "type": "application/rdap+json"
+    }
+  ],
+  "status": [
+    "client transfer prohibited"
+  ],
+  "entities": [
+    {
+      "objectClassName": "entity",
+      "handle": "EXAMPLE-REGISTRAR",
+      "roles": [
+        "registrar"
+      ],
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Example Registrar Ltd"
+          ]
+        ]
+      ]
+    },
+    {
+      "objectClassName": "entity",
+      "roles": [
+        "registrant"
+      ],
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            ""
+          ],
+          [
+            "adr",
+            {},
+            "text",
+            [
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "GB"
+            ]
+          ]
+        ]
+      ]
+    }
+  ],
+  "events": [
+    {
+      "eventAction": "registration",
+      "eventDate": "2014-05-02T10:21:40Z"
+    },
+    {
+      "eventAction": "expiration",
+      "eventDate": "2027-05-02T10:21:40Z"
+    },
+    {
+      "eventAction": "last changed",
+      "eventDate": "2026-04-18T09:30:02Z"
+    },
+    {
+      "eventAction": "last update of RDAP database",
+      "eventDate": "2026-09-23T03:20:11Z"
+    }
+  ],
+  "secureDNS": {
+    "delegationSigned": false,
+    "maxSigLife": 1
+  },
+  "nameservers": [
+    {
+      "objectClassName": "nameserver",
+      "ldhName": "ns1.example.net"
+    },
+    {
+      "objectClassName": "nameserver",
+      "ldhName": "ns2.example.net"
+    }
+  ],
+  "port43": "whois.nic.io",
+  "rdapConformance": [
+    "rdap_level_0",
+    "icann_rdap_technical_implementation_guide_1",
+    "icann_rdap_response_profile_1",
+    "redacted"
+  ],
+  "redacted": [
+    {
+      "name": {
+        "type": "Registry Domain ID"
+      },
+      "prePath": "$.handle",
+      "pathLang": "jsonpath",
+      "method": "removal",
+      "reason": {
+        "description": "Server policy"
+      }
+    },
+    {
+      "name": {
+        "type": "Registrant Name"
+      },
+      "postPath": "$.entities[?(@.roles[0]=='registrant')].vcardArray[1][?(@[0]=='fn')][3]",
+      "pathLang": "jsonpath",
+      "method": "emptyValue",
+      "reason": {
+        "description": "Server policy"
+      }
+    }
+  ],
+  "notices": [
+    {
+      "title": "Terms of Service",
+      "description": [
+        "Service subject to Terms of Use."
+      ],
+      "links": [
+        {
+          "href": "https://www.example.net/rdap/terms-of-service",
+          "type": "text/html",
+          "value": "https://rdap.identitydigital.services/rdap/domain/example.io",
+          "rel": "terms-of-service"
+        }
+      ]
+    },
+    {
+      "title": "Status Codes",
+      "description": [
+        "For more information on domain status codes, please visit https://icann.org/epp"
+      ],
+      "links": [
+        {
+          "href": "https://icann.org/epp",
+          "type": "text/html",
+          "value": "https://rdap.identitydigital.services/rdap/domain/example.io",
+          "rel": "glossary"
+        }
+      ]
+    }
+  ]
+}

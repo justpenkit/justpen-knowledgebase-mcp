@@ -1,0 +1,322 @@
+{
+  "source": "rdap_ip",
+  "files": {
+    "ip-198.51.100.0.json": "json"
+  },
+  "rows": [
+    {
+      "path": "rdapConformance",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].title",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].description",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].value",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].rel",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].href",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].type",
+      "sink": "evidence"
+    },
+    {
+      "path": "objectClassName",
+      "sink": "evidence"
+    },
+    {
+      "path": "handle",
+      "sink": "evidence"
+    },
+    {
+      "path": "startAddress",
+      "sink": {
+        "node": "ip_cidr",
+        "property": "value"
+      },
+      "transform": [
+        "rdap_range_cidr"
+      ]
+    },
+    {
+      "path": "startAddress",
+      "sink": {
+        "node": "ip_cidr",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "endAddress",
+      "sink": "non_storable",
+      "reason": "closes the range startAddress opens; the network value carries both bounds"
+    },
+    {
+      "path": "ipVersion",
+      "sink": "non_storable",
+      "reason": "restates the version the network value fixes"
+    },
+    {
+      "path": "name",
+      "sink": {
+        "node": "ip_cidr",
+        "property": "netname"
+      }
+    },
+    {
+      "path": "type",
+      "sink": "evidence"
+    },
+    {
+      "path": "country",
+      "sink": {
+        "node": "ip_cidr",
+        "property": "country"
+      }
+    },
+    {
+      "path": "parentHandle",
+      "sink": "evidence"
+    },
+    {
+      "path": "cidr0_cidrs[].v4prefix",
+      "sink": "evidence"
+    },
+    {
+      "path": "cidr0_cidrs[].v6prefix",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "cidr0_cidrs[].length",
+      "sink": "evidence"
+    },
+    {
+      "path": "status",
+      "sink": "evidence"
+    },
+    {
+      "path": "port43",
+      "sink": {
+        "node": "ip_cidr",
+        "property": "rir"
+      },
+      "transform": [
+        "rir_from_whois_server"
+      ]
+    },
+    {
+      "path": "port43",
+      "sink": {
+        "node": "organization",
+        "property": "registry"
+      },
+      "transform": [
+        "rir_from_whois_server"
+      ]
+    },
+    {
+      "path": "events[].eventAction",
+      "sink": "evidence"
+    },
+    {
+      "path": "events[].eventDate",
+      "sink": "evidence"
+    },
+    {
+      "path": "links[].value",
+      "sink": "evidence"
+    },
+    {
+      "path": "links[].rel",
+      "sink": "evidence"
+    },
+    {
+      "path": "links[].href",
+      "sink": "evidence"
+    },
+    {
+      "path": "links[].type",
+      "sink": "evidence"
+    },
+    {
+      "path": "remarks[].title",
+      "sink": "evidence"
+    },
+    {
+      "path": "remarks[].description",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].objectClassName",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].handle",
+      "sink": {
+        "node": "organization",
+        "property": "handle"
+      },
+      "transform": [
+        "rdap_holder_handle"
+      ]
+    },
+    {
+      "path": "entities[].roles",
+      "sink": "non_storable",
+      "reason": "selects the holder entity (registrant, kind org) that operated_by points at"
+    },
+    {
+      "path": "entities[].vcardArray",
+      "sink": {
+        "node": "organization",
+        "property": "name"
+      },
+      "transform": [
+        "rdap_holder_name"
+      ]
+    },
+    {
+      "path": "entities[].vcardArray",
+      "sink": "non_storable",
+      "reason": "the holder's postal address and card metadata; only its fn names the organization"
+    },
+    {
+      "path": "entities[].port43",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].events[].eventAction",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].events[].eventDate",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].links[].value",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].links[].rel",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].links[].href",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].links[].type",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].objectClassName",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].handle",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].roles",
+      "sink": {
+        "relation": "has_contact",
+        "property": "role"
+      },
+      "transform": [
+        "rdap_abuse_role"
+      ],
+      "each": true
+    },
+    {
+      "path": "entities[].entities[].vcardArray",
+      "sink": {
+        "node": "email_address",
+        "property": "value"
+      },
+      "transform": [
+        "rdap_abuse_email"
+      ]
+    },
+    {
+      "path": "entities[].entities[].vcardArray",
+      "sink": {
+        "node": "phone",
+        "property": "value"
+      },
+      "transform": [
+        "rdap_abuse_phone"
+      ]
+    },
+    {
+      "path": "entities[].entities[].vcardArray",
+      "sink": "non_storable",
+      "reason": "the contact card's fn, org and postal address; a point-of-contact name can be a person's name, and person and company types are out of scope, so they stay in evidence"
+    },
+    {
+      "path": "entities[].entities[].port43",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].status",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].events[].eventAction",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].events[].eventDate",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].links[].value",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].links[].rel",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].links[].href",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].links[].type",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].remarks[].title",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].remarks[].description",
+      "sink": "evidence"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "rdap_ip"
+      ],
+      "reason": "the source that produced the output"
+    }
+  ]
+}

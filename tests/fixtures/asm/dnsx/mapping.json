@@ -1,0 +1,546 @@
+{
+  "source": "dnsx",
+  "files": {
+    "output.jsonl": "jsonl"
+  },
+  "rows": [
+    {
+      "path": "timestamp",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "host",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "dmarc_owner_name",
+        "if_domain"
+      ]
+    },
+    {
+      "path": "host",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "dmarc_owner_name",
+        "if_subdomain"
+      ]
+    },
+    {
+      "path": "mx",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_domain"
+      ],
+      "each": true
+    },
+    {
+      "path": "mx",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_subdomain"
+      ],
+      "each": true
+    },
+    {
+      "path": "ns",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_domain"
+      ],
+      "each": true
+    },
+    {
+      "path": "ns",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_subdomain"
+      ],
+      "each": true
+    },
+    {
+      "path": "cname",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_domain"
+      ],
+      "each": true
+    },
+    {
+      "path": "cname",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_subdomain"
+      ],
+      "each": true
+    },
+    {
+      "path": "ttl",
+      "sink": "non_storable",
+      "reason": "resolver cache lifetime of the answer, not a fact of the name"
+    },
+    {
+      "path": "resolver",
+      "sink": "non_storable",
+      "reason": "the resolver that answered: scanner configuration"
+    },
+    {
+      "path": "status_code",
+      "sink": "non_storable",
+      "reason": "only names that answered are written; the rcode stays in evidence"
+    },
+    {
+      "path": "query-time",
+      "sink": "non_storable",
+      "reason": "volatile response metric"
+    },
+    {
+      "path": "a",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      },
+      "each": true
+    },
+    {
+      "path": "a",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ],
+      "each": true
+    },
+    {
+      "path": "aaaa",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      },
+      "each": true
+    },
+    {
+      "path": "aaaa",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ],
+      "each": true
+    },
+    {
+      "path": "cname",
+      "sink": {
+        "node": "cloud_resource",
+        "property": "hostname"
+      },
+      "transform": [
+        "if_cloud_hostname"
+      ],
+      "each": true
+    },
+    {
+      "path": "cname",
+      "sink": {
+        "node": "cloud_resource",
+        "property": "service"
+      },
+      "transform": [
+        "cloud_service_or_none"
+      ],
+      "each": true
+    },
+    {
+      "path": "cname",
+      "sink": {
+        "node": "cloud_resource",
+        "property": "region"
+      },
+      "transform": [
+        "cloud_region"
+      ],
+      "each": true
+    },
+    {
+      "path": "soa[].name",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_domain"
+      ]
+    },
+    {
+      "path": "soa[].name",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_subdomain"
+      ]
+    },
+    {
+      "path": "soa[].ns",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_domain"
+      ]
+    },
+    {
+      "path": "soa[].ns",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_subdomain"
+      ]
+    },
+    {
+      "path": "soa[].mailbox",
+      "sink": "evidence",
+      "reason": "the zone's RNAME in DNS-name form; no has_contact role describes a zone administrator mailbox"
+    },
+    {
+      "path": "soa[].serial",
+      "sink": "non_storable",
+      "reason": "zone version counter, changes on every zone edit"
+    },
+    {
+      "path": "soa[].refresh",
+      "sink": "non_storable",
+      "reason": "zone timer, secondary-server configuration"
+    },
+    {
+      "path": "soa[].retry",
+      "sink": "non_storable",
+      "reason": "zone timer, secondary-server configuration"
+    },
+    {
+      "path": "soa[].expire",
+      "sink": "non_storable",
+      "reason": "zone timer, secondary-server configuration"
+    },
+    {
+      "path": "soa[].minttl",
+      "sink": "non_storable",
+      "reason": "negative-caching TTL, resolver configuration"
+    },
+    {
+      "path": "txt",
+      "sink": {
+        "node": "txt_record",
+        "property": "value"
+      },
+      "transform": [
+        "if_txt_record"
+      ],
+      "each": true
+    },
+    {
+      "path": "txt",
+      "sink": {
+        "node": "spf_record",
+        "property": "value"
+      },
+      "transform": [
+        "if_spf_record"
+      ],
+      "each": true
+    },
+    {
+      "path": "txt",
+      "sink": {
+        "node": "dmarc_record",
+        "property": "value"
+      },
+      "transform": [
+        "if_dmarc_record"
+      ],
+      "each": true
+    },
+    {
+      "path": "caa",
+      "sink": "evidence",
+      "reason": "retryabledns keeps only the CAA value and drops flags and tag; the typed rows read the tagged record from `all`"
+    },
+    {
+      "path": "all",
+      "sink": {
+        "relation": "has_mail_exchange",
+        "property": "preference"
+      },
+      "transform": [
+        "rr_mx_preference"
+      ],
+      "each": true
+    },
+    {
+      "path": "all",
+      "sink": {
+        "relation": "caa_issue",
+        "property": "flags"
+      },
+      "transform": [
+        "rr_caa_issue_flags"
+      ],
+      "each": true
+    },
+    {
+      "path": "all",
+      "sink": {
+        "relation": "caa_issue",
+        "property": "parameters"
+      },
+      "transform": [
+        "rr_caa_issue_parameters"
+      ],
+      "each": true
+    },
+    {
+      "path": "all",
+      "sink": {
+        "relation": "caa_issuewild",
+        "property": "flags"
+      },
+      "transform": [
+        "rr_caa_issuewild_flags"
+      ],
+      "each": true
+    },
+    {
+      "path": "all",
+      "sink": {
+        "relation": "caa_issuewild",
+        "property": "parameters"
+      },
+      "transform": [
+        "rr_caa_issuewild_parameters"
+      ],
+      "each": true
+    },
+    {
+      "path": "all",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "rr_caa_issuer",
+        "if_domain"
+      ],
+      "each": true
+    },
+    {
+      "path": "all",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "rr_caa_issuer",
+        "if_subdomain"
+      ],
+      "each": true
+    },
+    {
+      "path": "all",
+      "sink": {
+        "node": "email_address",
+        "property": "value"
+      },
+      "transform": [
+        "rr_caa_iodef_email"
+      ],
+      "each": true
+    },
+    {
+      "path": "all",
+      "sink": {
+        "node": "endpoint",
+        "property": "url"
+      },
+      "transform": [
+        "rr_caa_iodef_url"
+      ],
+      "each": true
+    },
+    {
+      "path": "cdn",
+      "sink": "non_storable",
+      "reason": "implied by cdn-name, which names the provider"
+    },
+    {
+      "path": "cdn-name",
+      "sink": {
+        "node": "technology",
+        "property": "name"
+      },
+      "transform": [
+        "detector_token"
+      ]
+    },
+    {
+      "path": "cdn-type",
+      "sink": {
+        "relation": "protected_by",
+        "property": "kind"
+      },
+      "transform": [
+        "cdncheck_protection_kind"
+      ]
+    },
+    {
+      "path": "asn.as-number",
+      "sink": {
+        "node": "asn",
+        "property": "value"
+      },
+      "transform": [
+        "asn_number"
+      ]
+    },
+    {
+      "path": "asn.as-name",
+      "sink": {
+        "node": "asn",
+        "property": "name"
+      }
+    },
+    {
+      "path": "asn.as-country",
+      "sink": {
+        "node": "asn",
+        "property": "country"
+      }
+    },
+    {
+      "path": "asn.as-range",
+      "sink": {
+        "node": "ip_cidr",
+        "property": "value"
+      },
+      "each": true
+    },
+    {
+      "path": "asn.as-range",
+      "sink": {
+        "node": "ip_cidr",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ],
+      "each": true
+    },
+    {
+      "path": "srv",
+      "sink": "evidence",
+      "documented_only": true,
+      "reason": "not queried: -srv is not in the recorded flags"
+    },
+    {
+      "path": "ptr",
+      "sink": "evidence",
+      "documented_only": true,
+      "reason": "not queried: -ptr is not in the recorded flags"
+    },
+    {
+      "path": "raw",
+      "sink": "evidence",
+      "documented_only": true,
+      "reason": "dnsx blanks `raw` unless -raw is given, which the recorded command does not"
+    },
+    {
+      "path": "status_code_raw",
+      "sink": "non_storable",
+      "documented_only": true,
+      "reason": "numeric rcode; omitted when 0 (NOERROR)"
+    },
+    {
+      "path": "hosts_file",
+      "sink": "non_storable",
+      "documented_only": true,
+      "reason": "the answer came from the local hosts file, not DNS; such a name is not written"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "relation": "has_contact",
+        "property": "role"
+      },
+      "values": [
+        "iodef"
+      ],
+      "reason": "a CAA iodef property is the iodef contact (RFC 8659 section 4.4)"
+    },
+    {
+      "sink": {
+        "node": "endpoint",
+        "property": "method"
+      },
+      "values": [
+        "POST"
+      ],
+      "reason": "RFC 6546 delivers IODEF reports to an https iodef URL by POST"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "dnsx"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

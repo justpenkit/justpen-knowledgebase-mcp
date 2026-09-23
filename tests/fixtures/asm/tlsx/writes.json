@@ -1,0 +1,452 @@
+[
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "www.example.com"
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.com"
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "198.51.100.20",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 443,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "service",
+          "properties": {
+            "name": "unknown",
+            "secure": true
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "certificate",
+          "properties": {
+            "der_sha256": "b2fa71d48c586c8236babada32b8f2604a2622614aaf4e3b458b2bc42f49ee84",
+            "subject_cn": "www.example.com",
+            "issuer_dn": "CN=Example Issuing CA R1, O=Example Trust Services, C=US",
+            "not_before": "2026-06-01T00:00:00Z",
+            "not_after": "2026-12-01T23:59:59Z",
+            "serial": "a1b2c3d4e5f60718293a4b5c6d7e8f9"
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "tls_cipher_suite",
+          "properties": {
+            "version": "tls12",
+            "name": "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "tls_cipher_suite",
+          "properties": {
+            "version": "tls12",
+            "name": "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "tls_cipher_suite",
+          "properties": {
+            "version": "tls12",
+            "name": "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA"
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "tls_cipher_suite",
+          "properties": {
+            "version": "tls11",
+            "name": "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA"
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "tls_cipher_suite",
+          "properties": {
+            "version": "tls10",
+            "name": "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "tls_fingerprint",
+          "properties": {
+            "kind": "jarm",
+            "value": "29d29d15d29d29d00042d42d000000cd600c085f5e4e6a2a3a3e8a1e4d2abc"
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "tls_fingerprint",
+          "properties": {
+            "kind": "ja3s",
+            "value": "27f4a0eea6e8cec2d5045e5ee65a5238"
+          },
+          "observed_at": "2026-09-20T10:17:05.482913Z",
+          "source": "tlsx"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_service",
+          "source_ref": {
+            "node_index": 3
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {}
+        },
+        {
+          "type": "presents_certificate",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 5
+          },
+          "properties": {
+            "mode": "tls",
+            "server_name": "www.example.com",
+            "alpn_offered": []
+          }
+        },
+        {
+          "type": "covers_name",
+          "source_ref": {
+            "node_index": 5
+          },
+          "target_ref": {
+            "node_index": 0
+          },
+          "properties": {
+            "coverage": "exact"
+          }
+        },
+        {
+          "type": "covers_name",
+          "source_ref": {
+            "node_index": 5
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {
+            "coverage": "exact"
+          }
+        },
+        {
+          "type": "covers_name",
+          "source_ref": {
+            "node_index": 5
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {
+            "coverage": "wildcard"
+          }
+        },
+        {
+          "type": "supports_tls_cipher",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {}
+        },
+        {
+          "type": "supports_tls_cipher",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 7
+          },
+          "properties": {}
+        },
+        {
+          "type": "supports_tls_cipher",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {}
+        },
+        {
+          "type": "supports_tls_cipher",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 9
+          },
+          "properties": {}
+        },
+        {
+          "type": "supports_tls_cipher",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 10
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_tls_fingerprint",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 11
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_tls_fingerprint",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 12
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "203.0.113.10",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:17:06.001122Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 8443,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-20T10:17:06.001122Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "service",
+          "properties": {
+            "name": "unknown",
+            "secure": true
+          },
+          "observed_at": "2026-09-20T10:17:06.001122Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "certificate",
+          "properties": {
+            "der_sha256": "e8cf1d70b1bae14483997848c200c731bbf2f7edb5047ce7964df43580991f12",
+            "subject_cn": "router.example.org",
+            "issuer_dn": "CN=router.example.org",
+            "not_before": "2023-01-10T08:00:00Z",
+            "not_after": "2024-01-10T08:00:00Z",
+            "serial": "5a3c0017",
+            "self_signed": true
+          },
+          "observed_at": "2026-09-20T10:17:06.001122Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "router.example.org"
+          },
+          "observed_at": "2026-09-20T10:17:06.001122Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "tls_cipher_suite",
+          "properties": {
+            "version": "tls10",
+            "name": "TLS_RSA_WITH_AES_128_CBC_SHA"
+          },
+          "observed_at": "2026-09-20T10:17:06.001122Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "tls_fingerprint",
+          "properties": {
+            "kind": "jarm",
+            "value": "b5c4fa00fdaa23f48deb2880b4c919153ce527d29ed532d933320b557dbeb3"
+          },
+          "observed_at": "2026-09-20T10:17:06.001122Z",
+          "source": "tlsx"
+        },
+        {
+          "type": "tls_fingerprint",
+          "properties": {
+            "kind": "ja3s",
+            "value": "4672467b8c60eccbc01d004daee4d1a3"
+          },
+          "observed_at": "2026-09-20T10:17:06.001122Z",
+          "source": "tlsx"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_service",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "presents_certificate",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {
+            "mode": "tls",
+            "server_name": "",
+            "alpn_offered": [],
+            "name_mismatch": true
+          }
+        },
+        {
+          "type": "issued_by",
+          "source_ref": {
+            "node_index": 3
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        },
+        {
+          "type": "covers_name",
+          "source_ref": {
+            "node_index": 3
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {
+            "coverage": "exact"
+          }
+        },
+        {
+          "type": "supports_tls_cipher",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 5
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_tls_fingerprint",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_tls_fingerprint",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 7
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

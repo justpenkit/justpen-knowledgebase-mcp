@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///usr/share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.95 scan initiated Wed Sep 23 10:00:00 2026 as: nmap -sV -p 22,443 &#45;&#45;open &#45;&#45;script ssh-hostkey &#45;&#45;script-args ssh_hostkey=sha256 -oX scan.xml www.example.com -->
+<nmaprun scanner="nmap" args="nmap -sV -p 22,443 --open --script ssh-hostkey --script-args ssh_hostkey=sha256 -oX scan.xml www.example.com" start="1790157600" startstr="Wed Sep 23 10:00:00 2026" version="7.95" xmloutputversion="1.05">
+<scaninfo type="syn" protocol="tcp" numservices="2" services="22,443"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<host starttime="1790157601" endtime="1790157612"><status state="up" reason="echo-reply" reason_ttl="52"/>
+<address addr="192.0.2.10" addrtype="ipv4"/>
+<hostnames>
+<hostname name="www.example.com" type="user"/>
+<hostname name="host-192-0-2-10.example.net" type="PTR"/>
+</hostnames>
+<ports><port protocol="tcp" portid="22"><state state="open" reason="syn-ack" reason_ttl="52"/><service name="ssh" product="OpenSSH" version="9.8" extrainfo="protocol 2.0" method="probed" conf="10"><cpe>cpe:/a:openbsd:openssh:9.8</cpe></service><script id="ssh-hostkey" output="&#xa;  256 SHA256:vbmrrHiq9WnkJTeEbdY7z1hrwvX435rW54KHXt/Ylgw (ED25519)"><table>
+<elem key="fingerprint">30bd0ce41d34586eb43aa1f7929bf518</elem>
+<elem key="type">ssh-ed25519</elem>
+<elem key="bits">256</elem>
+<elem key="key">AAAAC3NzaC1lZDI1NTE5AAAAIGdw+sp4XfiuN6CgrtOJcx8r7Vqj6cfTSft8isgmCE1S</elem>
+</table>
+</script></port>
+<port protocol="tcp" portid="443"><state state="open" reason="syn-ack" reason_ttl="52"/><service name="http" product="nginx" version="1.24.0" tunnel="ssl" method="probed" conf="10"><cpe>cpe:/a:igor_sysoev:nginx:1.24.0</cpe></service></port>
+</ports>
+<times srtt="31245" rttvar="1025" to="100000"/>
+</host>
+<runstats><finished time="1790157612" timestr="Wed Sep 23 10:00:12 2026" summary="Nmap done at Wed Sep 23 10:00:12 2026; 1 IP address (1 host up) scanned in 12.04 seconds" elapsed="12.04" exit="success"/><hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>

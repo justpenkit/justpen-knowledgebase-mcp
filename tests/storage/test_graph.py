@@ -865,7 +865,7 @@ async def test_endpoint_values_are_checked_on_the_properties_that_will_be_stored
     ],
 )
 async def test_endpoint_value_errors_come_after_the_type_and_property_gates(tmp_path, nodes, relation, message):
-    """Amendment 5: moving the value check after the merge fixes which error a doubly invalid
+    """Moving the value check after the merge fixes which error a doubly invalid
     write reports. The endpoint type and self-edge gate still come first, then the relation's own
     properties, and only then the endpoint values; each case below also fails its value check."""
     request = {"nodes": nodes, "relations": [{**relation, "source_ref": {"node_index": 0}}]}
@@ -875,7 +875,7 @@ async def test_endpoint_value_errors_come_after_the_type_and_property_gates(tmp_
 
 
 async def test_a_registration_is_scoped_to_one_domain_and_keyed_by_its_registry_id(tmp_path):
-    """BC-1: a registration needs its `has_registration` edge in the same write, cannot move to a
+    """A registration needs its `has_registration` edge in the same write, cannot move to a
     second domain, and a re-registration under a new registry id is a second node."""
     registration = {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}
     domain = {"type": "domain", "properties": {"value": "example.com"}}
@@ -944,7 +944,7 @@ async def test_a_registration_is_scoped_to_one_domain_and_keyed_by_its_registry_
 
 
 async def test_a_contact_role_is_checked_on_the_merged_edge(tmp_path):
-    """T2: an id patch that omits `role` still passes the role gate, because the check reads the
+    """An id patch that omits `role` still passes the role gate, because the check reads the
     stored role through the merge; a registration role on the name itself is refused."""
     registration = {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:

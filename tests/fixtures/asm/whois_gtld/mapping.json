@@ -1,0 +1,191 @@
+{
+  "source": "whois_gtld",
+  "files": {
+    "example.com.txt": "kv_text"
+  },
+  "rows": [
+    {
+      "path": "Domain Name",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ]
+    },
+    {
+      "path": "Domain Name",
+      "sink": {
+        "node": "whois_registration",
+        "property": "registry"
+      },
+      "transform": [
+        "public_suffix_of"
+      ],
+      "when": "whois_registration_accepted"
+    },
+    {
+      "path": "Registry Domain ID",
+      "sink": {
+        "node": "whois_registration",
+        "property": "registry_domain_id"
+      },
+      "when": "whois_registration_accepted"
+    },
+    {
+      "path": "Registrar WHOIS Server",
+      "sink": "non_storable",
+      "reason": "the registrar's WHOIS server, a registrar-level fact: registrar is keyed by IANA id and gains no attribute, and whois_server holds only the registry's server (RDAP port43); the value stays in evidence"
+    },
+    {
+      "path": "Registrar URL",
+      "sink": "non_storable",
+      "reason": "a registrar-level fact; registrar gains no attribute, so the value stays in evidence"
+    },
+    {
+      "path": "Updated Date",
+      "sink": {
+        "node": "whois_registration",
+        "property": "registration_updated"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ],
+      "when": "whois_registration_accepted"
+    },
+    {
+      "path": "Creation Date",
+      "sink": {
+        "node": "whois_registration",
+        "property": "registration_created"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ],
+      "when": "whois_registration_accepted"
+    },
+    {
+      "path": "Registry Expiry Date",
+      "sink": {
+        "node": "whois_registration",
+        "property": "registration_expires"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ],
+      "when": "whois_registration_accepted"
+    },
+    {
+      "path": "Registrar Registration Expiration Date",
+      "sink": "non_storable",
+      "documented_only": true,
+      "reason": "the registrar's own expiry in registrar output; the registration keeps the registry's expiry"
+    },
+    {
+      "path": "Registrar",
+      "sink": {
+        "node": "registrar",
+        "property": "name"
+      },
+      "when": "whois_registration_accepted"
+    },
+    {
+      "path": "Registrar IANA ID",
+      "sink": {
+        "node": "registrar",
+        "property": "iana_id"
+      },
+      "transform": [
+        "int_value"
+      ],
+      "when": "whois_registration_accepted"
+    },
+    {
+      "path": "Registrar Abuse Contact Email",
+      "sink": {
+        "node": "email_address",
+        "property": "value"
+      },
+      "when": "whois_registration_accepted"
+    },
+    {
+      "path": "Registrar Abuse Contact Phone",
+      "sink": {
+        "node": "phone",
+        "property": "value"
+      },
+      "transform": [
+        "whois_phone_e164"
+      ],
+      "when": "whois_registration_accepted"
+    },
+    {
+      "path": "Reseller",
+      "sink": "non_storable",
+      "documented_only": true,
+      "reason": "a reseller company name; company types are out of scope"
+    },
+    {
+      "path": "Registry Registrant ID",
+      "sink": "non_storable",
+      "documented_only": true,
+      "reason": "a registrant contact handle, usually REDACTED; person types are out of scope"
+    },
+    {
+      "path": "Domain Status",
+      "sink": {
+        "node": "whois_registration",
+        "property": "epp_status"
+      },
+      "transform": [
+        "whois_status_to_epp",
+        "sorted_set"
+      ],
+      "when": "whois_registration_accepted"
+    },
+    {
+      "path": "Name Server",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ],
+      "each": true
+    },
+    {
+      "path": "DNSSEC",
+      "sink": {
+        "node": "whois_registration",
+        "property": "dnssec_signed"
+      },
+      "transform": [
+        "whois_dnssec_bool"
+      ],
+      "when": "whois_registration_accepted"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "relation": "has_contact",
+        "property": "role"
+      },
+      "values": [
+        "abuse"
+      ],
+      "reason": "the Registrar Abuse Contact Email and Phone keys name the abuse role"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "whois_gtld"
+      ],
+      "reason": "the source that produced the output"
+    }
+  ]
+}

@@ -1,0 +1,323 @@
+[
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/",
+            "method": "GET",
+            "status": 200,
+            "content_length": 415,
+            "content_type": "text/html",
+            "webserver": "nginx/1.18.0"
+          },
+          "observed_at": "2026-09-20T11:00:00.101234Z",
+          "source": "katana"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/about",
+            "method": "GET",
+            "status": 200,
+            "content_length": 95,
+            "content_type": "text/html",
+            "webserver": "nginx/1.18.0"
+          },
+          "observed_at": "2026-09-20T11:00:01.2Z",
+          "source": "katana"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/static/app.js",
+            "method": "GET",
+            "status": 200,
+            "content_length": 59,
+            "content_type": "application/javascript",
+            "webserver": "nginx/1.18.0"
+          },
+          "observed_at": "2026-09-20T11:00:01.734Z",
+          "source": "katana"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/api/v1/users",
+            "method": "GET",
+            "status": 401,
+            "content_length": 24,
+            "content_type": "application/json",
+            "webserver": "nginx/1.18.0"
+          },
+          "observed_at": "2026-09-20T11:00:02.05Z",
+          "source": "katana"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/login",
+            "method": "POST",
+            "status": 200,
+            "content_length": 103,
+            "content_type": "text/html",
+            "webserver": "nginx/1.18.0"
+          },
+          "observed_at": "2026-09-20T11:00:02.5Z",
+          "source": "katana"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/robots.txt",
+            "method": "GET"
+          },
+          "observed_at": "2026-09-20T11:00:03.9Z",
+          "source": "katana"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.com/admin/",
+            "method": "GET",
+            "status": 403,
+            "content_length": 76,
+            "content_type": "text/html",
+            "webserver": "nginx/1.18.0"
+          },
+          "observed_at": "2026-09-20T11:00:03.9Z",
+          "source": "katana"
+        },
+        {
+          "type": "endpoint",
+          "properties": {
+            "url": "https://www.example.net/partner",
+            "method": "GET"
+          },
+          "observed_at": "2026-09-20T11:00:04.25Z",
+          "source": "katana"
+        },
+        {
+          "type": "technology",
+          "properties": {
+            "name": "nginx"
+          },
+          "observed_at": "2026-09-20T11:00:00.101234Z",
+          "source": "katana"
+        },
+        {
+          "type": "technology",
+          "properties": {
+            "name": "bootstrap"
+          },
+          "observed_at": "2026-09-20T11:00:00.101234Z",
+          "source": "katana"
+        },
+        {
+          "type": "parameter",
+          "properties": {
+            "name": "username",
+            "location": "body"
+          },
+          "observed_at": "2026-09-20T11:00:00.101234Z",
+          "source": "katana"
+        },
+        {
+          "type": "parameter",
+          "properties": {
+            "name": "password",
+            "location": "body"
+          },
+          "observed_at": "2026-09-20T11:00:00.101234Z",
+          "source": "katana"
+        }
+      ],
+      "relations": [
+        {
+          "type": "links_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {
+            "element": "a",
+            "attribute": "href"
+          }
+        },
+        {
+          "type": "links_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {
+            "element": "script",
+            "attribute": "src"
+          }
+        },
+        {
+          "type": "links_to",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {
+            "element": "js",
+            "attribute": "regex"
+          }
+        },
+        {
+          "type": "links_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {
+            "element": "form",
+            "attribute": "action"
+          }
+        },
+        {
+          "type": "links_to",
+          "source_ref": {
+            "node_index": 5
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {
+            "element": "file",
+            "attribute": "robotstxt"
+          }
+        },
+        {
+          "type": "links_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 7
+          },
+          "properties": {
+            "element": "a",
+            "attribute": "href"
+          }
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {
+            "version": "1.18.0"
+          }
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 9
+          },
+          "properties": {
+            "version": "5.3.0"
+          }
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {
+            "version": "1.18.0"
+          }
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {
+            "version": "1.18.0"
+          }
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 3
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {
+            "version": "1.18.0"
+          }
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {
+            "version": "1.18.0"
+          }
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 6
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {
+            "version": "1.18.0"
+          }
+        },
+        {
+          "type": "has_parameter",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 10
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_parameter",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 11
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

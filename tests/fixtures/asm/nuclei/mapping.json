@@ -1,0 +1,410 @@
+{
+  "source": "nuclei",
+  "files": {
+    "output.jsonl": "jsonl"
+  },
+  "rows": [
+    {
+      "path": "template",
+      "sink": "evidence"
+    },
+    {
+      "path": "template-url",
+      "sink": "evidence"
+    },
+    {
+      "path": "template-id",
+      "sink": {
+        "node": "finding",
+        "property": "rule"
+      },
+      "transform": [
+        "nuclei_rule"
+      ]
+    },
+    {
+      "path": "template-id",
+      "sink": {
+        "node": "finding",
+        "property": "matcher"
+      },
+      "transform": [
+        "nuclei_matcher"
+      ],
+      "when": "nuclei_not_ssl_result"
+    },
+    {
+      "path": "template-id",
+      "sink": {
+        "node": "finding",
+        "property": "matcher"
+      },
+      "transform": [
+        "nuclei_matcher",
+        "sni_matcher"
+      ],
+      "when": "nuclei_ssl_result"
+    },
+    {
+      "path": "template-path",
+      "sink": "non_storable",
+      "reason": "a path on the scanning host's filesystem"
+    },
+    {
+      "path": "template-encoded",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.name",
+      "sink": {
+        "node": "finding",
+        "property": "title"
+      }
+    },
+    {
+      "path": "info.author",
+      "sink": "non_storable",
+      "reason": "template author handles and names; person types are out of scope"
+    },
+    {
+      "path": "info.tags",
+      "sink": {
+        "node": "finding",
+        "property": "tags"
+      },
+      "transform": [
+        "sorted_set"
+      ]
+    },
+    {
+      "path": "info.description",
+      "sink": {
+        "node": "finding",
+        "property": "description"
+      }
+    },
+    {
+      "path": "info.impact",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.reference",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.severity",
+      "sink": {
+        "node": "finding",
+        "property": "severity"
+      }
+    },
+    {
+      "path": "info.metadata.*",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.classification.cve-id",
+      "sink": {
+        "node": "cve",
+        "property": "value"
+      },
+      "each": true,
+      "transform": [
+        "upper"
+      ]
+    },
+    {
+      "path": "info.classification.cwe-id",
+      "sink": {
+        "node": "cwe",
+        "property": "value"
+      },
+      "each": true,
+      "transform": [
+        "upper"
+      ]
+    },
+    {
+      "path": "info.classification.cvss-metrics",
+      "sink": {
+        "node": "finding",
+        "property": "cvss_vector"
+      }
+    },
+    {
+      "path": "info.classification.cvss-score",
+      "sink": {
+        "node": "finding",
+        "property": "cvss_score"
+      },
+      "transform": [
+        "cvss_one_decimal"
+      ]
+    },
+    {
+      "path": "info.classification.epss-score",
+      "sink": {
+        "node": "cve",
+        "property": "epss_score"
+      }
+    },
+    {
+      "path": "info.classification.epss-percentile",
+      "sink": {
+        "node": "cve",
+        "property": "epss_percentile"
+      }
+    },
+    {
+      "path": "info.classification.cpe",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.remediation",
+      "sink": "evidence"
+    },
+    {
+      "path": "matcher-name",
+      "sink": "non_storable",
+      "reason": "read into finding.matcher by nuclei_matcher on the template-id rows"
+    },
+    {
+      "path": "extractor-name",
+      "sink": "non_storable",
+      "reason": "read into finding.matcher by nuclei_matcher when no matcher-name is present"
+    },
+    {
+      "path": "type",
+      "sink": "non_storable",
+      "reason": "selects the finding's parent and the matcher transform"
+    },
+    {
+      "path": "host",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ],
+      "when": "host_is_subdomain"
+    },
+    {
+      "path": "host",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ],
+      "when": "host_is_domain"
+    },
+    {
+      "path": "port",
+      "sink": {
+        "node": "port",
+        "property": "number"
+      },
+      "transform": [
+        "int_value"
+      ]
+    },
+    {
+      "path": "scheme",
+      "sink": {
+        "node": "service",
+        "property": "name"
+      },
+      "transform": [
+        "scheme_service"
+      ]
+    },
+    {
+      "path": "scheme",
+      "sink": {
+        "node": "service",
+        "property": "secure"
+      },
+      "transform": [
+        "scheme_secure"
+      ]
+    },
+    {
+      "path": "url",
+      "sink": "non_storable",
+      "redact": true,
+      "reason": "the scanned input: it can carry the input's query, and for tcp and javascript results it repeats matched-at"
+    },
+    {
+      "path": "path",
+      "sink": "non_storable",
+      "reason": "the request path, part of the endpoint url"
+    },
+    {
+      "path": "matched-at",
+      "sink": {
+        "node": "endpoint",
+        "property": "url"
+      },
+      "redact": true,
+      "transform": [
+        "url_without_query"
+      ],
+      "when": "nuclei_http_result"
+    },
+    {
+      "path": "extracted-results",
+      "sink": "non_storable",
+      "redact": true,
+      "reason": "extracted response data, which can be a credential"
+    },
+    {
+      "path": "request",
+      "sink": {
+        "node": "endpoint",
+        "property": "method"
+      },
+      "redact": true,
+      "transform": [
+        "http_request_method"
+      ],
+      "when": "nuclei_http_result"
+    },
+    {
+      "path": "response",
+      "sink": "non_storable",
+      "redact": true,
+      "reason": "raw response data, which can carry credentials"
+    },
+    {
+      "path": "meta.*",
+      "sink": "non_storable",
+      "redact": true,
+      "reason": "payload values of the matching request; default-login templates put the tried credentials here"
+    },
+    {
+      "path": "ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      }
+    },
+    {
+      "path": "ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "timestamp",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "interaction.*",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "curl-command",
+      "sink": "non_storable",
+      "redact": true,
+      "reason": "replays the request, credentials included"
+    },
+    {
+      "path": "matcher-status",
+      "sink": "non_storable",
+      "reason": "always true without -ms; only matched results are written"
+    },
+    {
+      "path": "global-matchers",
+      "sink": "non_storable",
+      "documented_only": true,
+      "reason": "marks a passive global-matcher template; the finding is the same"
+    },
+    {
+      "path": "is_fuzzing_result",
+      "sink": "non_storable",
+      "reason": "implied by fuzzing_parameter"
+    },
+    {
+      "path": "fuzzing_method",
+      "sink": {
+        "node": "endpoint",
+        "property": "method"
+      }
+    },
+    {
+      "path": "fuzzing_parameter",
+      "sink": {
+        "node": "parameter",
+        "property": "name"
+      }
+    },
+    {
+      "path": "fuzzing_position",
+      "sink": {
+        "node": "parameter",
+        "property": "location"
+      },
+      "transform": [
+        "dast_location"
+      ]
+    },
+    {
+      "path": "analyzer_details",
+      "sink": "evidence",
+      "documented_only": true
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "endpoint",
+        "property": "method"
+      },
+      "values": [
+        "GET"
+      ],
+      "reason": "a headless result carries no request; the browser navigates with GET"
+    },
+    {
+      "sink": {
+        "node": "port",
+        "property": "transport"
+      },
+      "values": [
+        "tcp"
+      ],
+      "reason": "http, headless, ssl, tcp and this javascript template all dial TCP"
+    },
+    {
+      "sink": {
+        "node": "finding",
+        "property": "scanner"
+      },
+      "values": [
+        "nuclei"
+      ],
+      "reason": "the tool that reported the finding"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "nuclei"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

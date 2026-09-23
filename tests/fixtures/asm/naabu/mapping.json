@@ -1,0 +1,104 @@
+{
+  "source": "naabu",
+  "files": {
+    "output.jsonl": "jsonl"
+  },
+  "rows": [
+    {
+      "path": "timestamp",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "host",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_subdomain"
+      ]
+    },
+    {
+      "path": "host",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_domain"
+      ]
+    },
+    {
+      "path": "ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      }
+    },
+    {
+      "path": "ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "port",
+      "sink": {
+        "node": "port",
+        "property": "number"
+      },
+      "transform": [
+        "int_value"
+      ]
+    },
+    {
+      "path": "protocol",
+      "sink": {
+        "node": "port",
+        "property": "transport"
+      }
+    },
+    {
+      "path": "tls",
+      "sink": "non_storable",
+      "reason": "a port scan writes no service node for the flag to describe; tlsx and httpx record TLS on the service"
+    },
+    {
+      "path": "cdn",
+      "sink": "non_storable",
+      "reason": "implied by cdn-name, which names the provider"
+    },
+    {
+      "path": "cdn-name",
+      "sink": {
+        "node": "ip_address",
+        "property": "cdn_provider"
+      },
+      "transform": [
+        "detector_token"
+      ]
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "naabu"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

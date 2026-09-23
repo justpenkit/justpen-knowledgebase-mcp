@@ -1,0 +1,79 @@
+[
+  {
+    "file": "ip-198.51.100.0.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "ip_cidr",
+          "properties": {
+            "value": "198.51.100.0/24",
+            "version": 4,
+            "netname": "EXAMPLE-NET-1",
+            "country": "US",
+            "rir": "arin"
+          },
+          "source": "rdap_ip"
+        },
+        {
+          "type": "organization",
+          "properties": {
+            "registry": "arin",
+            "handle": "EXNET-1",
+            "name": "Example Networks"
+          },
+          "source": "rdap_ip"
+        },
+        {
+          "type": "email_address",
+          "properties": {
+            "value": "noc@example.net"
+          },
+          "source": "rdap_ip"
+        },
+        {
+          "type": "phone",
+          "properties": {
+            "value": "+17035550100"
+          },
+          "source": "rdap_ip"
+        }
+      ],
+      "relations": [
+        {
+          "type": "operated_by",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {
+            "role": "abuse"
+          }
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {
+            "role": "abuse"
+          }
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,173 @@
+[
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.com"
+          },
+          "source": "subfinder"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "www.example.com"
+          },
+          "source": "subfinder"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "198.51.100.20",
+            "version": 4
+          },
+          "source": "subfinder"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "api.example.com"
+          },
+          "source": "subfinder"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "203.0.113.5",
+            "version": 4
+          },
+          "source": "subfinder"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "legacy.example.com"
+          },
+          "source": "subfinder"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.44",
+            "version": 4
+          },
+          "source": "subfinder"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_subdomain",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_subdomain",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 3
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_subdomain",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 5
+          },
+          "properties": {}
+        },
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 5
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "sources.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.com"
+          },
+          "source": "subfinder"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "www.example.com"
+          },
+          "source": "subfinder"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "mail.example.com"
+          },
+          "source": "subfinder"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_subdomain",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_subdomain",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,72 @@
+{
+  "source": "subfinder",
+  "files": {
+    "output.jsonl": "jsonl",
+    "sources.jsonl": "jsonl"
+  },
+  "rows": [
+    {
+      "path": "host",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ]
+    },
+    {
+      "path": "ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      }
+    },
+    {
+      "path": "ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "input",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ]
+    },
+    {
+      "path": "source",
+      "sink": "evidence",
+      "reason": "the passive source that reported the name: provenance, kept with the output"
+    },
+    {
+      "path": "sources",
+      "sink": "evidence",
+      "reason": "the passive sources that reported the name (-cs): provenance"
+    },
+    {
+      "path": "wildcard_certificate",
+      "sink": "non_storable",
+      "reason": "a source listed `*.<host>` in certificate data; that says a certificate covers names below the host, not that random labels resolve, which is what the `wildcard` property records"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "subfinder"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}
