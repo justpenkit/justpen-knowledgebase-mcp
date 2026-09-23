@@ -193,8 +193,8 @@ within one RIR and never across them, so both properties are identity. Free-text
 organization names are not: "Google LLC", "Google Inc." and "Google" are the
 same holder, so `name` is an attribute a rescan patches in place. It is not
 required, because an RDAP entity's name can be redacted while the handle
-remains. `domain` is not a source here: domain registration is expressed by
-`registered_through`, and a registrant organization has no RIR handle to key on.
+remains. `domain` is not a source here: domain registration is expressed by a
+`whois_registration`, and a registrant organization has no RIR handle to key on.
 A handle is case-sensitive and is written exactly as the registry publishes it:
 RIPE and AFRINIC derive handles from the organisation name and keep its case, so
 `ORG-nG51-RIPE` is the handle and `ORG-NG51-RIPE` is a different string that the
@@ -212,8 +212,10 @@ publishes it, `CWE-79`, not the lowercase `cwe-79` some tools emit. `name` is an
 attribute, not required, because a template that carries a cwe-id often carries
 no title for it.
 
-`registered_through` accepts a `domain` source only, because registration is a
-registrable-domain fact and a subdomain has no registrar. A `registrar` is keyed
+`registered_through` accepts a `whois_registration` source only: the
+sponsoring registrar is a fact of one registration, so after a drop and a
+re-registration elsewhere each registration keeps its own registrar edge
+instead of the name accumulating two. A `registrar` is keyed
 on its IANA id, which survives the renames and acquisitions that make the name
 unstable; `0` is rejected because it is what an agent emits for a missing field.
 Many ccTLD responses carry no IANA id at all, and those domains simply get no
@@ -232,7 +234,10 @@ redact it (RFC 9537 lists it in `redacted`), or publish a placeholder such as
 linked to the `domain`, and never invent a key from the name or a redaction
 string, which `registry_domain_id_assigned.1` refuses. `whois_server` is the
 registry's WHOIS server; the `Registrar WHOIS Server` line of a WHOIS response
-describes the registrar and stays in evidence.
+describes the registrar and stays in evidence. The registrant, admin, tech and
+billing contacts of a registration attach to it through `has_contact`, and a
+`domain` or `subdomain` refuses those four roles; the name keeps the roles it
+publishes itself, such as `abuse`, `security` and `published`.
 
 `technology` and `tls_cipher_suite` are workspace-global shared-vocabulary
 nodes referenced by every host that matches. Neither is a `has_finding` source:

@@ -128,7 +128,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "3492dda4bc7305341c569f4b3921ea6f2cd76a693615d8761e00c865ab06da74"
+    assert CATALOG_FINGERPRINT == "6f83089eaaf69c87e23a3122dd344116899c229190f13c4ddecee0215754a588"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -740,7 +740,7 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "exposes_secret": (["repository", "endpoint", "storage_bucket"], ["secret"]),
         "federates_with": (d, ["identity_tenant"]),
         "has_contact": (
-            ["organization", "registrar", "domain", "subdomain", "repository"],
+            ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration"],
             ["email_address", "phone"],
         ),
         "has_http_fingerprint": (["endpoint"], ["http_fingerprint"]),
@@ -750,7 +750,7 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "has_dkim_selector": (d, ["dkim_record"]),
         "has_parameter": (["endpoint"], ["parameter"]),
         "has_tls_fingerprint": (["service"], ["tls_fingerprint"]),
-        "registered_through": (["domain"], ["registrar"]),
+        "registered_through": (["whois_registration"], ["registrar"]),
         "has_weakness": (["finding", "cve"], ["cwe"]),
         "operated_by": (["asn", "ip_cidr"], ["organization"]),
         "has_txt_record": (d, ["txt_record"]),
@@ -1346,7 +1346,7 @@ def test_golden_endpoint_check_cases(
         if accepted:
             check_endpoint_values(relation, relation_props, *views)
         else:
-            with pytest.raises(ExpectedValidationError, match="relation endpoint constraint failed"):
+            with pytest.raises(ExpectedValidationError):
                 check_endpoint_values(relation, relation_props, *views)
 
 

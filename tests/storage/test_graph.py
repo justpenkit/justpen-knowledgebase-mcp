@@ -935,6 +935,57 @@ async def test_a_registration_is_scoped_to_one_domain_and_keyed_by_its_registry_
         assert reregistered["nodes"][1]["id"] != created["nodes"][1]["id"]
 
 
+async def test_a_contact_role_is_checked_on_the_merged_edge(tmp_path):
+    """T2: an id patch that omits `role` still passes the role gate, because the check reads the
+    stored role through the merge; a registration role on the name itself is refused."""
+    registration = {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        created = await kb.write(
+            write(
+                {
+                    "nodes": [
+                        {"type": "domain", "properties": {"value": "example.com"}},
+                        {"type": "whois_registration", "properties": registration},
+                        {"type": "email_address", "properties": {"value": "hostmaster@example.com"}},
+                    ],
+                    "relations": [
+                        {
+                            "type": "has_registration",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 1},
+                            "properties": {},
+                        },
+                        {
+                            "type": "has_contact",
+                            "source_ref": {"node_index": 1},
+                            "target_ref": {"node_index": 2},
+                            "properties": {"role": "registrant"},
+                        },
+                    ],
+                }
+            )
+        )
+        contact = created["relations"][1]["id"]
+        patched = await kb.write(write({"relations": [{"id": contact, "properties": {"seen_by": "rdap"}}]}))
+        assert patched["relations"][0]["updated"] is True
+
+        with pytest.raises(InvalidParamsError, match="attach to a whois_registration"):
+            await kb.write(
+                write(
+                    {
+                        "relations": [
+                            {
+                                "type": "has_contact",
+                                "source_ref": {"id": created["nodes"][0]["id"]},
+                                "target_ref": {"id": created["nodes"][2]["id"]},
+                                "properties": {"role": "registrant"},
+                            }
+                        ]
+                    }
+                )
+            )
+
+
 async def test_cname_cycles_and_self_edges_are_preserved(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(

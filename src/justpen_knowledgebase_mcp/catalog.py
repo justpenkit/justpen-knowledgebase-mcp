@@ -361,10 +361,11 @@ _RELATIONS = {
     ),
     "federates_with": _relation(_D, ["identity_tenant"], optional={"namespace_type": ["managed", "federated"]}),
     "has_contact": _relation(
-        ["organization", "registrar", "domain", "subdomain", "repository"],
+        ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration"],
         ["email_address", "phone"],
         required={"role": ["abuse", "admin", "tech", "registrant", "billing", "noc", "security", "published"]},
         identity=_identity(["role"]),
+        checks=["has_contact_registration_roles.1"],
     ),
     "has_dkim_selector": _relation(_D, ["dkim_record"]),
     "has_dmarc": _relation(_D, ["dmarc_record"]),
@@ -456,7 +457,7 @@ _RELATIONS = {
         identity=_identity(["status"]),
         self_edge=True,
     ),
-    "registered_through": _relation(["domain"], ["registrar"]),
+    "registered_through": _relation(["whois_registration"], ["registrar"]),
     "resolves_to": _relation(_D, ["ip_address"]),
     "reverse_resolves_to": _relation(["ip_address"], _D),
     "runs_technology": _relation(
@@ -709,6 +710,24 @@ def _endpoint_registration_suffix(_relation: Mapping[str, Any], source: Endpoint
         raise ExpectedValidationError(_ENDPOINT_FAILED)
 
 
+# Roles that belong to one registration episode, not to the name that outlives it.
+_REGISTRATION_ROLES = frozenset({"registrant", "admin", "tech", "billing"})
+
+
+def _endpoint_contact_registration_roles(
+    relation: Mapping[str, Any], source: EndpointView, _target: EndpointView
+) -> None:
+    # An organization, registrar or repository keeps every role: RIR entities carry admin and tech
+    # contacts of their own. Only a name and its registration split the roles between them.
+    if source.type not in ("whois_registration", "domain", "subdomain"):
+        return
+    if (source.type == "whois_registration") != (relation["role"] in _REGISTRATION_ROLES):
+        raise ExpectedValidationError(
+            "/properties/role: registrant, admin, tech and billing contacts attach to a whois_registration, "
+            "and only those"
+        )
+
+
 def _endpoint_contains_ip(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
     network = _parse_cidr(cast("str", source.properties["value"]))
     address = _parse_ip(cast("str", target.properties["value"]))
@@ -784,6 +803,7 @@ _CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
 _ENDPOINT_CHECKS: dict[str, Callable[[Mapping[str, Any], EndpointView, EndpointView], None]] = {
     "contains_cidr_proper_subnet.1": _endpoint_contains_cidr,
     "contains_ip_member.1": _endpoint_contains_ip,
+    "has_contact_registration_roles.1": _endpoint_contact_registration_roles,
     "has_registration_suffix_match.1": _endpoint_registration_suffix,
     "has_subdomain_suffix.1": _endpoint_subdomain_suffix,
 }

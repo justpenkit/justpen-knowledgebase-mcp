@@ -301,6 +301,47 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
             ),
         ),
     ),
+    "has_contact_registration_roles.1": (
+        (
+            (
+                {"role": "registrant"},
+                ("whois_registration", {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}),
+                ("email_address", {"value": "hostmaster@example.com"}),
+            ),
+            (
+                {"role": "billing"},
+                ("whois_registration", {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}),
+                ("phone", {"value": "+14155552671"}),
+            ),
+            (
+                {"role": "abuse"},
+                ("domain", {"value": "example.com"}),
+                ("email_address", {"value": "hostmaster@example.com"}),
+            ),
+            (
+                {"role": "admin"},
+                ("organization", {"registry": "arin", "handle": "ORG-1"}),
+                ("email_address", {"value": "hostmaster@example.com"}),
+            ),
+        ),
+        (
+            (
+                {"role": "registrant"},
+                ("domain", {"value": "example.com"}),
+                ("email_address", {"value": "hostmaster@example.com"}),
+            ),
+            (
+                {"role": "tech"},
+                ("subdomain", {"value": "www.example.com"}),
+                ("email_address", {"value": "hostmaster@example.com"}),
+            ),
+            (
+                {"role": "abuse"},
+                ("whois_registration", {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}),
+                ("email_address", {"value": "hostmaster@example.com"}),
+            ),
+        ),
+    ),
     "has_registration_suffix_match.1": (
         (
             (

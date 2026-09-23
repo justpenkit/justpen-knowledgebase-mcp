@@ -188,6 +188,10 @@ DOCS: dict[str, Any] = {
             "`value` must classify as this type against the bundled PSL: a registrable domain for `domain`, a "
             "name below one for `subdomain`."
         ),
+        "has_contact_registration_roles.1": (
+            "From a `whois_registration`, `role` must be `registrant`, `admin`, `tech` or `billing`; from a "
+            "`domain` or `subdomain`, those four roles are refused, because they belong to one registration."
+        ),
         "has_registration_suffix_match.1": (
             "The registration's `registry` must be the zone of its domain: the domain's `value` without its "
             "first label."
@@ -617,7 +621,11 @@ DOCS: dict[str, Any] = {
         "has_contact": {
             "summary": "The source publishes the contact for one role.",
             "excludes": "Not a person record; person and company types are out of scope.",
-            "notes": "Use `published` for an address harvested from an organization's own surface with no declared role.",
+            "notes": (
+                "Use `published` for an address harvested from an organization's own surface with no declared "
+                "role. Registrant, admin, tech and billing contacts come from registration data and attach to "
+                "the `whois_registration`, so a re-registration does not inherit them."
+            ),
             "properties": {"role": "What the contact is for; identity-bearing, so one address may hold several roles."},
         },
         "has_dkim_selector": {
@@ -766,8 +774,11 @@ DOCS: dict[str, Any] = {
             "properties": {"status": "The redirect status code; identity-bearing."},
         },
         "registered_through": {
-            "summary": "The domain is registered through the registrar.",
-            "excludes": "Not a subdomain fact; a subdomain has no registrar.",
+            "summary": "The registration is sponsored by the registrar.",
+            "excludes": (
+                "Not a fact about the name across time: after a transfer or a re-registration, each registration "
+                "keeps its own registrar edge."
+            ),
             "properties": {},
         },
         "resolves_to": {
