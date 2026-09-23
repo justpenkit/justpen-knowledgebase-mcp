@@ -294,6 +294,43 @@ from the `subdomain` whose CNAME points at the bucket host, or from the
 organization's name and probing for it has no such edge; write the node and
 attach the evidence that found it.
 
+`cloud_resource` records a provider-managed resource by the default hostname the
+provider assigned to it, and `cloud_account` records the AWS account, GCP project
+or Azure subscription that holds it, joined by `in_account`. Each accepted
+hostname names exactly one resource at a time, which is why it can be the
+identity: a takeover re-registers the same hostname, so the node stays and its
+`in_account` edge moves. The same hostname is usually a `subdomain` too; that node
+answers DNS questions, and `hosted_on` from it, or from a custom name that
+CNAMEs to it, reaches the resource. `service` is fixed by which pattern matches,
+and `region`, when sent, must be the region the hostname encodes.
+
+| Service                 | Canonical default hostname                                                              | Source                                                                                                                                  |
+| ----------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `aws_cloudfront`        | `d<13 alnum>.cloudfront.net`                                                            | [CloudFront domain names](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/CNAMEs.html)                               |
+| `aws_api_gateway`       | `<10 alnum>.execute-api.<region>.amazonaws.com`                                         | [Invoking a REST API](https://docs.aws.amazon.com/apigateway/latest/developerguide/how-to-call-api.html)                                |
+| `aws_lambda_url`        | `<32 alnum>.lambda-url.<region>.on.aws`                                                 | [Lambda function URLs](https://docs.aws.amazon.com/lambda/latest/dg/urls-configuration.html)                                            |
+| `aws_elastic_beanstalk` | `<cname>.<region>.elasticbeanstalk.com`, legacy `<cname>.elasticbeanstalk.com`          | [Beanstalk domain names](https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/customdomains.html)                                     |
+| `aws_elb`               | `<name>-<id>.<region>.elb.amazonaws.com`, `<name>-<id>.elb.<region>.amazonaws.com`      | [Load balancer DNS names](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/application-load-balancers.html#dns-name) |
+| `azure_app_service`     | `<app>.azurewebsites.net`, `<app>-<16 alnum>.<region>-NN.azurewebsites.net`             | [Unique default hostnames](https://learn.microsoft.com/en-us/azure/app-service/reference-dangling-subdomain-prevention)                 |
+| `azure_cloud_service`   | `<name>.cloudapp.net`                                                                   | [Subdomain takeover](https://learn.microsoft.com/en-us/azure/security/fundamentals/subdomain-takeover)                                  |
+| `azure_public_ip`       | `<label>.<region>.cloudapp.azure.com`, `<label>.<16 alnum>.<region>.cloudapp.azure.com` | [Public IP addresses](https://learn.microsoft.com/en-us/azure/virtual-network/ip-services/public-ip-addresses)                          |
+| `azure_traffic_manager` | `<name>.trafficmanager.net`                                                             | [Subdomain takeover](https://learn.microsoft.com/en-us/azure/security/fundamentals/subdomain-takeover)                                  |
+| `azure_front_door`      | `<name>.azurefd.net`, `<name>-<16 alnum>.<zone>.azurefd.net` (`z01`, `b01`)             | [Front Door endpoints](https://learn.microsoft.com/en-us/azure/frontdoor/endpoint)                                                      |
+| `azure_api_management`  | `<name>.azure-api.net`                                                                  | [Subdomain takeover](https://learn.microsoft.com/en-us/azure/security/fundamentals/subdomain-takeover)                                  |
+| `gcp_app_engine`        | `<project>.appspot.com`                                                                 | [How requests are routed](https://cloud.google.com/appengine/docs/standard/how-requests-are-routed)                                     |
+| `gcp_firebase_hosting`  | `<site>.web.app`                                                                        | [Firebase multisite hosting](https://firebase.google.com/docs/hosting/multisites)                                                       |
+| `gcp_firebase_rtdb`     | `<db>.firebaseio.com`, `<db>.<region>.firebasedatabase.app`                             | [Realtime Database locations](https://firebase.google.com/docs/database/locations)                                                      |
+
+The generated-id lengths are the shapes the providers' own examples show; none
+of them publishes a formal grammar, so an id outside that shape is rejected
+rather than guessed at. Alias hosts are refused with a pointer to the canonical
+form: the ELB `dualstack.` prefix, App Service and API Management `scm`,
+`developer` and `management` hosts, App Engine `<project>.<code>.r.appspot.com`
+and `-dot-` routes, and Firebase's `<site>.firebaseapp.com`. Write each of them as
+a `subdomain` with `hosted_on`. Cloud Run and Cloud Functions are not modeled:
+a Cloud Run service has two default URLs with no published mapping between them,
+and a `cloudfunctions.net` host names a project and region, not a function.
+
 `identity_tenant` records the identity provider a domain or subdomain federates
 with, which `federates_with` attaches to that name. Every provider in the enum
 has a cross-field rule that fixes one canonical spelling: `entra_id` a lowercase

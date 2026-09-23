@@ -47,6 +47,8 @@ _FORMATS: dict[str, int] = {
     "calendar_date": 1,
     "caa_parameters": 1,
     "cidr": 1,
+    "cloud_account_id": 1,
+    "cloud_region": 1,
     "cpe23": 1,
     "credential_key_id": 1,
     "cve": 1,
@@ -187,6 +189,35 @@ _NODES: dict[str, dict[str, Any]] = {
             "not_after": "utc_timestamp",
             "serial": "hex_serial",
         },
+    },
+    "cloud_account": {
+        "identity": _identity(["provider", "account_id"]),
+        "required": {"provider": ["aws", "gcp", "azure"], "account_id": "cloud_account_id"},
+        "checks": ["cloud_account_spelling.1"],
+    },
+    "cloud_resource": {
+        "identity": _identity(["hostname"]),
+        "required": {
+            "service": [
+                "aws_cloudfront",
+                "aws_api_gateway",
+                "aws_lambda_url",
+                "aws_elastic_beanstalk",
+                "aws_elb",
+                "azure_app_service",
+                "azure_cloud_service",
+                "azure_public_ip",
+                "azure_traffic_manager",
+                "azure_front_door",
+                "azure_api_management",
+                "gcp_app_engine",
+                "gcp_firebase_hosting",
+                "gcp_firebase_rtdb",
+            ],
+            "hostname": "dns_name",
+        },
+        "optional": {"region": "cloud_region"},
+        "checks": ["cloud_resource_hostname.1"],
     },
     "cve": {
         "identity": _identity(["value"]),
@@ -436,7 +467,7 @@ _RELATIONS = {
     ),
     "dname_to": _relation(_D, _D, self_edge=True),
     "exposes_secret": _relation(
-        ["repository", "endpoint", "storage_bucket"],
+        ["repository", "endpoint", "storage_bucket", "cloud_resource"],
         ["secret"],
         required={"location": "printable_text_1024"},
         identity=_identity(["location"]),
@@ -470,6 +501,8 @@ _RELATIONS = {
             "secret",
             "mta_sts_policy",
             "whois_registration",
+            "cloud_account",
+            "cloud_resource",
         ],
         ["finding"],
     ),
@@ -513,6 +546,10 @@ _RELATIONS = {
     "has_tls_fingerprint": _relation(["service"], ["tls_fingerprint"]),
     "has_txt_record": _relation(_D, ["txt_record"]),
     "has_weakness": _relation(["finding", "cve"], ["cwe"]),
+    "hosted_on": _relation(["domain", "subdomain", "endpoint"], ["cloud_resource"]),
+    "in_account": _relation(
+        ["cloud_resource", "storage_bucket"], ["cloud_account"], checks=["in_account_provider_match.1"]
+    ),
     "issued_by": _relation(["certificate"], ["certificate"], self_edge=True),
     "operated_by": _relation(["asn", "ip_cidr"], ["organization"]),
     "owns_repository": _relation(_D, ["repository"]),
@@ -913,12 +950,230 @@ def _cross_field_technology(_type_name: str, properties: dict[str, Any]) -> None
         raise ExpectedValidationError("/properties/cpe: a technology cpe is product-level; put the version on the edge")
 
 
+# One entry per cloud_account provider; `_ensure_cross_field_contract` refuses a missing one.
+_CLOUD_ACCOUNT_RULES: dict[str, str] = {
+    "aws": r"[0-9]{12}",
+    "gcp": r"[a-z][a-z0-9-]{4,28}[a-z0-9]",
+    "azure": r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}",
+}
+
+
+def _cross_field_cloud_account(_type_name: str, properties: dict[str, Any]) -> None:
+    provider = cast("str", properties["provider"])
+    if re.fullmatch(_CLOUD_ACCOUNT_RULES[provider], cast("str", properties["account_id"])) is None:
+        raise ExpectedValidationError(f"/properties/account_id: not a {provider} account spelling")
+
+
+# Label grammars of provider-assigned default hostnames. A named `region` group, where present, is
+# the region the hostname encodes. The id grammars are the shapes the providers' own examples show;
+# none of them publishes a formal grammar.
+_HOST_LABELS: dict[str, str] = {
+    "cloudfront_id": r"d[a-z0-9]{13}",
+    "apigw_id": r"[a-z0-9]{10}",
+    "lambda_url_id": r"[a-z0-9]{32}",
+    "aws_region": r"(?P<region>[a-z]{2,4}(?:-gov|-iso[a-z]?)?-[a-z]+-[0-9]{1,2})",
+    "beanstalk_cname": r"[a-z0-9][a-z0-9-]{2,61}[a-z0-9]",
+    "elb_name_id": r"(?=[a-z0-9-]{3,63}$)[a-z0-9][a-z0-9-]*-[a-z0-9]+",
+    "azure_name": r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
+    "azure_hashed_name": r"[a-z0-9](?:[a-z0-9-]{0,44})-[a-z0-9]{16}",
+    "azure_hash": r"[a-z0-9]{16}",
+    "azure_region": r"(?P<region>[a-z]+[0-9]*)",
+    "azure_region_numbered": r"(?P<region>[a-z]+[0-9]*)-[0-9]{2}",
+    "front_door_zone": r"[a-z][0-9]{2}",
+    "gcp_project": r"(?!.*-dot-)[a-z][a-z0-9-]{4,28}[a-z0-9]",
+    "appspot_dot_chain": r"[a-z0-9-]*-dot-[a-z0-9-]*",
+    "appengine_region_code": r"[a-z]{2,3}",
+    "firebase_site": r"[a-z0-9](?:[a-z0-9-]{0,28}[a-z0-9])?",
+    "firebase_database": r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
+    "gcp_region": r"(?P<region>[a-z]+-[a-z]+[0-9]+)",
+}
+# Grammar pairs that exclude each other by construction, the one structural fact the label-count
+# and literal comparison cannot see: a GCP project id never contains `-dot-`, a routing chain must.
+_EXCLUSIVE_HOST_LABELS = frozenset({frozenset({"gcp_project", "appspot_dot_chain"})})
+
+
+@dataclass(frozen=True)
+class _HostPattern:
+    """One hostname shape: `<grammar>` names a label grammar, anything else is a literal label."""
+
+    service: str
+    labels: tuple[str, ...]
+    canonical: bool = True
+
+
+def _host(service: str, *labels: str, canonical: bool = True) -> _HostPattern:
+    return _HostPattern(service, labels, canonical)
+
+
+# Each accepted pattern is a hostname the provider assigns to exactly one resource. Each alias names
+# the same resource by another host; it is refused with a pointer to the canonical form, and the
+# alias itself belongs on a `subdomain` reached through `hosted_on`.
+_CLOUD_HOST_PATTERNS: dict[str, _HostPattern] = {
+    "aws_cloudfront": _host("aws_cloudfront", "<cloudfront_id>", "cloudfront", "net"),
+    "aws_api_gateway": _host("aws_api_gateway", "<apigw_id>", "execute-api", "<aws_region>", "amazonaws", "com"),
+    "aws_lambda_url": _host("aws_lambda_url", "<lambda_url_id>", "lambda-url", "<aws_region>", "on", "aws"),
+    "aws_elastic_beanstalk": _host(
+        "aws_elastic_beanstalk", "<beanstalk_cname>", "<aws_region>", "elasticbeanstalk", "com"
+    ),
+    "aws_elastic_beanstalk_legacy": _host("aws_elastic_beanstalk", "<beanstalk_cname>", "elasticbeanstalk", "com"),
+    "aws_elb_region_first": _host("aws_elb", "<elb_name_id>", "<aws_region>", "elb", "amazonaws", "com"),
+    "aws_elb_elb_first": _host("aws_elb", "<elb_name_id>", "elb", "<aws_region>", "amazonaws", "com"),
+    "aws_elb_dualstack_region_first": _host(
+        "aws_elb", "dualstack", "<elb_name_id>", "<aws_region>", "elb", "amazonaws", "com", canonical=False
+    ),
+    "aws_elb_dualstack_elb_first": _host(
+        "aws_elb", "dualstack", "<elb_name_id>", "elb", "<aws_region>", "amazonaws", "com", canonical=False
+    ),
+    "azure_app_service": _host("azure_app_service", "<azure_name>", "azurewebsites", "net"),
+    "azure_app_service_unique": _host(
+        "azure_app_service", "<azure_hashed_name>", "<azure_region_numbered>", "azurewebsites", "net"
+    ),
+    "azure_app_service_scm": _host("azure_app_service", "<azure_name>", "scm", "azurewebsites", "net", canonical=False),
+    "azure_app_service_unique_scm": _host(
+        "azure_app_service",
+        "<azure_hashed_name>",
+        "scm",
+        "<azure_region_numbered>",
+        "azurewebsites",
+        "net",
+        canonical=False,
+    ),
+    "azure_cloud_service": _host("azure_cloud_service", "<azure_name>", "cloudapp", "net"),
+    "azure_public_ip": _host("azure_public_ip", "<azure_name>", "<azure_region>", "cloudapp", "azure", "com"),
+    "azure_public_ip_scoped": _host(
+        "azure_public_ip", "<azure_name>", "<azure_hash>", "<azure_region>", "cloudapp", "azure", "com"
+    ),
+    "azure_traffic_manager": _host("azure_traffic_manager", "<azure_name>", "trafficmanager", "net"),
+    "azure_front_door": _host("azure_front_door", "<azure_name>", "azurefd", "net"),
+    "azure_front_door_standard": _host(
+        "azure_front_door", "<azure_hashed_name>", "<front_door_zone>", "azurefd", "net"
+    ),
+    "azure_api_management": _host("azure_api_management", "<azure_name>", "azure-api", "net"),
+    "azure_api_management_developer": _host(
+        "azure_api_management", "<azure_name>", "developer", "azure-api", "net", canonical=False
+    ),
+    "azure_api_management_management": _host(
+        "azure_api_management", "<azure_name>", "management", "azure-api", "net", canonical=False
+    ),
+    "azure_api_management_scm": _host(
+        "azure_api_management", "<azure_name>", "scm", "azure-api", "net", canonical=False
+    ),
+    "gcp_app_engine": _host("gcp_app_engine", "<gcp_project>", "appspot", "com"),
+    "gcp_app_engine_regional": _host(
+        "gcp_app_engine", "<gcp_project>", "<appengine_region_code>", "r", "appspot", "com", canonical=False
+    ),
+    "gcp_app_engine_dot_route": _host("gcp_app_engine", "<appspot_dot_chain>", "appspot", "com", canonical=False),
+    "gcp_firebase_hosting": _host("gcp_firebase_hosting", "<firebase_site>", "web", "app"),
+    "gcp_firebase_hosting_legacy": _host(
+        "gcp_firebase_hosting", "<firebase_site>", "firebaseapp", "com", canonical=False
+    ),
+    "gcp_firebase_rtdb": _host("gcp_firebase_rtdb", "<firebase_database>", "firebaseio", "com"),
+    "gcp_firebase_rtdb_regional": _host(
+        "gcp_firebase_rtdb", "<firebase_database>", "<gcp_region>", "firebasedatabase", "app"
+    ),
+}
+# The provider each cloud_resource service and each storage_bucket provider belongs to.
+_SERVICE_PROVIDERS = ("aws", "azure", "gcp")
+_BUCKET_ACCOUNT_PROVIDER: dict[str, str] = {"aws_s3": "aws", "gcp_gcs": "gcp", "azure_blob": "azure"}
+
+
+def _label_grammar(label: str) -> str | None:
+    return label[1:-1] if label.startswith("<") and label.endswith(">") else None
+
+
+def _match_host(hostname: str, pattern: _HostPattern) -> tuple[bool, str | None]:
+    """Return whether the hostname has this shape, and the region its labels encode, if any."""
+    labels = hostname.split(".")
+    if len(labels) != len(pattern.labels):
+        return False, None
+    region: str | None = None
+    for label, spec in zip(labels, pattern.labels, strict=True):
+        grammar = _label_grammar(spec)
+        if grammar is None:
+            if label != spec:
+                return False, None
+            continue
+        match = re.fullmatch(_HOST_LABELS[grammar], label)
+        if match is None:
+            return False, None
+        region = match.groupdict().get("region") or region
+    return True, region
+
+
+def _cross_field_cloud_resource(_type_name: str, properties: dict[str, Any]) -> None:
+    hostname, service = cast("str", properties["hostname"]), cast("str", properties["service"])
+    matches = [
+        (pattern, region)
+        for pattern in _CLOUD_HOST_PATTERNS.values()
+        for matched, region in [_match_host(hostname, pattern)]
+        if matched
+    ]
+    if not matches:
+        raise ExpectedValidationError("/properties/hostname: not a provider-assigned default hostname")
+    pattern, region = matches[0]
+    if not pattern.canonical:
+        raise ExpectedValidationError(
+            f"/properties/hostname: an alias of a {pattern.service} default hostname; write the canonical "
+            "hostname here and this name as a subdomain reached through hosted_on"
+        )
+    if pattern.service != service:
+        raise ExpectedValidationError(f"/properties/service: this hostname is a {pattern.service} default hostname")
+    if "region" in properties and properties["region"] != region:
+        raise ExpectedValidationError("/properties/region: does not match the region the hostname encodes")
+
+
+def _account_provider(view: EndpointView) -> str:
+    if view.type == "storage_bucket":
+        return _BUCKET_ACCOUNT_PROVIDER[cast("str", view.properties["provider"])]
+    return cast("str", view.properties["service"]).split("_", 1)[0]
+
+
+def _endpoint_account_provider(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    if _account_provider(source) != target.properties["provider"]:
+        raise ExpectedValidationError("relation endpoint constraint failed: the account belongs to another provider")
+
+
+def _ensure_cloud_patterns_disjoint() -> None:
+    """Fail at import unless every two hostname patterns provably accept no common hostname.
+
+    `service` is read off the one matching pattern, so an overlap would give one hostname two
+    services. Two patterns are disjoint when their label counts differ, or at some position two
+    literals differ, a literal fails the other pattern's grammar, or the two grammars exclude each
+    other by construction.
+    """
+    items = list(_CLOUD_HOST_PATTERNS.items())
+    for index, (first_name, first) in enumerate(items):
+        for second_name, second in items[index + 1 :]:
+            if len(first.labels) != len(second.labels):
+                continue
+            if not any(_labels_disjoint(a, b) for a, b in zip(first.labels, second.labels, strict=True)):
+                raise RuntimeError(f"cloud hostname patterns {first_name} and {second_name} may overlap")
+    for name, pattern in _CLOUD_HOST_PATTERNS.items():
+        if pattern.service.split("_", 1)[0] not in _SERVICE_PROVIDERS:
+            raise RuntimeError(f"cloud hostname pattern {name} names a service of no known provider")
+
+
+def _labels_disjoint(first: str, second: str) -> bool:
+    first_grammar, second_grammar = _label_grammar(first), _label_grammar(second)
+    if first_grammar is None and second_grammar is None:
+        return first != second
+    if first_grammar is None or second_grammar is None:
+        literal, grammar = (first, second_grammar) if first_grammar is None else (second, first_grammar)
+        return re.fullmatch(_HOST_LABELS[cast("str", grammar)], literal) is None
+    return frozenset({first_grammar, second_grammar}) in _EXCLUSIVE_HOST_LABELS
+
+
+_ensure_cloud_patterns_disjoint()
+
+
 # Every check runs after the required map validated the properties it reads. An id names one
 # behavior: changing what a callable accepts means a new version suffix, which changes the
 # fingerprint, so a workspace written under the old behavior is refused rather than reinterpreted.
 _CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
     "asn_assigned.1": _cross_field_asn,
     "bucket_name_spelling.1": _cross_field_storage_bucket,
+    "cloud_account_spelling.1": _cross_field_cloud_account,
+    "cloud_resource_hostname.1": _cross_field_cloud_resource,
     "cpe_product_level.1": _cross_field_technology,
     "dns_name_kind.1": _cross_field_dns_name,
     "http_fingerprint_value_kind.1": _cross_field_http_fingerprint,
@@ -943,6 +1198,7 @@ _ENDPOINT_CHECKS: dict[str, Callable[[Mapping[str, Any], EndpointView, EndpointV
     "has_contact_registration_roles.1": _endpoint_contact_registration_roles,
     "has_registration_suffix_match.1": _endpoint_registration_suffix,
     "has_subdomain_suffix.1": _endpoint_subdomain_suffix,
+    "in_account_provider_match.1": _endpoint_account_provider,
 }
 
 _CANONICALIZATIONS: dict[str, Callable[[dict[str, Any]], None]] = {
@@ -1183,12 +1439,20 @@ def _ensure_cross_field_contract() -> None:
         ("nodes", "identity_tenant", "provider"): set(_TENANT_RULES),
         ("nodes", "repository", "platform"): set(_REPO_OWNER_RULES),
         ("nodes", "storage_bucket", "provider"): set(_BUCKET_RULES),
+        ("nodes", "cloud_account", "provider"): set(_CLOUD_ACCOUNT_RULES),
         ("nodes", "http_fingerprint", "kind"): {"favicon_mmh3", *_FINGERPRINT_DIGEST_KINDS},
     }
     for (kind, type_name, field), covered in tables.items():
         declared = _enum(kind, type_name, field)
         if declared != covered:
             raise RuntimeError(f"check table for {type_name}.{field} does not cover {declared ^ covered}")
+    if set(_BUCKET_ACCOUNT_PROVIDER) != _enum("nodes", "storage_bucket", "provider") or not set(
+        _BUCKET_ACCOUNT_PROVIDER.values()
+    ) <= _enum("nodes", "cloud_account", "provider"):
+        raise RuntimeError("every storage_bucket provider must map to one cloud_account provider")
+    services = {pattern.service for pattern in _CLOUD_HOST_PATTERNS.values() if pattern.canonical}
+    if services != _enum("nodes", "cloud_resource", "service"):
+        raise RuntimeError("every cloud_resource service needs a canonical hostname pattern, and only those")
     nodes = cast("dict[str, dict[str, Any]]", _CATALOG["nodes"])
     for tag, type_name in _TXT_RECORD_DIVERSIONS:
         if "value" not in nodes.get(type_name, {}).get("required", {}):
@@ -1270,6 +1534,8 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
     validators: dict[str, Callable[[str], bool]] = {
         "bucket_name": _valid_bucket_name,
         "cidr": lambda text: _parse_cidr(text) is not None,
+        "cloud_account_id": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?", text) is not None,
+        "cloud_region": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?", text) is not None,
         "calendar_date": _valid_calendar_date,
         "cpe23": lambda text: len(text) <= 512 and _CPE23.fullmatch(text) is not None,
         "credential_key_id": lambda text: re.fullmatch(r"[A-Za-z0-9._:/+=-]{1,128}", text) is not None,

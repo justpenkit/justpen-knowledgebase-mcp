@@ -44,6 +44,11 @@ DOCS: dict[str, Any] = {
             "alphanumeric or hyphen. Values are empty or use ASCII 0x21-0x3A and 0x3C-0x7E."
         ),
         "cidr": "Canonical strict IPv4 or IPv6 network with an explicit prefix length.",
+        "cloud_account_id": (
+            "1 to 64 lowercase ASCII letters, digits and hyphens, starting and ending alphanumeric. The declared "
+            "provider fixes the spelling: 12 digits for AWS, a project id for GCP, a lowercase UUID for Azure."
+        ),
+        "cloud_region": "1 to 32 lowercase ASCII letters, digits and hyphens, starting and ending alphanumeric.",
         "cpe23": (
             "A lowercase CPE 2.3 formatted string (NIST IR 7695) of at most 512 characters: 'cpe:2.3:', the "
             "part, and ten colon-separated attributes, each '*', '-', or an escaped value optionally anchored "
@@ -226,6 +231,15 @@ DOCS: dict[str, Any] = {
             "`name` is checked against the declared `provider`: length, grammar, and the prefixes, suffixes and "
             "substrings that provider reserves."
         ),
+        "cloud_account_spelling.1": (
+            "`account_id` must be the declared provider's spelling: 12 digits for `aws`, a project id of 6 to 30 "
+            "characters starting with a letter for `gcp`, a lowercase UUID subscription id for `azure`."
+        ),
+        "cloud_resource_hostname.1": (
+            "`hostname` must match exactly one provider-assigned default hostname pattern, and that pattern's "
+            "service must be `service`. An alias form is refused with a pointer to the canonical one; `region`, "
+            "when sent, must equal the region the hostname encodes and is refused on a regionless form."
+        ),
         "contains_cidr_proper_subnet.1": (
             "The target network must be a proper subnet of the source, at the same IP version."
         ),
@@ -241,6 +255,10 @@ DOCS: dict[str, Any] = {
         "has_contact_registration_roles.1": (
             "From a `whois_registration`, `role` must be `registrant`, `admin`, `tech` or `billing`; from a "
             "`domain` or `subdomain`, those four roles are refused, because they belong to one registration."
+        ),
+        "in_account_provider_match.1": (
+            "The account's `provider` must be the source's provider: the prefix of a cloud resource's "
+            "`service`, or the provider behind a bucket's `provider`."
         ),
         "has_registration_suffix_match.1": (
             "The registration's `registry` must be the zone of its domain: the domain's `value` without its "
@@ -328,6 +346,35 @@ DOCS: dict[str, Any] = {
                 "not_before": "The start of the validity period.",
                 "not_after": "The end of the validity period.",
                 "serial": "The serial number in lowercase hex without separators or leading zeros.",
+            },
+        },
+        "cloud_account": {
+            "summary": "A provider tenancy container: an AWS account, a GCP project or an Azure subscription.",
+            "excludes": "Not an identity-provider tenant (`identity_tenant`), a user or a billing profile.",
+            "properties": {
+                "provider": "The cloud provider.",
+                "account_id": "The provider's id: AWS account id, GCP project id or Azure subscription id.",
+            },
+        },
+        "cloud_resource": {
+            "summary": (
+                "A provider-managed resource that answers at a provider-assigned default hostname, such as a "
+                "CloudFront distribution, an App Service app or a Firebase site, keyed on that hostname."
+            ),
+            "excludes": (
+                "Not the DNS name as such (`subdomain`), not object storage (`storage_bucket`) and not a "
+                "path-addressed resource such as a Cloud Function, which is an `endpoint`."
+            ),
+            "notes": (
+                "Each accepted hostname names one resource at a time, so a takeover keeps the node and moves its "
+                "`in_account` edge. Write a custom name or an alias host (`dualstack.`, `.scm.`, "
+                "`.firebaseapp.com`, `-dot-` routes) as a `subdomain` reached through `hosted_on`. Cloud Run and "
+                "project-level Cloud Functions hosts have no one-resource default hostname and are not modeled."
+            ),
+            "properties": {
+                "service": "The provider service, fixed by which default hostname pattern matches.",
+                "hostname": "The canonical provider-assigned default hostname.",
+                "region": "The region the hostname encodes, when it encodes one.",
             },
         },
         "cve": {
@@ -854,6 +901,16 @@ DOCS: dict[str, Any] = {
         "has_txt_record": {
             "summary": "The name publishes the TXT value.",
             "excludes": "Not a value that belongs to a dedicated TXT type.",
+            "properties": {},
+        },
+        "hosted_on": {
+            "summary": "A name or URL serves from the cloud resource, typically through a CNAME to its default hostname.",
+            "excludes": "Not ownership of the resource; `in_account` records whose account it is.",
+            "properties": {},
+        },
+        "in_account": {
+            "summary": "The cloud resource or bucket belongs to the account.",
+            "excludes": "Not the account's identity provider, which is an `identity_tenant`.",
             "properties": {},
         },
         "has_weakness": {

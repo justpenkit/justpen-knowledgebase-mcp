@@ -37,6 +37,11 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ("192.0.2.0/24", "2001:db8::/32", "0.0.0.0/0"),
         ("192.0.2.1/24", "192.0.2.0", "2001:DB8::/32", "192.0.2.0/255.255.255.0", "fe80::/64%en0"),
     ),
+    "cloud_account_id": (
+        ("123456789012", "my-project", "72f988bf-86f1-41af-91ab-2d7cd011db47"),
+        ("", "My-Project", "-a", "a" * 65),
+    ),
+    "cloud_region": (("us-east-1", "westus", "europe-west1"), ("", "US-EAST-1", "us east", "-us", "a" * 33)),
     "cpe23": (
         (CPE_NGINX, "cpe:2.3:o:-:-:-:-:-:-:-:-:-:-", "cpe:2.3:a:vendor:pro\\:duct:*:*:*:*:*:*:*:*"),
         ("", "cpe:/a:apache:http_server:2.4.41", "CPE:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*", "cpe:2.3:a:f5"),
@@ -241,6 +246,57 @@ CHECKS: dict[str, tuple[tuple[Record, ...], tuple[Record, ...]]] = {
             ("storage_bucket", {"provider": "gcp_gcs", "name": "googtest"}),
         ),
     ),
+    "cloud_account_spelling.1": (
+        (
+            ("cloud_account", {"provider": "aws", "account_id": "012345678901"}),
+            ("cloud_account", {"provider": "gcp", "account_id": "my-project-123"}),
+            ("cloud_account", {"provider": "azure", "account_id": "72f988bf-86f1-41af-91ab-2d7cd011db47"}),
+        ),
+        (
+            ("cloud_account", {"provider": "aws", "account_id": "12345678901"}),
+            ("cloud_account", {"provider": "gcp", "account_id": "1project"}),
+            ("cloud_account", {"provider": "azure", "account_id": "not-a-uuid"}),
+        ),
+    ),
+    "cloud_resource_hostname.1": (
+        (
+            ("cloud_resource", {"service": "aws_cloudfront", "hostname": "d111111abcdef8.cloudfront.net"}),
+            (
+                "cloud_resource",
+                {
+                    "service": "aws_elb",
+                    "hostname": "my-load-balancer-1234567890abcdef.elb.us-east-2.amazonaws.com",
+                    "region": "us-east-2",
+                },
+            ),
+            (
+                "cloud_resource",
+                {
+                    "service": "azure_app_service",
+                    "hostname": "contoso-a6gqaeashthkhkeu.eastus-01.azurewebsites.net",
+                    "region": "eastus",
+                },
+            ),
+        ),
+        (
+            ("cloud_resource", {"service": "aws_elb", "hostname": "d111111abcdef8.cloudfront.net"}),
+            ("cloud_resource", {"service": "azure_app_service", "hostname": "contoso.scm.azurewebsites.net"}),
+            ("cloud_resource", {"service": "aws_cloudfront", "hostname": "cdn.example.com"}),
+            (
+                "cloud_resource",
+                {"service": "aws_cloudfront", "hostname": "d111111abcdef8.cloudfront.net", "region": "us-east-1"},
+            ),
+            (
+                "cloud_resource",
+                {
+                    "service": "aws_api_gateway",
+                    "hostname": "b123abcde4.execute-api.us-east-2.amazonaws.com",
+                    "region": "us-east-1",
+                },
+            ),
+            ("cloud_resource", {"service": "gcp_app_engine", "hostname": "v1-dot-my-project-123.appspot.com"}),
+        ),
+    ),
     "cpe_product_level.1": (
         (
             ("technology", {"name": "nginx", "cpe": "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*"}),
@@ -427,6 +483,32 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
             ),
         ),
     ),
+    "in_account_provider_match.1": (
+        (
+            (
+                {},
+                ("cloud_resource", {"service": "aws_cloudfront", "hostname": "d111111abcdef8.cloudfront.net"}),
+                ("cloud_account", {"provider": "aws", "account_id": "012345678901"}),
+            ),
+            (
+                {},
+                ("storage_bucket", {"provider": "gcp_gcs", "name": "example-assets"}),
+                ("cloud_account", {"provider": "gcp", "account_id": "my-project-123"}),
+            ),
+        ),
+        (
+            (
+                {},
+                ("cloud_resource", {"service": "azure_app_service", "hostname": "contoso.azurewebsites.net"}),
+                ("cloud_account", {"provider": "aws", "account_id": "012345678901"}),
+            ),
+            (
+                {},
+                ("storage_bucket", {"provider": "aws_s3", "name": "example-assets"}),
+                ("cloud_account", {"provider": "gcp", "account_id": "my-project-123"}),
+            ),
+        ),
+    ),
     "has_registration_suffix_match.1": (
         (
             (
@@ -500,4 +582,38 @@ CANONICALIZATIONS: dict[str, tuple[tuple[Rewrite, ...], tuple[Record, ...]]] = {
             ("endpoint", {"url": "https://api.example.com/search?q=%zz", "method": "GET"}),
         ),
     ),
+}
+
+# One example per cloud hostname pattern, which must match that pattern and no other.
+CLOUD_HOSTS: dict[str, str] = {
+    "aws_cloudfront": "d111111abcdef8.cloudfront.net",
+    "aws_api_gateway": "b123abcde4.execute-api.us-east-2.amazonaws.com",
+    "aws_lambda_url": "4iykoi7jk2kp5hhd5irhbdprn40yxest.lambda-url.us-west-2.on.aws",
+    "aws_elastic_beanstalk": "my-env.us-east-1.elasticbeanstalk.com",
+    "aws_elastic_beanstalk_legacy": "sampleapplication.elasticbeanstalk.com",
+    "aws_elb_region_first": "my-load-balancer-1234567890.us-west-2.elb.amazonaws.com",
+    "aws_elb_elb_first": "my-load-balancer-1234567890abcdef.elb.us-east-2.amazonaws.com",
+    "aws_elb_dualstack_region_first": "dualstack.my-load-balancer-1234567890.us-west-2.elb.amazonaws.com",
+    "aws_elb_dualstack_elb_first": "dualstack.my-load-balancer-1234567890abcdef.elb.us-east-2.amazonaws.com",
+    "azure_app_service": "contoso.azurewebsites.net",
+    "azure_app_service_unique": "contoso-a6gqaeashthkhkeu.eastus-01.azurewebsites.net",
+    "azure_app_service_scm": "contoso.scm.azurewebsites.net",
+    "azure_app_service_unique_scm": "contoso-a6gqaeashthkhkeu.scm.eastus-01.azurewebsites.net",
+    "azure_cloud_service": "contoso.cloudapp.net",
+    "azure_public_ip": "contoso.westus.cloudapp.azure.com",
+    "azure_public_ip_scoped": "contoso.fjdng2acavhkevd8.westus.cloudapp.azure.com",
+    "azure_traffic_manager": "contoso.trafficmanager.net",
+    "azure_front_door": "contoso.azurefd.net",
+    "azure_front_door_standard": "myendpoint-mdjf2jfgjf82mnzx.z01.azurefd.net",
+    "azure_api_management": "contoso.azure-api.net",
+    "azure_api_management_developer": "contoso.developer.azure-api.net",
+    "azure_api_management_management": "contoso.management.azure-api.net",
+    "azure_api_management_scm": "contoso.scm.azure-api.net",
+    "gcp_app_engine": "my-project-123.appspot.com",
+    "gcp_app_engine_regional": "my-project-123.uc.r.appspot.com",
+    "gcp_app_engine_dot_route": "v1-dot-my-project-123.appspot.com",
+    "gcp_firebase_hosting": "my-site.web.app",
+    "gcp_firebase_hosting_legacy": "my-site.firebaseapp.com",
+    "gcp_firebase_rtdb": "my-db.firebaseio.com",
+    "gcp_firebase_rtdb_regional": "my-db.europe-west1.firebasedatabase.app",
 }

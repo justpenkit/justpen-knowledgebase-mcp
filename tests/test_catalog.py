@@ -62,6 +62,8 @@ NODE_TYPES = {
     "secret",
     "storage_bucket",
     "whois_registration",
+    "cloud_account",
+    "cloud_resource",
 }
 RELATION_TYPES = {
     "resolves_to",
@@ -109,6 +111,8 @@ RELATION_TYPES = {
     "owns_repository",
     "presents_host_key",
     "has_registration",
+    "hosted_on",
+    "in_account",
 }
 
 
@@ -128,7 +132,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "dff628c40d500ce6d427dc64d79f5ce823118f6f75dc923f6561f740174de5e5"
+    assert CATALOG_FINGERPRINT == "f911981669bbb01be815d33db0ef4fac04a426b83174b5ec7f6ef59b71015127"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -819,9 +823,13 @@ def test_relation_endpoint_matrices_are_exact() -> None:
                 "secret",
                 "mta_sts_policy",
                 "whois_registration",
+                "cloud_account",
+                "cloud_resource",
             ],
             ["finding"],
         ),
+        "hosted_on": (["domain", "subdomain", "endpoint"], ["cloud_resource"]),
+        "in_account": (["cloud_resource", "storage_bucket"], ["cloud_account"]),
         "has_registration": (["domain"], ["whois_registration"]),
         "presents_certificate": (["service"], ["certificate"]),
         "presents_host_key": (["service"], ["host_key"]),
@@ -831,7 +839,7 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "runs_technology": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "protected_by": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "backed_by_bucket": (["domain", "subdomain", "endpoint"], ["storage_bucket"]),
-        "exposes_secret": (["repository", "endpoint", "storage_bucket"], ["secret"]),
+        "exposes_secret": (["repository", "endpoint", "storage_bucket", "cloud_resource"], ["secret"]),
         "federates_with": (d, ["identity_tenant"]),
         "has_contact": (
             ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration"],
@@ -1713,3 +1721,41 @@ def test_ac10_attribute_properties_are_declared() -> None:
     }
     for (kind, type_name), names in expected.items():
         assert names <= set(manifest[kind][type_name]["optional"]), type_name
+
+
+def test_every_cloud_hostname_pattern_has_one_example_that_matches_only_it() -> None:
+    assert set(golden.CLOUD_HOSTS) == set(catalog_module._CLOUD_HOST_PATTERNS)
+    for name, hostname in golden.CLOUD_HOSTS.items():
+        assert catalog_module._valid_field(hostname, "dns_name"), hostname
+        matched = [
+            other
+            for other, pattern in catalog_module._CLOUD_HOST_PATTERNS.items()
+            if catalog_module._match_host(hostname, pattern)[0]
+        ]
+        assert matched == [name], hostname
+
+
+def test_every_canonical_cloud_hostname_example_is_a_valid_resource() -> None:
+    for name, hostname in golden.CLOUD_HOSTS.items():
+        pattern = catalog_module._CLOUD_HOST_PATTERNS[name]
+        properties = {"service": pattern.service, "hostname": hostname}
+        if pattern.canonical:
+            validate_record("nodes", "cloud_resource", properties)
+        else:
+            with pytest.raises(ExpectedValidationError, match="an alias of"):
+                validate_record("nodes", "cloud_resource", properties)
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        catalog_module._host("aws_cloudfront", "<azure_name>", "cloudfront", "net"),
+        catalog_module._host("gcp_app_engine", "<firebase_site>", "appspot", "com"),
+    ],
+)
+def test_overlapping_cloud_hostname_patterns_are_refused_at_import(
+    monkeypatch: pytest.MonkeyPatch, pattern: object
+) -> None:
+    monkeypatch.setitem(catalog_module._CLOUD_HOST_PATTERNS, "overlap", pattern)
+    with pytest.raises(RuntimeError, match="may overlap"):
+        catalog_module._ensure_cloud_patterns_disjoint()
