@@ -426,11 +426,10 @@ A registrable domain name as the bundled public suffix list classifies it, such 
 
 **Identity:** `value`<br>**Parent scope:** —<br>**Checks:** `dns_name_kind.1`<br>**Canonicalizations:** —
 
-| Property          | Required | Rule       | Meaning                                                                         |
-| ----------------- | -------- | ---------- | ------------------------------------------------------------------------------- |
-| `value`           | yes      | `dns_name` | The lowercase ASCII name without a trailing dot; IDNs in punycode.              |
-| `wildcard`        | no       | `boolean`  | True when random labels directly under this name resolve, a DNS wildcard.       |
-| `wildcard_answer` | no       | `boolean`  | True when this name's answer equals its parent wildcard's, so it may not exist. |
+| Property   | Required | Rule       | Meaning                                                                   |
+| ---------- | -------- | ---------- | ------------------------------------------------------------------------- |
+| `value`    | yes      | `dns_name` | The lowercase ASCII name without a trailing dot; IDNs in punycode.        |
+| `wildcard` | no       | `boolean`  | True when random labels directly under this name resolve, a DNS wildcard. |
 
 ### `email_address`
 

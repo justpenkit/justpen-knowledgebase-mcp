@@ -245,7 +245,7 @@ _NODES: dict[str, dict[str, Any]] = {
     "domain": {
         "identity": _identity(["value"]),
         "required": {"value": "dns_name"},
-        "optional": {"wildcard": "boolean", "wildcard_answer": "boolean"},
+        "optional": {"wildcard": "boolean"},
         "checks": ["dns_name_kind.1"],
     },
     "email_address": {"identity": _identity(["value"]), "required": {"value": "email_address"}},

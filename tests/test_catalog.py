@@ -135,7 +135,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "2283dea705af8778e7d861d842009406348e9d6ab12050b61dd424ecb4b57793"
+    assert CATALOG_FINGERPRINT == "b13948852d5624c5b7c4e51fe33a0216473ca8b68e8356fcb97982f0acad513a"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1759,7 +1759,7 @@ def test_ac10_attribute_properties_are_declared() -> None:
         ("nodes", "finding"): {"cvss_score", "cvss_vector", "confidence", "tags", "scanner", "description"},
         ("nodes", "endpoint"): {"status", "title", "content_length", "content_type", "webserver"},
         ("nodes", "ip_address"): {"cdn_provider", "waf_provider", "cloud_provider"},
-        ("nodes", "domain"): {"wildcard", "wildcard_answer"},
+        ("nodes", "domain"): {"wildcard"},
         ("nodes", "subdomain"): {"wildcard", "wildcard_answer"},
         ("nodes", "technology"): {"cpe"},
         ("relations", "runs_technology"): {"version", "cpe"},

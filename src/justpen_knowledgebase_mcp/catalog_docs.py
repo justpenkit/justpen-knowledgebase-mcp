@@ -443,7 +443,6 @@ DOCS: dict[str, Any] = {
             "properties": {
                 "value": "The lowercase ASCII name without a trailing dot; IDNs in punycode.",
                 "wildcard": "True when random labels directly under this name resolve, a DNS wildcard.",
-                "wildcard_answer": "True when this name's answer equals its parent wildcard's, so it may not exist.",
             },
         },
         "email_address": {
