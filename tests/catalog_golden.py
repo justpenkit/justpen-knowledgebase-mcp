@@ -125,7 +125,10 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     "rir_handle": (("ORG-GOGL-1-ARIN", "ORG-nG51-RIPE", "A1"), ("A", "ORG-", "ORG_1", "-ORG-1", "X" * 65)),
     "service_name": (("http", "ssh", "unknown"), ("X11", "ssl/http", "definitely-not-registered")),
     "sha256": (("a" * 64, "0" * 64), ("A" * 64, "a" * 63, "a" * 65)),
-    "spf": (("v=spf1", "v=spf1 -all"), ("v=spf10", " v=spf1", "v=spf1\t-all", "v=spf1 é")),
+    "spf": (
+        ("v=spf1", "v=spf1 -all", "v=spf1 " + "a" * 4089),
+        ("v=spf10", " v=spf1", "v=spf1\t-all", "v=spf1 é", "v=spf1 " + "a" * 4090),
+    ),
     "srv_label": (("_ldap", "_tcp", "_" + "b" * 62), ("ldap", "_LDAP", "_ldap-", "_" + "a" * 63)),
     "tech_token": (("nginx", "php_7.4+x", "a"), ("Nginx", "-nginx", "nginx-", "a" * 64, "ngin x", "")),
     "tech_version": (("1.18.0", "2.4.41-ubuntu", "x" * 64), ("", "1.18 beta", "x" * 65, "1.0\u00e9")),

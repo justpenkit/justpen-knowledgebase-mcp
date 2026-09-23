@@ -1341,6 +1341,8 @@ def _valid_mta_sts(value: str) -> bool:
 
 
 def _valid_spf(value: str) -> bool:
+    if len(value) > 4096:
+        return False
     return (value == "v=spf1" or value.startswith("v=spf1 ")) and all(0x20 <= ord(char) <= 0x7E for char in value)
 
 

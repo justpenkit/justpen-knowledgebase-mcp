@@ -145,7 +145,10 @@ DOCS: dict[str, Any] = {
         ),
         "service_name": "A member of the bundled versioned service name whitelist.",
         "sha256": "Exactly 64 lowercase ASCII hexadecimal characters.",
-        "spf": "Printable ASCII beginning with `v=spf1` followed by a normal space or end of text.",
+        "spf": (
+            "Printable ASCII of at most 4096 characters beginning with `v=spf1` followed by a normal space or end "
+            "of text, the same bound as every other TXT value rule."
+        ),
         "srv_label": "A 2-63 byte lowercase ASCII SRV label beginning with underscore.",
         "tech_token": (
             "A 1-63 character lowercase ASCII technology slug that starts and ends alphanumeric and may contain "
