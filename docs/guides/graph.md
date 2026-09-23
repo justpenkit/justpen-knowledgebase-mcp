@@ -120,10 +120,10 @@ policies. A chain deletes innermost first: an endpoint with a parameter that
 carries a finding takes three deletes, finding, parameter, endpoint, and the two
 outer ones are refused until the level below them is gone.
 
-## Catalog v1 workspaces
+## Catalog v1 and v2 workspaces
 
-Catalog v2 is a clean cut. A workspace created with catalog v1 is rejected at
-startup; it is not migrated or opened read-only. Create a new workspace for this
+Catalog v3 is a clean cut. A workspace created with catalog v1 or v2 is
+rejected at startup; it is not migrated or opened read-only. Create a new workspace for this
 version. A workspace created before schema version 3 is likewise rejected, so a
 workspace written by v0.2.0 does not open either.
 

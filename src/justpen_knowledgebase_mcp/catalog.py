@@ -1,4 +1,4 @@
-"""Catalog v2 manifest, discovery schema, and strict record validators."""
+"""Catalog v3 manifest, discovery schema, and strict record validators."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from .service_names import is_service_name, secure_required
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-CATALOG_VERSION = 2
+CATALOG_VERSION = 3
 
 _COMMON = {
     "additional_properties": True,

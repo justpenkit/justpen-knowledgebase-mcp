@@ -1,4 +1,4 @@
-"""Catalog v2 manifest, schema, and strict validator contracts."""
+"""Catalog v3 manifest, schema, and strict validator contracts."""
 
 from __future__ import annotations
 
@@ -113,14 +113,14 @@ def _invalid(kind: str, type_name: str, properties: dict[str, object]) -> None:
         validate_record(kind, type_name, properties)
 
 
-def test_manifest_has_only_catalog_v2_types_and_stable_fingerprint() -> None:
+def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     manifest = catalog_manifest()
 
-    assert CATALOG_VERSION == 2
-    assert manifest["version"] == 2
+    assert CATALOG_VERSION == 3
+    assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "d25e5c37a1e363eccfcadbd7919aac85b017b730380badd765fd3c1a9252c7c9"
+    assert CATALOG_FINGERPRINT == "8295466a4ffb5459311e298f203d388291918b5f015f90c268d97b8689783068"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:

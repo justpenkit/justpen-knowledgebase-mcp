@@ -8,7 +8,7 @@ and local files, without an LLM, embedding service, or separate database server.
 
 ## Features
 
-- **Catalog v2 recon graph:** domains, subdomains, IP addresses and CIDRs, ASNs,
+- **Catalog v3 recon graph:** domains, subdomains, IP addresses and CIDRs, ASNs,
     DNS records, technologies, TLS cipher suites and fingerprints, registrars, organizations, weaknesses,
     parent-scoped
     ports/services/findings/DKIM selectors/parameters, certificates, endpoints,
@@ -59,8 +59,8 @@ Call `kb_types` to discover the available schemas. Start with the [graph workflo
 for concurrency, backups, and upgrades, and [telemetry](docs/guides/telemetry.md)
 for exporter configuration.
 
-Catalog v2 rejects catalog v1 workspaces at startup. Create a new workspace
-rather than pointing this version at v1 data.
+Catalog v3 rejects catalog v1 and v2 workspaces at startup. Create a new
+workspace rather than pointing this version at older data.
 
 ## Development
 

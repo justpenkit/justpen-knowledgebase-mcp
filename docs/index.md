@@ -27,7 +27,7 @@ telemetry only; it never partitions graph data.
     tabulated in [Catalog types and formats](reference/catalog.md).
 - Required identity properties are strictly validated; additional JSON
     properties remain available for scanner-specific facts.
-- Catalog v2 models domains, subdomains, IP addresses and CIDRs, ASNs, DNS
+- Catalog v3 models domains, subdomains, IP addresses and CIDRs, ASNs, DNS
     records, technologies, TLS cipher suites and fingerprints, HTTP fingerprints,
     SSH host keys, registrars, organizations, weaknesses, ports and services,
     findings, parameters, certificates, endpoints, CVEs, storage buckets,
@@ -44,8 +44,8 @@ telemetry only; it never partitions graph data.
     jobs with explicit pending, failure, retry, and retention state.
 - Read and search responses expose pagination, truncation, index coverage, and
     canonical property fallback rather than silently omitting unknown results.
-- Catalog v1 workspaces fail closed at startup; catalog v2 requires a new
-    workspace.
+- Catalog v1 and v2 workspaces fail closed at startup; catalog v3 requires a
+    new workspace.
 
 ## Contributors
 

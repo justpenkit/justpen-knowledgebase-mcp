@@ -1,6 +1,6 @@
 # Catalog reference
 
-Every table below is generated from catalog v2, the same manifest the server validates writes against. `kb_types` returns the identical contract at runtime and is the source to read from a client; this page exists so the contract is reviewable without a running server. Regenerate it with `make docs-catalog`.
+Every table below is generated from catalog v3, the same manifest the server validates writes against. `kb_types` returns the identical contract at runtime and is the source to read from a client; this page exists so the contract is reviewable without a running server. Regenerate it with `make docs-catalog`.
 
 The catalog declares **31 node types** and **44 relation types**. Conventions that the catalog does not enforce, and the reasoning behind each type, live in [Graph and search](../tools/graph.md).
 
