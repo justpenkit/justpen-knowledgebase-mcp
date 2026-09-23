@@ -73,7 +73,13 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     "http_fingerprint_value": (("-1752256170", "0", "a" * 64), ("+1", "A" * 64, "01", "-0", "2147483648")),
     "http_status": ((100, 200, 599), (99, 600, "200", True, 200.0)),
     "http_url": (
-        ("https://example.com/", "http://[2001:db8::1]:8080/a", "https://api.example.com/a%2Fb"),
+        (
+            "https://example.com/",
+            "http://[2001:db8::1]:8080/a",
+            "https://api.example.com/a%2Fb",
+            "https://my_service.example.com/",
+            "http://localhost:8080/",
+        ),
         (
             "https://example.com",
             "https://example.com:443/",

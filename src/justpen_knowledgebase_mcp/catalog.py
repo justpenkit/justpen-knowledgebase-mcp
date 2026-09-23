@@ -1483,10 +1483,17 @@ def _dns_kind(value: str) -> str | None:
 
 
 def _valid_hostname(value: str) -> bool:
+    """Accept any name `subdomain` accepts, or a name of plain LDH labels such as `localhost`.
+
+    Underscore labels left of the registrable domain, such as `my_service.example.com`, are hosts
+    that crawlers report, so a URL host accepts them exactly where a subdomain does.
+    """
     if not value.isascii() or not 1 <= len(value) <= 253 or value.endswith("."):
         return False
     if "." in value and re.fullmatch(r"[0-9.]+", value) is not None:
         return False
+    if _dns_kind(value) is not None:
+        return True
     labels = value.split(".")
     return all(_valid_normal_dns_label(label) for label in labels)
 

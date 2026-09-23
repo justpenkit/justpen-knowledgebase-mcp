@@ -86,7 +86,8 @@ DOCS: dict[str, Any] = {
         ),
         "http_status": "A strict JSON integer HTTP status code from 100 through 599.",
         "http_url": (
-            "Canonical absolute ASCII http/https URL with lowercase host, mandatory path, no userinfo, "
+            "Canonical absolute ASCII http/https URL with a lowercase host (underscore labels are accepted left of "
+            "the registrable domain, as for subdomain), mandatory path, no userinfo, "
             "fragment, whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase "
             "percent escape. A submitted query string is validated with the rest of the URL and then removed "
             "before identity and storage, so one endpoint holds one path; parameter names belong to parameter nodes."
