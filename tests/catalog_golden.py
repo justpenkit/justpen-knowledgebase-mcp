@@ -1,0 +1,269 @@
+"""Golden accepted and rejected cases for every published format, check and canonicalization id.
+
+The fingerprint covers rule ids and their versions, not the callables behind them. Each id owns its
+cases here, so changing what a rule accepts means editing that id's cases, which puts the missing
+version bump in front of the reviewer. `tests/test_catalog.py` refuses a manifest id without cases
+and a case key the manifest no longer publishes.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+CPE_NGINX = "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*"
+
+Record = tuple[str, dict[str, Any]]
+Endpoint = tuple[dict[str, Any], Record, Record]
+Rewrite = tuple[str, dict[str, Any], dict[str, Any]]
+
+# Format id -> (accepted values, rejected values), judged by the format validator alone.
+FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
+    "alpn_tokens": ((["h2", "http/1.1"], [], ["h2", "h2"]), ("h2", ["h2 "], [""], ["é"], [1])),
+    "asn": ((0, 64512, 4294967295), (-1, 4294967296, True, "64512")),
+    "bucket_name": (
+        ("example-assets", "my_bucket", "a.b.c"),
+        ("ab", "Example", "ex..ample", "192.168.1.1", "-abc", "a" * 223),
+    ),
+    "caa_parameters": (
+        ([], [{"name": "accounturi", "value": "https://ca.example/1"}], [{"name": "a", "value": ""}]),
+        ("x", [1], [{"name": "-bad", "value": "x"}], [{"name": "ok", "value": "has space"}], [{"name": "ok"}]),
+    ),
+    "cidr": (
+        ("192.0.2.0/24", "2001:db8::/32", "0.0.0.0/0"),
+        ("192.0.2.1/24", "192.0.2.0", "2001:DB8::/32", "192.0.2.0/255.255.255.0", "fe80::/64%en0"),
+    ),
+    "cpe23_or_empty": (
+        ("", CPE_NGINX, "cpe:2.3:o:-:-:-:-:-:-:-:-:-:-"),
+        ("cpe:/a:apache:http_server:2.4.41", "CPE:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*", "cpe:2.3:a:f5"),
+    ),
+    "cve": (("CVE-2026-1234", "CVE-1999-1234567"), ("cve-2026-1234", "CVE-26-1234", "CVE-2026-123", 20261234)),
+    "cwe": (("CWE-79", "CWE-999999"), ("cwe-79", "CWE-1234567", "CWE-", "79", 79)),
+    "dkim_selector": (("default", "selector1.sub", "a" * 63), ("Default", "s1._domainkey", "", "a" * 64, "s1-")),
+    "dmarc": (
+        ("v=DMARC1", "v=DMARC1; p=reject", "v=DMARC1 p=none"),
+        ("v=DMARC10", "V=DMARC1", "v=DMARC1;\tp=none", "", "v=DMARC1;" + "x" * 4088),
+    ),
+    "dns_name": (
+        ("example.com", "api.example.com", "_sip._tcp.example.com", "xn--bcher-kva.example"),
+        ("Example.com", "example.com.", "com", "localhost", "192.0.2.1", "example..com", "xn--a.example.com"),
+    ),
+    "dns_or_explicit_empty": (("", "api.example.com"), ("192.0.2.1", "Example.com", "localhost")),
+    "email_address": (
+        ("abuse@example.com", "first.last+tag@mail.example.co.uk"),
+        ("Abuse@example.com", "abuse@localhost", "a@b@example.com", ".abuse@example.com", "abuse name@example.com"),
+    ),
+    "http_fingerprint_value": (("-1752256170", "0", "a" * 64), ("+1", "A" * 64, "01", "-0", "2147483648")),
+    "http_url": (
+        ("https://example.com/", "http://[2001:db8::1]:8080/a", "https://api.example.com/a%2Fb"),
+        (
+            "https://example.com",
+            "https://example.com:443/",
+            "https://user@example.com/",
+            "HTTPS://example.com/",
+            "https://example.com/#a",
+            "https://example.com/../a",
+            "https://example.com/%2f",
+        ),
+    ),
+    "ip": (
+        ("192.0.2.1", "2001:db8::1"),
+        ("2001:DB8::1", "2001:0db8::1", "192.168.001.1", "fe80::1%en0", "192.0.2.1/32"),
+    ),
+    "ip_version": ((4, 6), (5, "4", True)),
+    "method": (("GET", "PROPFIND", "M" * 32), ("get", "M" * 33, "")),
+    "mta_sts": (("v=STSv1", "v=STSv1; id=1", "v=STSv1 id=1"), ("v=STSv10", "V=STSv1", "", " v=STSv1")),
+    "parameter_name": (("id", "X-Request-Id", "%20foo"), ("id=1", "two words", "", "a" * 129, "café")),
+    "phone_e164": (("+14155552671", "+12"), ("14155552671", "+0155552671", "+1", "+" + "9" * 16, "+1 415 555")),
+    "printable_text_1024": (("x", "x" * 1024), ("", "x" * 1025, "line\nbreak", 1)),
+    "printable_text_200": (("x", "x" * 200), ("", "x" * 201, "a\tb")),
+    "redirect_status": ((301, 302, 303, 307, 308), (300, 304, "301", True)),
+    "repo_name": (("web-app", ".github", "n" * 100), ("..", ".", "Web", "n" * 101)),
+    "repo_owner": (("example-org", "group/sub"), ("Example", "-x", "g" * 101, "")),
+    "rir_handle": (("ORG-GOGL-1-ARIN", "ORG-nG51-RIPE", "A1"), ("A", "ORG-", "ORG_1", "-ORG-1", "X" * 65)),
+    "service_name": (("http", "ssh", "unknown"), ("X11", "ssl/http", "definitely-not-registered")),
+    "sha256": (("a" * 64, "0" * 64), ("A" * 64, "a" * 63, "a" * 65)),
+    "spf": (("v=spf1", "v=spf1 -all"), ("v=spf10", " v=spf1", "v=spf1\t-all", "v=spf1 é")),
+    "srv_label": (("_ldap", "_tcp", "_" + "b" * 62), ("ldap", "_LDAP", "_ldap-", "_" + "a" * 63)),
+    "tech_token": (("nginx", "php_7.4+x", "a"), ("Nginx", "-nginx", "nginx-", "a" * 64, "ngin x", "")),
+    "tenant_id": (("dev-12345", "72f988bf-86f1-41af-91ab-2d7cd011db47"), ("Dev-12345", "", "-x", "a" * 129)),
+    "tls_cipher_name": (
+        ("TLS_AES_128_GCM_SHA256", "TLS_NULL_WITH_NULL_NULL"),
+        ("tls_aes_128_gcm_sha256", "TLS_", "ECDHE-RSA-AES128-GCM-SHA256", "TLS_AES__128"),
+    ),
+    "tls_fingerprint_value": (("a" * 32, "2" * 62), ("A" * 32, "a" * 61, "a" * 33)),
+    "txt_value": (("x", "x" * 4096, "v=spf1include:x"), ("", "x" * 4097, "café", "line\nbreak")),
+    "uint8": ((0, 255), (-1, 256, True, "1")),
+    "uint16": ((0, 65535), (-1, 65536, True, "1")),
+}
+
+# Check id -> (records the whole validation accepts, records the check itself rejects). Every
+# rejected record satisfies its type's required map, so the rejection is the check's alone.
+CHECKS: dict[str, tuple[tuple[Record, ...], tuple[Record, ...]]] = {
+    "bucket_name_spelling.1": (
+        (
+            ("storage_bucket", {"provider": "aws_s3", "name": "example-assets"}),
+            ("storage_bucket", {"provider": "gcp_gcs", "name": "example.appspot.com"}),
+        ),
+        (
+            ("storage_bucket", {"provider": "azure_blob", "name": "example-storage"}),
+            ("storage_bucket", {"provider": "aws_s3", "name": "example-s3alias"}),
+            ("storage_bucket", {"provider": "gcp_gcs", "name": "googtest"}),
+        ),
+    ),
+    "dns_name_kind.1": (
+        (("domain", {"value": "example.com"}), ("subdomain", {"value": "api.example.com"})),
+        (("domain", {"value": "api.example.com"}), ("subdomain", {"value": "example.com"})),
+    ),
+    "http_fingerprint_value_kind.1": (
+        (
+            ("http_fingerprint", {"kind": "favicon_mmh3", "value": "-1752256170"}),
+            ("http_fingerprint", {"kind": "body_sha256", "value": "a" * 64}),
+        ),
+        (
+            ("http_fingerprint", {"kind": "body_sha256", "value": "-1"}),
+            ("http_fingerprint", {"kind": "favicon_mmh3", "value": "a" * 64}),
+        ),
+    ),
+    "ip_address_version.1": (
+        (("ip_address", {"value": "192.0.2.1", "version": 4}), ("ip_address", {"value": "2001:db8::1", "version": 6})),
+        (("ip_address", {"value": "192.0.2.1", "version": 6}),),
+    ),
+    "ip_cidr_version.1": (
+        (("ip_cidr", {"value": "192.0.2.0/24", "version": 4}),),
+        (("ip_cidr", {"value": "192.0.2.0/24", "version": 6}),),
+    ),
+    "registrar_iana_assigned.1": (
+        (("registrar", {"iana_id": 292, "name": "MarkMonitor Inc."}),),
+        (("registrar", {"iana_id": 0, "name": "unset"}),),
+    ),
+    "repository_owner_spelling.1": (
+        (
+            ("repository", {"platform": "github", "host": "github.com", "owner": "example-org", "name": "web"}),
+            ("repository", {"platform": "gitlab", "host": "git.example.com", "owner": "group/sub", "name": "api"}),
+        ),
+        (
+            ("repository", {"platform": "github", "host": "github.com", "owner": "group/sub", "name": "web"}),
+            ("repository", {"platform": "github", "host": "github.com", "owner": "ex--ample", "name": "web"}),
+        ),
+    ),
+    "secret_plaintext_keys.1": (
+        (("secret", {"value_sha256": "a" * 64, "detector": "aws"}),),
+        (("secret", {"value_sha256": "a" * 64, "password": "hunter2"}),),
+    ),
+    "service_secure_flag.1": (
+        (("service", {"name": "http", "secure": True}), ("service", {"name": "ssh"})),
+        (("service", {"name": "http"}), ("service", {"name": "http", "secure": 1})),
+    ),
+    "tenant_id_spelling.1": (
+        (
+            ("identity_tenant", {"provider": "okta", "tenant_id": "dev-12345"}),
+            ("identity_tenant", {"provider": "entra_id", "tenant_id": "72f988bf-86f1-41af-91ab-2d7cd011db47"}),
+        ),
+        (
+            ("identity_tenant", {"provider": "entra_id", "tenant_id": "not-a-uuid"}),
+            ("identity_tenant", {"provider": "okta", "tenant_id": "acme.corp"}),
+        ),
+    ),
+    "tls_fingerprint_length.1": (
+        (("tls_fingerprint", {"kind": "jarm", "value": "2" * 62}),),
+        (("tls_fingerprint", {"kind": "ja3s", "value": "2" * 62}),),
+    ),
+    "txt_record_diversion.1": (
+        (("txt_record", {"value": "v=spf1include:_spf.example.com ~all"}), ("txt_record", {"value": "V=SPF1 -all"})),
+        (("txt_record", {"value": "v=spf1 -all"}), ("txt_record", {"value": "v=STSv1; id=1"})),
+    ),
+}
+
+# Endpoint check id -> (accepted, rejected) as (relation properties, source record, target record).
+ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = {
+    "contains_cidr_proper_subnet.1": (
+        (
+            (
+                {},
+                ("ip_cidr", {"value": "10.0.0.0/8", "version": 4}),
+                ("ip_cidr", {"value": "10.2.3.0/24", "version": 4}),
+            ),
+        ),
+        (
+            (
+                {},
+                ("ip_cidr", {"value": "10.0.0.0/8", "version": 4}),
+                ("ip_cidr", {"value": "10.0.0.0/8", "version": 4}),
+            ),
+            (
+                {},
+                ("ip_cidr", {"value": "10.0.0.0/16", "version": 4}),
+                ("ip_cidr", {"value": "10.0.0.0/8", "version": 4}),
+            ),
+            (
+                {},
+                ("ip_cidr", {"value": "10.0.0.0/8", "version": 4}),
+                ("ip_cidr", {"value": "2001:db8::/32", "version": 6}),
+            ),
+        ),
+    ),
+    "contains_ip_member.1": (
+        (
+            (
+                {},
+                ("ip_cidr", {"value": "192.0.2.0/24", "version": 4}),
+                ("ip_address", {"value": "192.0.2.255", "version": 4}),
+            ),
+        ),
+        (
+            (
+                {},
+                ("ip_cidr", {"value": "192.0.2.0/24", "version": 4}),
+                ("ip_address", {"value": "192.0.3.1", "version": 4}),
+            ),
+            (
+                {},
+                ("ip_cidr", {"value": "192.0.2.0/24", "version": 4}),
+                ("ip_address", {"value": "2001:db8::1", "version": 6}),
+            ),
+        ),
+    ),
+    "has_subdomain_suffix.1": (
+        (
+            ({}, ("domain", {"value": "example.com"}), ("subdomain", {"value": "api.dev.example.com"})),
+            ({}, ("subdomain", {"value": "dev.example.com"}), ("subdomain", {"value": "api.dev.example.com"})),
+        ),
+        (
+            ({}, ("domain", {"value": "example.com"}), ("subdomain", {"value": "api.fakeexample.com"})),
+            ({}, ("subdomain", {"value": "api.example.com"}), ("subdomain", {"value": "api.example.com"})),
+        ),
+    ),
+}
+
+# Canonicalization id -> (rewrites as (type, before, after), spellings left untouched as (type, value)).
+CANONICALIZATIONS: dict[str, tuple[tuple[Rewrite, ...], tuple[Record, ...]]] = {
+    "caa_parameter_name_fold.1": (
+        (
+            (
+                "caa_issue",
+                {"flags": 0, "parameters": [{"name": "accountURI", "value": "x", "seen": 2}]},
+                {"flags": 0, "parameters": [{"name": "accounturi", "value": "x", "seen": 2}]},
+            ),
+        ),
+        (
+            ("caa_issuewild", {"flags": 0, "parameters": [{"name": "accounturi", "value": "x"}]}),
+            ("caa_issue", {"flags": 0, "parameters": [{"name": "\u212a", "value": "x"}]}),
+            ("caa_issue", {"flags": 0, "parameters": "text"}),
+        ),
+    ),
+    "endpoint_url_drop_query.1": (
+        (
+            (
+                "endpoint",
+                {"url": "https://api.example.com/search?q=1&page=2", "method": "GET"},
+                {"url": "https://api.example.com/search", "method": "GET"},
+            ),
+            (
+                "endpoint",
+                {"url": "https://api.example.com/?", "method": "GET"},
+                {"url": "https://api.example.com/", "method": "GET"},
+            ),
+        ),
+        (("endpoint", {"url": "https://api.example.com/search", "method": "GET", "title": "Search?x"}),),
+    ),
+}

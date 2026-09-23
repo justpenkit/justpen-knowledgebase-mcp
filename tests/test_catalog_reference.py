@@ -14,8 +14,7 @@ from pathlib import Path
 
 import pytest
 
-import justpen_knowledgebase_mcp.catalog as catalog_module
-from justpen_knowledgebase_mcp.catalog import catalog_manifest, scope_relations
+from justpen_knowledgebase_mcp.catalog import catalog_manifest, rule_descriptions, scope_relations
 
 ROOT = Path(__file__).resolve().parent.parent
 # Loaded by path, as tests/test_release.py loads its script: `scripts` is not an installed package.
@@ -70,7 +69,14 @@ def _required(cell: str) -> dict[str, str | list[str]]:
 def test_the_committed_page_is_what_the_generator_produces(page: str) -> None:
     """Formatting may differ, but no table cell may. Regenerate with `make docs-catalog`."""
     generated = render()
-    for heading in ("Node types", "Relation types", "Which relations a node can carry", "Format rules"):
+    for heading in (
+        "Node types",
+        "Relation types",
+        "Which relations a node can carry",
+        "Checks",
+        "Canonicalizations",
+        "Format rules",
+    ):
         assert _rows(page, heading) == _rows(generated, heading), heading
 
 
@@ -124,19 +130,22 @@ def test_every_published_format_rule_appears_with_its_description(page: str) -> 
         assert rows[name] == description
 
 
-def test_the_page_documents_exactly_the_cross_field_validators_that_run(page: str) -> None:
-    rows = {row[0].strip("`") for row in _rows(page, "Cross-field rules")}
+@pytest.mark.parametrize(("heading", "key"), [("Checks", "checks"), ("Canonicalizations", "canonicalize")])
+def test_the_page_documents_every_published_rule_with_its_types(page: str, heading: str, key: str) -> None:
+    """The rule prose lives beside the callable in the catalog, so the page can only drift by not
+    being regenerated; the ids and the types that run them are read back from the manifest."""
+    manifest = catalog_manifest()
+    expected: dict[str, list[str]] = {}
+    for kind in ("nodes", "relations"):
+        for name, definition in sorted(manifest[kind].items()):
+            for rule_id in definition[key]:
+                expected.setdefault(rule_id, []).append(name)
+    rows = {row[0].strip("`"): row for row in _rows(page, heading)}
 
-    assert rows == set(catalog_module._CROSS_FIELDS)
-
-
-def test_rendering_refuses_a_cross_field_description_that_has_drifted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The descriptions are hand-written because the manifest does not publish them, so the
-    generator is the thing that has to notice when a validator is added without one."""
-    monkeypatch.setitem(catalog_module._CROSS_FIELDS, "asn", catalog_module._cross_field_registrar)
-
-    with pytest.raises(RuntimeError, match="cross-field descriptions"):
-        render()
+    assert set(rows) == set(expected)
+    for rule_id, (_id, types, description) in rows.items():
+        assert _names(types) == expected[rule_id], rule_id
+        assert description == rule_descriptions()[rule_id].replace("\\", ""), rule_id
 
 
 @pytest.fixture(scope="module")

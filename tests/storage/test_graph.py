@@ -8,11 +8,18 @@ from uuid import uuid4
 
 import pytest
 
+import justpen_knowledgebase_mcp.catalog as catalog_module
 from justpen_knowledgebase_mcp.config import ServerConfig
-from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, NotFoundError, RecordConflictError
+from justpen_knowledgebase_mcp.errors import (
+    ConflictError,
+    ExpectedValidationError,
+    InvalidParamsError,
+    NotFoundError,
+    RecordConflictError,
+)
 from justpen_knowledgebase_mcp.models import GetRequest, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
-from justpen_knowledgebase_mcp.storage.graph import _validate_endpoints, graph_types
+from justpen_knowledgebase_mcp.storage.graph import _validate_endpoint_values, _validate_endpoints, graph_types
 
 from .graph_fixtures import admit, evidence_fixture, graph_node, scoped_stack
 
@@ -49,10 +56,11 @@ pytestmark = pytest.mark.integration
         ),
     ],
 )
-def test_catalog_v2_structural_endpoints_accept_locked_relationships(
+def test_structural_endpoints_accept_locked_relationships(
     relation: str, source: dict[str, object], target: dict[str, object]
 ) -> None:
     _validate_endpoints(relation, source, target)
+    _validate_endpoint_values(relation, {}, source, target)
 
 
 @pytest.mark.parametrize(
@@ -95,11 +103,12 @@ def test_catalog_v2_structural_endpoints_accept_locked_relationships(
         ),
     ],
 )
-def test_catalog_v2_structural_endpoints_reject_invalid_relationships(
+def test_structural_endpoints_reject_invalid_relationships(
     relation: str, source: dict[str, object], target: dict[str, object]
 ) -> None:
-    with pytest.raises(InvalidParamsError, match="relation endpoint constraint failed"):
-        _validate_endpoints(relation, source, target)
+    _validate_endpoints(relation, source, target)
+    with pytest.raises(ExpectedValidationError, match="relation endpoint constraint failed"):
+        _validate_endpoint_values(relation, {}, source, target)
 
 
 def write(value):
@@ -802,6 +811,59 @@ async def test_endpoint_cross_field_constraints_rollback_batch(tmp_path, relatio
                 )
             )
         assert await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get) == 0
+
+
+async def test_endpoint_values_are_checked_on_the_properties_that_will_be_stored(tmp_path, monkeypatch):
+    """The value check runs after both merges: an id patch that omits a property still sees the
+    stored one, and a keyless rewrite that deduplicates onto a stored edge sees the merged whole."""
+    seen: list[dict[str, object]] = []
+    run, prose = catalog_module._ENDPOINT_CHECKS["has_subdomain_suffix.1"]
+
+    def recording(relation_props, source, target):
+        seen.append(dict(relation_props))
+        run(relation_props, source, target)
+
+    monkeypatch.setitem(catalog_module._ENDPOINT_CHECKS, "has_subdomain_suffix.1", (recording, prose))
+    nodes = [
+        {"type": "domain", "properties": {"value": "example.com"}},
+        {"type": "subdomain", "properties": {"value": "api.example.com"}},
+    ]
+    edge = {"type": "has_subdomain", "source_ref": {"node_index": 0}, "target_ref": {"node_index": 1}}
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        created = await kb.write(write({"nodes": nodes, "relations": [{**edge, "properties": {"seen_by": "dnsx"}}]}))
+        await kb.write(write({"relations": [{"id": created["relations"][0]["id"], "properties": {}}]}))
+        again = await kb.write(write({"nodes": nodes, "relations": [{**edge, "properties": {"round": 2}}]}))
+
+        assert again["relations"][0]["id"] == created["relations"][0]["id"]
+        assert seen == [{"seen_by": "dnsx"}, {"seen_by": "dnsx"}, {"seen_by": "dnsx", "round": 2}]
+
+
+@pytest.mark.parametrize(
+    ("nodes", "relation", "message"),
+    [
+        (
+            [
+                {"type": "ip_address", "properties": {"value": "192.0.2.1", "version": 4}},
+                {"type": "subdomain", "properties": {"value": "api.other.com"}},
+            ],
+            {"type": "has_subdomain", "target_ref": {"node_index": 1}, "properties": {}},
+            "relation endpoint types are not allowed",
+        ),
+        (
+            [{"type": "ip_cidr", "properties": {"value": "192.0.2.0/24", "version": 4}}],
+            {"type": "contains_cidr", "target_ref": {"node_index": 0}, "properties": {}},
+            "self edge is not allowed",
+        ),
+    ],
+)
+async def test_endpoint_value_errors_come_after_the_type_and_property_gates(tmp_path, nodes, relation, message):
+    """Amendment 5: moving the value check after the merge fixes which error a doubly invalid
+    write reports. The endpoint type and self-edge gate still come first, then the relation's own
+    properties, and only then the endpoint values; each case below also fails its value check."""
+    request = {"nodes": nodes, "relations": [{**relation, "source_ref": {"node_index": 0}}]}
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        with pytest.raises(InvalidParamsError, match=message):
+            await kb.write(write(request))
 
 
 async def test_cname_cycles_and_self_edges_are_preserved(tmp_path):

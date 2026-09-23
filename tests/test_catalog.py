@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -13,13 +14,17 @@ import justpen_knowledgebase_mcp.catalog as catalog_module
 from justpen_knowledgebase_mcp.catalog import (
     CATALOG_FINGERPRINT,
     CATALOG_VERSION,
+    EndpointView,
     catalog_manifest,
     catalog_schema,
     catalog_view,
+    check_endpoint_values,
     validate_record,
 )
 from justpen_knowledgebase_mcp.errors import ExpectedValidationError
 from justpen_knowledgebase_mcp.identity import identity_key
+
+from . import catalog_golden as golden
 
 CPE_NGINX = "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*"
 
@@ -120,7 +125,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "8295466a4ffb5459311e298f203d388291918b5f015f90c268d97b8689783068"
+    assert CATALOG_FINGERPRINT == "5e3c91707572953dae5b479ddf6a19d1c8b6c4bf87623b2a76993327d8c2337b"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1220,3 +1225,210 @@ def test_enum_rule_rejection_keeps_the_published_list_spelling() -> None:
     with pytest.raises(ExpectedValidationError) as scalar:
         validate_record("nodes", "domain", {"value": 1})
     assert str(scalar.value.message) == "/properties/value: expected dns_name"
+
+
+def _kind(type_name: str) -> str:
+    return "nodes" if type_name in catalog_manifest()["nodes"] else "relations"
+
+
+def _published_ids(key: str) -> set[str]:
+    manifest = catalog_manifest()
+    return {rule_id for kind in ("nodes", "relations") for d in manifest[kind].values() for rule_id in d[key]}
+
+
+def test_every_format_check_and_canonicalization_has_golden_cases() -> None:
+    """A published id without cases, or cases for an id nobody publishes, fails here (AC-12)."""
+    assert set(golden.FORMATS) == set(catalog_manifest()["formats"])
+    assert set(golden.CHECKS).isdisjoint(golden.ENDPOINT_CHECKS)
+    assert {*golden.CHECKS, *golden.ENDPOINT_CHECKS} == _published_ids("checks")
+    assert set(golden.CANONICALIZATIONS) == _published_ids("canonicalize")
+    for table in (golden.FORMATS, golden.CHECKS, golden.ENDPOINT_CHECKS, golden.CANONICALIZATIONS):
+        for rule_id, (first, second) in table.items():
+            assert first, rule_id
+            assert second, rule_id
+
+
+@pytest.mark.parametrize(
+    ("rule", "value", "accepted"),
+    [
+        (rule, value, accepted)
+        for rule, cases in sorted(golden.FORMATS.items())
+        for accepted, values in zip((True, False), cases, strict=True)
+        for value in values
+    ],
+)
+def test_golden_format_cases(rule: str, value: object, *, accepted: bool) -> None:
+    assert catalog_module._valid_field(copy.deepcopy(value), rule) is accepted
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "record", "accepted"),
+    [
+        (rule_id, record, accepted)
+        for rule_id, cases in sorted(golden.CHECKS.items())
+        for accepted, records in zip((True, False), cases, strict=True)
+        for record in records
+    ],
+)
+def test_golden_check_cases(rule_id: str, record: tuple[str, dict[str, object]], *, accepted: bool) -> None:
+    type_name, properties = copy.deepcopy(record)
+    kind = _kind(type_name)
+    assert rule_id in catalog_manifest()[kind][type_name]["checks"]
+    if accepted:
+        validate_record(kind, type_name, properties)
+        return
+    for field, rule in catalog_manifest()[kind][type_name]["required"].items():
+        assert catalog_module._valid_field(properties[field], rule), f"{rule_id}: {field} fails its own rule"
+    with pytest.raises(ExpectedValidationError):
+        catalog_module._CHECKS[rule_id][0](type_name, properties)
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "case", "accepted"),
+    [
+        (rule_id, case, accepted)
+        for rule_id, cases in sorted(golden.ENDPOINT_CHECKS.items())
+        for accepted, endpoint_cases in zip((True, False), cases, strict=True)
+        for case in endpoint_cases
+    ],
+)
+def test_golden_endpoint_check_cases(
+    rule_id: str,
+    case: tuple[dict[str, object], tuple[str, dict[str, object]], tuple[str, dict[str, object]]],
+    *,
+    accepted: bool,
+) -> None:
+    relation_props, (source_type, source), (target_type, target) = copy.deepcopy(case)
+    relations = [
+        name
+        for name, definition in catalog_manifest()["relations"].items()
+        if rule_id in definition["checks"]
+        and source_type in definition["sources"]
+        and target_type in definition["targets"]
+    ]
+    assert relations, rule_id
+    validate_record("nodes", source_type, source)
+    validate_record("nodes", target_type, target)
+    views = (EndpointView(source_type, source), EndpointView(target_type, target))
+    for relation in relations:
+        if accepted:
+            check_endpoint_values(relation, relation_props, *views)
+        else:
+            with pytest.raises(ExpectedValidationError, match="relation endpoint constraint failed"):
+                check_endpoint_values(relation, relation_props, *views)
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "type_name", "before", "after"),
+    [
+        (rule_id, type_name, before, after)
+        for rule_id, (rewrites, kept) in sorted(golden.CANONICALIZATIONS.items())
+        for type_name, before, after in (*rewrites, *((name, value, value) for name, value in kept))
+    ],
+)
+def test_golden_canonicalization_cases(
+    rule_id: str, type_name: str, before: dict[str, object], after: dict[str, object]
+) -> None:
+    kind = _kind(type_name)
+    assert rule_id in catalog_manifest()[kind][type_name]["canonicalize"]
+    properties = copy.deepcopy(before)
+    catalog_module._CANONICALIZATIONS[rule_id][0](properties)
+    assert properties == after
+
+
+def test_endpoint_values_are_checked_only_by_the_relation_that_declares_them() -> None:
+    """A relation without endpoint checks accepts any stored values its type gate let through."""
+    far = EndpointView("subdomain", {"value": "unrelated.example.org"})
+    check_endpoint_values("cname_to", {}, EndpointView("domain", {"value": "example.com"}), far)
+    with pytest.raises(ExpectedValidationError, match="unknown catalog type"):
+        check_endpoint_values("hostname_of", {}, far, far)
+
+
+def _rebuilt(**changes: object) -> str:
+    tables: dict[str, object] = {
+        "nodes": catalog_module._NODES,
+        "relations": catalog_module._RELATIONS,
+        "formats": catalog_module._FORMATS,
+        "checks": catalog_module._CHECKS,
+        "endpoint_checks": catalog_module._ENDPOINT_CHECKS,
+        "canonicalizations": catalog_module._CANONICALIZATIONS,
+    }
+    tables.update(changes)
+    built = catalog_module._build_catalog(**tables)  # type: ignore[arg-type]
+    return json.dumps(built, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _with_rule(
+    kind_table: Mapping[str, Mapping[str, object]], type_name: str, key: str, ids: list[str]
+) -> dict[str, Mapping[str, object]]:
+    return {**kind_table, type_name: {**kind_table[type_name], key: ids}}
+
+
+def test_the_builder_reproduces_the_published_contract() -> None:
+    assert _rebuilt() == catalog_module.CATALOG_JSON
+
+
+def test_renaming_or_versioning_a_rule_id_changes_the_contract() -> None:
+    """Pre-mortem 1: the fingerprint covers ids and versions, so a rename or a bump moves it."""
+    run, prose = catalog_module._CHECKS["dns_name_kind.1"]
+    checks = {key: value for key, value in catalog_module._CHECKS.items() if key != "dns_name_kind.1"}
+    nodes = _with_rule(catalog_module._NODES, "domain", "checks", ["dns_name_kind.2"])
+    nodes = _with_rule(nodes, "subdomain", "checks", ["dns_name_kind.2"])
+
+    assert _rebuilt(nodes=nodes, checks={**checks, "dns_name_kind.2": (run, prose)}) != catalog_module.CATALOG_JSON
+    canon = catalog_module._CANONICALIZATIONS
+    moved = {**canon, "endpoint_url_drop_query.2": canon["endpoint_url_drop_query.1"]}
+    del moved["endpoint_url_drop_query.1"]
+    nodes = _with_rule(catalog_module._NODES, "endpoint", "canonicalize", ["endpoint_url_drop_query.2"])
+    assert _rebuilt(nodes=nodes, canonicalizations=moved) != catalog_module.CATALOG_JSON
+    formats = {**catalog_module._FORMATS, "unused_rule": "An added format."}
+    assert _rebuilt(formats=formats) != catalog_module.CATALOG_JSON
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        (
+            {"nodes": _with_rule(catalog_module._NODES, "domain", "checks", ["dns_name_kind.9"])},
+            "names rule dns_name_kind.9",
+        ),
+        (
+            {"nodes": _with_rule(catalog_module._NODES, "domain", "checks", ["has_subdomain_suffix.1"])},
+            "names rule has_subdomain_suffix.1",
+        ),
+        (
+            {"nodes": _with_rule(catalog_module._NODES, "domain", "checks", ["DNS.1"])},
+            "names rule DNS.1",
+        ),
+        (
+            {"checks": {**catalog_module._CHECKS, "orphan_rule.1": catalog_module._CHECKS["dns_name_kind.1"]}},
+            "no type uses",
+        ),
+    ],
+)
+def test_the_builder_refuses_a_dangling_misplaced_or_unused_rule(changes: dict[str, object], message: str) -> None:
+    with pytest.raises(RuntimeError, match=message):
+        _rebuilt(**changes)
+
+
+def test_relation_checks_run_inside_record_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-12: a relation may declare a property check, not only an endpoint check."""
+    seen: list[str] = []
+
+    def record(type_name: str, _properties: dict[str, object]) -> None:
+        seen.append(type_name)
+
+    monkeypatch.setitem(catalog_module._CHECKS, "probe_relation.1", (record, "probe"))
+    relations = _with_rule(catalog_module._RELATIONS, "resolves_to", "checks", ["probe_relation.1"])
+    view = catalog_module._read_only(json.loads(_rebuilt(relations=relations)))
+    monkeypatch.setattr(catalog_module, "_CATALOG_VIEW", view)
+
+    validate_record("relations", "resolves_to", {})
+
+    assert seen == ["resolves_to"]
+
+
+def test_every_rule_id_is_described() -> None:
+    descriptions = catalog_module.rule_descriptions()
+    assert set(descriptions) == _published_ids("checks") | _published_ids("canonicalize")
+    assert all(descriptions.values())

@@ -6,6 +6,7 @@ import hashlib
 import ipaddress
 import json
 import re
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
@@ -171,6 +172,8 @@ def _relation(
     required: dict[str, str | list[str]] | None = None,
     identity: dict[str, object] | None = None,
     self_edge: bool = False,
+    checks: list[str] | None = None,
+    canonicalize: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "identity": identity if identity is not None else _identity([]),
@@ -178,6 +181,8 @@ def _relation(
         "self_edge": self_edge,
         "sources": sources,
         "targets": targets,
+        "checks": checks if checks is not None else [],
+        "canonicalize": canonicalize if canonicalize is not None else [],
     }
 
 
@@ -207,7 +212,7 @@ _ALPN_ORDER: dict[str, object] = {
     "preserve_duplicates": True,
 }
 
-_NODES = {
+_NODES: dict[str, dict[str, Any]] = {
     "asn": {"identity": _identity(["value"]), "required": {"value": "asn"}},
     "certificate": {
         "identity": _identity(["der_sha256"]),
@@ -220,11 +225,12 @@ _NODES = {
         "required": {"selector": "dkim_selector", "value": "txt_value"},
     },
     "dmarc_record": {"identity": _identity(["value"]), "required": {"value": "dmarc"}},
-    "domain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}},
+    "domain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}, "checks": ["dns_name_kind.1"]},
     "email_address": {"identity": _identity(["value"]), "required": {"value": "email_address"}},
     "endpoint": {
         "identity": _identity(["url", "method"]),
         "required": {"url": "http_url", "method": "method"},
+        "canonicalize": ["endpoint_url_drop_query.1"],
     },
     "finding": {
         "identity": _identity(["title"], scope=_SCOPE_FINDING),
@@ -255,18 +261,22 @@ _NODES = {
             "kind": ["favicon_mmh3", "body_sha256", "header_sha256"],
             "value": "http_fingerprint_value",
         },
+        "checks": ["http_fingerprint_value_kind.1"],
     },
     "identity_tenant": {
         "identity": _identity(["provider", "tenant_id"]),
         "required": {"provider": ["entra_id", "okta"], "tenant_id": "tenant_id"},
+        "checks": ["tenant_id_spelling.1"],
     },
     "ip_address": {
         "identity": _identity(["value"]),
         "required": {"value": "ip", "version": "ip_version"},
+        "checks": ["ip_address_version.1"],
     },
     "ip_cidr": {
         "identity": _identity(["value"]),
         "required": {"value": "cidr", "version": "ip_version"},
+        "checks": ["ip_cidr_version.1"],
     },
     "mta_sts_policy": {
         "identity": _identity(["value"], scope=_SCOPE_MTA_STS),
@@ -294,6 +304,7 @@ _NODES = {
     "registrar": {
         "identity": _identity(["iana_id"]),
         "required": {"iana_id": "uint16", "name": "printable_text_200"},
+        "checks": ["registrar_iana_assigned.1"],
     },
     "repository": {
         "identity": _identity(["host", "owner", "name"]),
@@ -303,21 +314,25 @@ _NODES = {
             "owner": "repo_owner",
             "name": "repo_name",
         },
+        "checks": ["repository_owner_spelling.1"],
     },
     "secret": {
         "identity": _identity(["value_sha256"]),
         "required": {"value_sha256": "sha256"},
+        "checks": ["secret_plaintext_keys.1"],
     },
     "service": {
         "identity": _identity(["name"], scope=_SCOPE_SERVICE),
         "required": {"name": "service_name"},
+        "checks": ["service_secure_flag.1"],
     },
     "spf_record": {"identity": _identity(["value"]), "required": {"value": "spf"}},
     "storage_bucket": {
         "identity": _identity(["provider", "name"]),
         "required": {"provider": ["aws_s3", "gcp_gcs", "azure_blob"], "name": "bucket_name"},
+        "checks": ["bucket_name_spelling.1"],
     },
-    "subdomain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}},
+    "subdomain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}, "checks": ["dns_name_kind.1"]},
     "technology": {
         "identity": _identity(["name"]),
         "required": {"name": "tech_token"},
@@ -332,8 +347,13 @@ _NODES = {
     "tls_fingerprint": {
         "identity": _identity(["kind", "value"]),
         "required": {"kind": ["jarm", "ja3s"], "value": "tls_fingerprint_value"},
+        "checks": ["tls_fingerprint_length.1"],
     },
-    "txt_record": {"identity": _identity(["value"]), "required": {"value": "txt_value"}},
+    "txt_record": {
+        "identity": _identity(["value"]),
+        "required": {"value": "txt_value"},
+        "checks": ["txt_record_diversion.1"],
+    },
 }
 
 _D = ["domain", "subdomain"]
@@ -347,6 +367,7 @@ _RELATIONS = {
         required={"flags": "uint8", "parameters": "caa_parameters"},
         identity=_identity(["flags", "parameters"], order_independent=_CAA_ORDER),
         self_edge=True,
+        canonicalize=["caa_parameter_name_fold.1"],
     ),
     "caa_issuewild": _relation(
         _D,
@@ -354,10 +375,11 @@ _RELATIONS = {
         required={"flags": "uint8", "parameters": "caa_parameters"},
         identity=_identity(["flags", "parameters"], order_independent=_CAA_ORDER),
         self_edge=True,
+        canonicalize=["caa_parameter_name_fold.1"],
     ),
     "cname_to": _relation(_D, _D, self_edge=True),
-    "contains_cidr": _relation(["ip_cidr"], ["ip_cidr"]),
-    "contains_ip": _relation(["ip_cidr"], ["ip_address"]),
+    "contains_cidr": _relation(["ip_cidr"], ["ip_cidr"], checks=["contains_cidr_proper_subnet.1"]),
+    "contains_ip": _relation(["ip_cidr"], ["ip_address"], checks=["contains_ip_member.1"]),
     "covers_name": _relation(
         ["certificate"],
         _D,
@@ -428,7 +450,7 @@ _RELATIONS = {
         identity=_identity(["service", "protocol", "port", "priority", "weight"]),
         self_edge=True,
     ),
-    "has_subdomain": _relation(_D, ["subdomain"]),
+    "has_subdomain": _relation(_D, ["subdomain"], checks=["has_subdomain_suffix.1"]),
     "has_svcb_binding": _relation(
         _D,
         _D,
@@ -472,14 +494,6 @@ _RELATIONS = {
     "runs_technology": _relation(["service", "endpoint", "domain", "subdomain"], ["technology"]),
     "serves_endpoint": _relation(["service"], ["endpoint"]),
     "supports_tls_cipher": _relation(["service"], ["tls_cipher_suite"]),
-}
-
-_CATALOG = {
-    "common": _COMMON,
-    "formats": _FORMATS,
-    "nodes": _NODES,
-    "relations": _RELATIONS,
-    "version": CATALOG_VERSION,
 }
 
 
@@ -529,70 +543,23 @@ def _ensure_scope_contract() -> None:
 
 _ensure_scope_contract()
 
-# The canonical serialized contract is immutable; callers receive a fresh tree.
-CATALOG_JSON = json.dumps(_CATALOG, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+# Declared rewrites of a non-canonical spelling, applied before validation, identity and storage.
+# Each is value canonicalization, not the JSON type coercion `_COMMON["coercion"]` refuses.
 
 
-def _ensure_data_loaded() -> None:
-    """Load and verify bundled registries while the catalog module imports."""
-    classify_dns_name("example.com")
-    if not is_service_name("unknown"):
-        raise RuntimeError("bundled service name registry is missing required sentinel")
-
-
-def _catalog_fingerprint() -> str:
-    _ensure_data_loaded()
-    return hashlib.sha256(CATALOG_JSON.encode("utf-8")).hexdigest()
-
-
-CATALOG_FINGERPRINT = _catalog_fingerprint()
-
-
-def catalog_manifest() -> dict[str, Any]:
-    """Return an isolated copy of the fixed executable catalog contract."""
-    return cast("dict[str, Any]", json.loads(CATALOG_JSON))
-
-
-def _read_only(value: object) -> object:
-    """Rebuild one parsed catalog subtree out of containers that refuse in-place mutation."""
-    if isinstance(value, dict):
-        return MappingProxyType({key: _read_only(item) for key, item in cast("dict[str, object]", value).items()})
-    if isinstance(value, list):
-        return tuple(_read_only(item) for item in cast("list[object]", value))
-    return value
-
-
-# `catalog_manifest()` re-parses `CATALOG_JSON` on every call, and the write path reaches it several
-# times per record inside `BEGIN IMMEDIATE`. This is the same parse performed once at import, for
-# callers that only read. The wrapping goes all the way down rather than proxying the top mapping
-# alone: a shallow proxy would still let a reader mutate one type definition in place and corrupt
-# the catalog for the rest of the process, which is the exact failure this handle must not enable.
-_CATALOG_VIEW: Mapping[str, Any] = cast("Mapping[str, Any]", _read_only(json.loads(CATALOG_JSON)))
-
-
-def catalog_view() -> Mapping[str, Any]:
-    """Return the shared read-only catalog; callers that mutate use `catalog_manifest()` instead.
-
-    Mappings are `MappingProxyType` and JSON arrays are tuples, at every depth, so the structure
-    cannot be edited by accident and cannot be handed onward into a response that edits it.
-    """
-    return _CATALOG_VIEW
-
-
-# Both CAA relation types carry the same parameter list, and `_CAA_ORDER` makes it identity-bearing.
-# RFC 8659 parameter tags are case-insensitive, so `accounturi` and `accountURI` described one fact
-# and forked it into two edges. The fold belongs here rather than in `identity.py`: canonicalizing
-# the property keeps the stored spelling and the identity derived from it in agreement, exactly as
-# `endpoint.url` already does, whereas folding only the digest would leave one edge holding whichever
-# spelling was written last. Declaring the rule in the catalog is not available - it changes
-# `CATALOG_JSON` and with it the fingerprint `SchemaGuard.check` compares for exact equality, which
-# no existing workspace can be upgraded past.
-_CAA_PARAMETER_TYPES = ("caa_issue", "caa_issuewild")
+def _canonicalize_endpoint_url(properties: dict[str, Any]) -> None:
+    url = properties.get("url")
+    if type(url) is str and "?" in url:
+        properties["url"] = url.split("?", 1)[0]
 
 
 def _canonicalize_caa_parameters(properties: dict[str, Any]) -> None:
     """Fold ASCII parameter tags only; a tag this leaves alone is one validation refuses anyway.
 
+    RFC 8659 parameter tags are case-insensitive, while `_CAA_ORDER` makes the list identity-bearing,
+    so `accounturi` and `accountURI` would otherwise fork one fact into two edges. Canonicalizing
+    the property keeps the stored spelling and the identity derived from it in agreement.
     `"\u212a".lower()` is `"k"`, so folding a non-ASCII name would admit a spelling
     `_valid_caa_parameters` rejects today. Canonicalization runs before validation and must not
     widen it.
@@ -605,47 +572,6 @@ def _canonicalize_caa_parameters(properties: dict[str, Any]) -> None:
         return
     folded = [(cast("dict[str, Any]", item), cast("str", item["name"])) for item in items]
     properties["parameters"] = [{**item, "name": name.lower() if name.isascii() else name} for item, name in folded]
-
-
-def canonicalize_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
-    """Rewrite the declared non-canonical spellings in place before identity and storage.
-
-    Two rewrites exist. `endpoint.url` drops its query string, so one path is one node rather than
-    one node per observed parameter value; parameter names live on `parameter` nodes. A CAA
-    parameter name is case-folded, because the tag is case-insensitive on the wire while the
-    parameter list is identity-bearing. Both are value canonicalization, not the JSON type coercion
-    `_COMMON["coercion"]` refuses.
-    """
-    if kind == "nodes" and type_name == "endpoint":
-        url = properties.get("url")
-        if type(url) is str and "?" in url:
-            properties["url"] = url.split("?", 1)[0]
-    elif kind == "relations" and type_name in _CAA_PARAMETER_TYPES:
-        _canonicalize_caa_parameters(properties)
-
-
-def _published_rule(rule: str | list[str] | tuple[str, ...]) -> str | list[str]:
-    """Spell one required rule the way clients already receive it, whatever container holds it."""
-    return list(rule) if isinstance(rule, tuple) else rule
-
-
-def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
-    """Canonicalize declared spellings, then enforce required properties and cross-field rules."""
-    canonicalize_record(kind, type_name, properties)
-    validate_properties(properties)
-    manifest = catalog_view()
-    if kind not in ("nodes", "relations"):
-        raise ExpectedValidationError("unknown catalog type")
-    definitions = cast("Mapping[str, Mapping[str, Any]]", manifest[kind])
-    if type_name not in definitions:
-        raise ExpectedValidationError("unknown catalog type")
-    required = cast("Mapping[str, str | list[str] | tuple[str, ...]]", definitions[type_name]["required"])
-    for field, rule in required.items():
-        if field not in properties or not _valid_field(properties[field], rule):
-            # The shared view spells a JSON array as a tuple; the published message keeps the list
-            # spelling clients already receive, so routing this read changes no client-visible text.
-            raise ExpectedValidationError(f"/properties/{field}: expected {_published_rule(rule)}")
-    _validate_cross_fields(kind, type_name, properties)
 
 
 def _cross_field_dns_name(type_name: str, properties: dict[str, Any]) -> None:
@@ -789,22 +715,297 @@ def _cross_field_storage_bucket(_type_name: str, properties: dict[str, Any]) -> 
         raise ExpectedValidationError("/properties/name: gcp_gcs dotted components hold at most 63 characters")
 
 
-# Every entry runs after the required map validated the properties it reads.
-_CROSS_FIELDS: dict[str, Callable[[str, dict[str, Any]], None]] = {
-    "domain": _cross_field_dns_name,
-    "subdomain": _cross_field_dns_name,
-    "http_fingerprint": _cross_field_http_fingerprint,
-    "identity_tenant": _cross_field_identity_tenant,
-    "ip_address": _cross_field_ip_address,
-    "ip_cidr": _cross_field_ip_cidr,
-    "repository": _cross_field_repository,
-    "secret": _cross_field_secret,
-    "service": _cross_field_service,
-    "storage_bucket": _cross_field_storage_bucket,
-    "tls_fingerprint": _cross_field_tls_fingerprint,
-    "registrar": _cross_field_registrar,
-    "txt_record": _cross_field_txt_record,
+@dataclass(frozen=True)
+class EndpointView:
+    """One relation endpoint as a value check sees it: its node type and stored properties."""
+
+    type: str
+    properties: Mapping[str, Any]
+
+
+_ENDPOINT_FAILED = "relation endpoint constraint failed"
+
+
+def _endpoint_subdomain_suffix(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    if not cast("str", target.properties["value"]).endswith("." + cast("str", source.properties["value"])):
+        raise ExpectedValidationError(_ENDPOINT_FAILED)
+
+
+def _endpoint_contains_ip(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    network = _parse_cidr(cast("str", source.properties["value"]))
+    address = _parse_ip(cast("str", target.properties["value"]))
+    if (
+        network is None
+        or address is None
+        or source.properties["version"] != target.properties["version"]
+        or network.version != address.version
+        or address not in network
+    ):
+        raise ExpectedValidationError(_ENDPOINT_FAILED)
+
+
+def _endpoint_contains_cidr(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    outer = _parse_cidr(cast("str", source.properties["value"]))
+    inner = _parse_cidr(cast("str", target.properties["value"]))
+    if (
+        outer is None
+        or inner is None
+        or source.properties["version"] != target.properties["version"]
+        or not _proper_subnet(outer, inner)
+    ):
+        raise ExpectedValidationError(_ENDPOINT_FAILED)
+
+
+def _proper_subnet(
+    source: ipaddress.IPv4Network | ipaddress.IPv6Network,
+    target: ipaddress.IPv4Network | ipaddress.IPv6Network,
+) -> bool:
+    if isinstance(source, ipaddress.IPv4Network):
+        return isinstance(target, ipaddress.IPv4Network) and target != source and target.subnet_of(source)
+    return isinstance(target, ipaddress.IPv6Network) and target != source and target.subnet_of(source)
+
+
+# Every check runs after the required map validated the properties it reads. An id names one
+# behavior: changing what a callable accepts means a new version suffix, which changes the
+# fingerprint, so a workspace written under the old behavior is refused rather than reinterpreted.
+_CHECKS: dict[str, tuple[Callable[[str, dict[str, Any]], None], str]] = {
+    "bucket_name_spelling.1": (
+        _cross_field_storage_bucket,
+        "`name` is checked against the declared `provider`: length, grammar, and the prefixes, suffixes and "
+        "substrings that provider reserves.",
+    ),
+    "dns_name_kind.1": (
+        _cross_field_dns_name,
+        "`value` must classify as this type against the bundled PSL: a registrable domain for `domain`, a "
+        "name below one for `subdomain`.",
+    ),
+    "http_fingerprint_value_kind.1": (
+        _cross_field_http_fingerprint,
+        "`favicon_mmh3` requires the signed 32-bit integer spelling; `body_sha256` and `header_sha256` require "
+        "64 lowercase hex characters.",
+    ),
+    "ip_address_version.1": (
+        _cross_field_ip_address,
+        "`version` must equal the version of the address in `value`.",
+    ),
+    "ip_cidr_version.1": (
+        _cross_field_ip_cidr,
+        "`version` must equal the version of the network in `value`.",
+    ),
+    "registrar_iana_assigned.1": (
+        _cross_field_registrar,
+        "`iana_id` must be at least 1, because 0 is what an agent emits for a missing field.",
+    ),
+    "repository_owner_spelling.1": (
+        _cross_field_repository,
+        "`owner` is checked against the grammar and length of the declared `platform`, and only `gitlab` "
+        "accepts a `/` for nested groups.",
+    ),
+    "secret_plaintext_keys.1": (
+        _cross_field_secret,
+        "The node is rejected if it carries `value`, `secret`, `plaintext`, `password`, `token`, `key`, "
+        "`credential`, `match` or `raw`, so the credential itself cannot reach storage.",
+    ),
+    "service_secure_flag.1": (
+        _cross_field_service,
+        "A TLS-capable registry entry, such as `http`, additionally requires a boolean `secure`.",
+    ),
+    "tenant_id_spelling.1": (
+        _cross_field_identity_tenant,
+        "`entra_id` requires a canonical lowercase UUID; `okta` requires the bare organization slug, so a dot "
+        "is rejected.",
+    ),
+    "tls_fingerprint_length.1": (
+        _cross_field_tls_fingerprint,
+        "`value` must be 62 characters for `jarm` and 32 for `ja3s`.",
+    ),
+    "txt_record_diversion.1": (
+        _cross_field_txt_record,
+        "A `value` that the dedicated type for its version tag accepts is rejected here: `v=spf1` belongs to "
+        "`spf_record`, `v=DMARC1` to `dmarc_record`, `v=DKIM1` to `dkim_record` and `v=STSv1` to "
+        "`mta_sts_policy`. A malformed tagged value, such as `v=spf1include:...`, stays a `txt_record`.",
+    ),
 }
+
+# Checks that read both endpoints' stored properties as well as the relation's own. They run after
+# the relation's properties are merged and deduplicated, so they see what will be stored.
+_ENDPOINT_CHECKS: dict[str, tuple[Callable[[Mapping[str, Any], EndpointView, EndpointView], None], str]] = {
+    "contains_cidr_proper_subnet.1": (
+        _endpoint_contains_cidr,
+        "The target network must be a proper subnet of the source, at the same IP version.",
+    ),
+    "contains_ip_member.1": (
+        _endpoint_contains_ip,
+        "The target address must fall inside the source network, at the same IP version.",
+    ),
+    "has_subdomain_suffix.1": (
+        _endpoint_subdomain_suffix,
+        "The target's `value` must end in `.` plus the source's `value`.",
+    ),
+}
+
+_CANONICALIZATIONS: dict[str, tuple[Callable[[dict[str, Any]], None], str]] = {
+    "caa_parameter_name_fold.1": (
+        _canonicalize_caa_parameters,
+        "ASCII parameter names are lowercased, because RFC 8659 tags are case-insensitive while the parameter "
+        "list is identity-bearing. A non-ASCII name is left for validation to reject.",
+    ),
+    "endpoint_url_drop_query.1": (
+        _canonicalize_endpoint_url,
+        "Everything from the first `?` in `url` is removed before the URL is validated and hashed, so one path "
+        "is one endpoint; parameter names belong to `parameter` nodes.",
+    ),
+}
+
+_RULE_ID = re.compile(r"[a-z][a-z0-9_]*\.[1-9][0-9]*")
+
+
+def _build_catalog(
+    nodes: Mapping[str, Mapping[str, Any]],
+    relations: Mapping[str, Mapping[str, Any]],
+    formats: Mapping[str, object],
+    checks: Mapping[str, object],
+    endpoint_checks: Mapping[str, object],
+    canonicalizations: Mapping[str, object],
+) -> dict[str, Any]:
+    """Assemble the fingerprinted contract from the type tables and the rule tables.
+
+    Every type publishes its `checks` and `canonicalize` id lists, in the order they run, so the
+    fingerprint moves when a rule is added, removed, renamed or versioned. An id no table
+    implements, an endpoint check on a node type, and a table entry no type uses are refused here
+    rather than surfacing as a KeyError on the first write.
+    """
+    unused = {*checks, *endpoint_checks, *canonicalizations}
+    built: dict[str, Any] = {"common": _COMMON, "formats": dict(formats), "version": CATALOG_VERSION}
+    for kind, definitions in (("nodes", nodes), ("relations", relations)):
+        built[kind] = {}
+        for name, definition in definitions.items():
+            entry = {**definition}
+            entry["checks"] = list(definition.get("checks", ()))
+            entry["canonicalize"] = list(definition.get("canonicalize", ()))
+            allowed = {*checks, *endpoint_checks} if kind == "relations" else set(checks)
+            for rule_id, table in [(rule_id, allowed) for rule_id in entry["checks"]] + [
+                (rule_id, set(canonicalizations)) for rule_id in entry["canonicalize"]
+            ]:
+                if _RULE_ID.fullmatch(rule_id) is None or rule_id not in table:
+                    raise RuntimeError(f"{kind}.{name} names rule {rule_id}, which no table implements")
+                unused.discard(rule_id)
+            built[kind][name] = entry
+    if unused:
+        raise RuntimeError(f"rule table entries no type uses: {sorted(unused)}")
+    return built
+
+
+_CATALOG = _build_catalog(_NODES, _RELATIONS, _FORMATS, _CHECKS, _ENDPOINT_CHECKS, _CANONICALIZATIONS)
+
+# The canonical serialized contract is immutable; callers receive a fresh tree.
+CATALOG_JSON = json.dumps(_CATALOG, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _ensure_data_loaded() -> None:
+    """Load and verify bundled registries while the catalog module imports."""
+    classify_dns_name("example.com")
+    if not is_service_name("unknown"):
+        raise RuntimeError("bundled service name registry is missing required sentinel")
+
+
+def _catalog_fingerprint() -> str:
+    _ensure_data_loaded()
+    return hashlib.sha256(CATALOG_JSON.encode("utf-8")).hexdigest()
+
+
+CATALOG_FINGERPRINT = _catalog_fingerprint()
+
+
+def catalog_manifest() -> dict[str, Any]:
+    """Return an isolated copy of the fixed executable catalog contract."""
+    return cast("dict[str, Any]", json.loads(CATALOG_JSON))
+
+
+def _read_only(value: object) -> object:
+    """Rebuild one parsed catalog subtree out of containers that refuse in-place mutation."""
+    if isinstance(value, dict):
+        return MappingProxyType({key: _read_only(item) for key, item in cast("dict[str, object]", value).items()})
+    if isinstance(value, list):
+        return tuple(_read_only(item) for item in cast("list[object]", value))
+    return value
+
+
+# `catalog_manifest()` re-parses `CATALOG_JSON` on every call, and the write path reaches it several
+# times per record inside `BEGIN IMMEDIATE`. This is the same parse performed once at import, for
+# callers that only read. The wrapping goes all the way down rather than proxying the top mapping
+# alone: a shallow proxy would still let a reader mutate one type definition in place and corrupt
+# the catalog for the rest of the process, which is the exact failure this handle must not enable.
+_CATALOG_VIEW: Mapping[str, Any] = cast("Mapping[str, Any]", _read_only(json.loads(CATALOG_JSON)))
+
+
+def catalog_view() -> Mapping[str, Any]:
+    """Return the shared read-only catalog; callers that mutate use `catalog_manifest()` instead.
+
+    Mappings are `MappingProxyType` and JSON arrays are tuples, at every depth, so the structure
+    cannot be edited by accident and cannot be handed onward into a response that edits it.
+    """
+    return _CATALOG_VIEW
+
+
+def rule_descriptions() -> dict[str, str]:
+    """Describe every check and canonicalization id the manifest publishes."""
+    tables = (_CHECKS, _ENDPOINT_CHECKS, _CANONICALIZATIONS)
+    return {rule_id: prose for table in tables for rule_id, (_run, prose) in table.items()}
+
+
+def _definition(kind: str, type_name: str) -> Mapping[str, Any] | None:
+    if kind not in ("nodes", "relations"):
+        return None
+    return cast("Mapping[str, Mapping[str, Any]]", catalog_view()[kind]).get(type_name)
+
+
+def canonicalize_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
+    """Apply the type's declared canonicalizations in place, in their published order."""
+    definition = _definition(kind, type_name)
+    for rule_id in definition["canonicalize"] if definition is not None else ():
+        _CANONICALIZATIONS[rule_id][0](properties)
+
+
+def _published_rule(rule: str | list[str] | tuple[str, ...]) -> str | list[str]:
+    """Spell one required rule the way clients already receive it, whatever container holds it."""
+    return list(rule) if isinstance(rule, tuple) else rule
+
+
+def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
+    """Canonicalize declared spellings, then enforce required properties and the type's checks."""
+    canonicalize_record(kind, type_name, properties)
+    validate_properties(properties)
+    definition = _definition(kind, type_name)
+    if definition is None:
+        raise ExpectedValidationError("unknown catalog type")
+    required = cast("Mapping[str, str | list[str] | tuple[str, ...]]", definition["required"])
+    for field, rule in required.items():
+        if field not in properties or not _valid_field(properties[field], rule):
+            # The shared view spells a JSON array as a tuple; the published message keeps the list
+            # spelling clients already receive, so routing this read changes no client-visible text.
+            raise ExpectedValidationError(f"/properties/{field}: expected {_published_rule(rule)}")
+    for rule_id in definition["checks"]:
+        entry = _CHECKS.get(rule_id)
+        if entry is not None:
+            entry[0](type_name, properties)
+
+
+def check_endpoint_values(
+    type_name: str, relation_props: Mapping[str, Any], source: EndpointView, target: EndpointView
+) -> None:
+    """Run a relation's endpoint value checks against its final properties and both endpoints.
+
+    The endpoint types are already gated by the relation's `sources` and `targets`, so every check
+    reads properties the endpoint's own required map guarantees.
+    """
+    definition = _definition("relations", type_name)
+    if definition is None:
+        raise ExpectedValidationError("unknown catalog type")
+    for rule_id in definition["checks"]:
+        entry = _ENDPOINT_CHECKS.get(rule_id)
+        if entry is not None:
+            entry[0](relation_props, source, target)
 
 
 def _enum(kind: str, type_name: str, field: str) -> set[str]:
@@ -813,7 +1014,7 @@ def _enum(kind: str, type_name: str, field: str) -> set[str]:
 
 
 def _ensure_cross_field_contract() -> None:
-    """Fail at import if a per-member cross-field table stops covering its own enum.
+    """Fail at import if a per-member check table stops covering its own enum.
 
     Each table below is indexed by an enum member, so a member added without its entry would raise
     KeyError as INTERNAL instead of rejecting the value, and a member silently inheriting another
@@ -828,7 +1029,7 @@ def _ensure_cross_field_contract() -> None:
     for (kind, type_name, field), covered in tables.items():
         declared = _enum(kind, type_name, field)
         if declared != covered:
-            raise RuntimeError(f"cross-field table for {type_name}.{field} does not cover {declared ^ covered}")
+            raise RuntimeError(f"check table for {type_name}.{field} does not cover {declared ^ covered}")
     nodes = cast("dict[str, dict[str, Any]]", _CATALOG["nodes"])
     for tag, type_name in _TXT_RECORD_DIVERSIONS:
         if "value" not in nodes.get(type_name, {}).get("required", {}):
@@ -836,17 +1037,6 @@ def _ensure_cross_field_contract() -> None:
 
 
 _ensure_cross_field_contract()
-
-
-def cross_field_types() -> tuple[str, ...]:
-    """Return the node types carrying a cross-field rule, which the manifest does not publish."""
-    return tuple(sorted(_CROSS_FIELDS))
-
-
-def _validate_cross_fields(kind: str, type_name: str, properties: dict[str, Any]) -> None:
-    check = _CROSS_FIELDS.get(type_name) if kind == "nodes" else None
-    if check is not None:
-        check(type_name, properties)
 
 
 # NIST IR 7695 formatted-string binding: `part` plus ten colon-separated attribute components.

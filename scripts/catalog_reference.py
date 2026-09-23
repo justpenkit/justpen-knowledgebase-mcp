@@ -12,57 +12,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from justpen_knowledgebase_mcp.catalog import CATALOG_VERSION, catalog_manifest, cross_field_types
+from justpen_knowledgebase_mcp.catalog import CATALOG_VERSION, catalog_manifest, rule_descriptions
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
 PAGE = Path("docs/reference/catalog.md")
 EMPTY = "—"
-
-# The cross-field rules run after the required map and are the one part of the contract the
-# manifest does not publish, so each one is described here. `_cross_field_descriptions` refuses to
-# render a page whose keys have drifted from `_CROSS_FIELDS`.
-CROSS_FIELDS = {
-    "domain": "`value` must classify as a registrable domain against the bundled PSL, not a subdomain.",
-    "subdomain": "`value` must classify as a subdomain against the bundled PSL, not a registrable domain.",
-    "http_fingerprint": (
-        "`favicon_mmh3` requires the signed 32-bit integer spelling; `body_sha256` and "
-        "`header_sha256` require 64 lowercase hex characters."
-    ),
-    "identity_tenant": (
-        "`entra_id` requires a canonical lowercase UUID; `okta` requires the bare organization "
-        "slug, so a dot is rejected."
-    ),
-    "ip_address": "`version` must equal the version of the address in `value`.",
-    "ip_cidr": "`version` must equal the version of the network in `value`.",
-    "repository": (
-        "`owner` is checked against the grammar and length of the declared `platform`, and only "
-        "`gitlab` accepts a `/` for nested groups."
-    ),
-    "secret": (
-        "The node is rejected if it carries `value`, `secret`, `plaintext`, `password`, `token`, "
-        "`key`, `credential`, `match` or `raw`, so the credential itself cannot reach storage."
-    ),
-    "service": "A TLS-capable registry entry, such as `http`, additionally requires a boolean `secure`.",
-    "storage_bucket": (
-        "`name` is checked against the declared `provider`: length, grammar, and the prefixes, "
-        "suffixes and substrings that provider reserves."
-    ),
-    "tls_fingerprint": "`value` must be 62 characters for `jarm` and 32 for `ja3s`.",
-    "registrar": "`iana_id` must be at least 1, because 0 is what an agent emits for a missing field.",
-    "txt_record": (
-        "`value` must not begin with `v=spf1`, `v=DMARC1`, `v=DKIM1` or `v=STSv1`; each has a dedicated type."
-    ),
-}
-
-# Endpoint constraints enforced on stored values rather than on types, which `kb_types` also does
-# not publish. Keyed by relation so a reader can find them beside the endpoint matrix.
-ENDPOINT_CONSTRAINTS = {
-    "has_subdomain": "The target's `value` must end in `.` plus the source's `value`.",
-    "contains_ip": "The target address must fall inside the source network, at the same IP version.",
-    "contains_cidr": "The target network must be a proper subnet of the source, at the same IP version.",
-}
 
 GATES = [
     ("Type name", "`nodes` / `relations` keys", "An unknown type, on write and on schema lookup."),
@@ -88,14 +44,15 @@ GATES = [
         "A relation between node types it does not connect, and a self edge where none is allowed.",
     ),
     (
-        "Cross-field rules",
-        "Server-side, not published by `kb_types`",
-        "Two properties that individually pass but disagree.",
+        "Checks",
+        "`checks` ids per type",
+        "Two properties that individually pass but disagree, and a relation whose endpoints' stored values do not"
+        " actually stand in it.",
     ),
     (
-        "Endpoint values",
-        "Server-side, not published by `kb_types`",
-        "A containment or suffix relation whose endpoints do not actually stand in it.",
+        "Canonicalization",
+        "`canonicalize` ids per type",
+        "Nothing: a declared non-canonical spelling is rewritten before validation, identity and storage.",
     ),
 ]
 
@@ -137,14 +94,15 @@ def _table(headers: Sequence[str], rows: Iterable[Sequence[str]]) -> str:
     return "\n".join(lines)
 
 
-def _cross_field_descriptions(manifest: dict[str, Any]) -> list[tuple[str, str]]:
-    declared = set(cross_field_types())
-    if declared != set(CROSS_FIELDS):
-        raise RuntimeError(f"cross-field descriptions do not match the validators: {declared ^ set(CROSS_FIELDS)}")
-    unknown = declared - set(manifest["nodes"])
-    if unknown:
-        raise RuntimeError(f"cross-field validator for an unknown node type: {sorted(unknown)}")
-    return sorted(CROSS_FIELDS.items())
+def _rule_rows(manifest: dict[str, Any], key: str) -> list[list[str]]:
+    """One row per rule id that some type lists under `key`, with every type that runs it."""
+    descriptions = rule_descriptions()
+    users: dict[str, list[str]] = {}
+    for kind in ("nodes", "relations"):
+        for name, definition in sorted(cast("dict[str, dict[str, Any]]", manifest[kind]).items()):
+            for rule_id in definition[key]:
+                users.setdefault(rule_id, []).append(name)
+    return [[f"`{rule_id}`", _code(types), descriptions[rule_id]] for rule_id, types in sorted(users.items())]
 
 
 def _node_rows(manifest: dict[str, Any]) -> list[list[str]]:
@@ -261,20 +219,20 @@ def render() -> str:
         "",
         _table(["Node", "As source", "As target"], _matrix_rows(manifest)),
         "",
-        "## Endpoint value constraints",
+        "## Checks",
         "",
-        "Three relations also check the endpoints' stored values, not only their types.",
+        "Each check runs after the required map has validated the properties it reads. A relation check"
+        " may also read both endpoints' stored properties; it runs on the properties that will be stored,"
+        " after a patch or a matching earlier edge has been merged. The version suffix changes whenever"
+        " what the check accepts changes.",
         "",
-        _table(
-            ["Relation", "Constraint"],
-            [[f"`{name}`", rule] for name, rule in sorted(ENDPOINT_CONSTRAINTS.items())],
-        ),
+        _table(["Check", "Types", "Rule"], _rule_rows(manifest, "checks")),
         "",
-        "## Cross-field rules",
+        "## Canonicalizations",
         "",
-        "Each runs after the required map has validated the properties it reads.",
+        "Each rewrites a declared non-canonical spelling in place before validation, identity and storage.",
         "",
-        _table(["Node", "Rule"], [[f"`{name}`", rule] for name, rule in _cross_field_descriptions(manifest)]),
+        _table(["Canonicalization", "Types", "Rewrite"], _rule_rows(manifest, "canonicalize")),
         "",
         "## Format rules",
         "",

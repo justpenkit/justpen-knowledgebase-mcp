@@ -14,8 +14,8 @@ The catalog declares **31 node types** and **44 relation types**. Conventions th
 | Identity            | `identity.properties`                              | A later write that changes an identity property of an existing record.                                                                                        |
 | Parent scope        | `identity.scope`                                   | A new scoped node without exactly one scope relation in the same write, a re-parenting attempt, and a parent or scope-relation delete while the child exists. |
 | Endpoint types      | `sources`, `targets`, `self_edge`                  | A relation between node types it does not connect, and a self edge where none is allowed.                                                                     |
-| Cross-field rules   | Server-side, not published by `kb_types`           | Two properties that individually pass but disagree.                                                                                                           |
-| Endpoint values     | Server-side, not published by `kb_types`           | A containment or suffix relation whose endpoints do not actually stand in it.                                                                                 |
+| Checks              | `checks` ids per type                              | Two properties that individually pass but disagree, and a relation whose endpoints' stored values do not actually stand in it.                                |
+| Canonicalization    | `canonicalize` ids per type                        | Nothing: a declared non-canonical spelling is rewritten before validation, identity and storage.                                                              |
 
 ## Shared limits
 
@@ -156,35 +156,36 @@ The same matrix as above, read from the node's side.
 | `tls_fingerprint`  | —                                                                                                                                                                                                                                                                                                                                                                                                                         | `has_tls_fingerprint`                                                                                                                                                                                       |
 | `txt_record`       | —                                                                                                                                                                                                                                                                                                                                                                                                                         | `has_txt_record`                                                                                                                                                                                            |
 
-## Endpoint value constraints
+## Checks
 
-Three relations also check the endpoints' stored values, not only their types.
+Each check runs after the required map has validated the properties it reads. A relation check may also read both endpoints' stored properties; it runs on the properties that will be stored, after a patch or a matching earlier edge has been merged. The version suffix changes whenever what the check accepts changes.
 
-| Relation        | Constraint                                                                        |
-| --------------- | --------------------------------------------------------------------------------- |
-| `contains_cidr` | The target network must be a proper subnet of the source, at the same IP version. |
-| `contains_ip`   | The target address must fall inside the source network, at the same IP version.   |
-| `has_subdomain` | The target's `value` must end in `.` plus the source's `value`.                   |
+| Check                           | Types                 | Rule                                                                                                                                                                                                                                                                                       |
+| ------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `bucket_name_spelling.1`        | `storage_bucket`      | `name` is checked against the declared `provider`: length, grammar, and the prefixes, suffixes and substrings that provider reserves.                                                                                                                                                      |
+| `contains_cidr_proper_subnet.1` | `contains_cidr`       | The target network must be a proper subnet of the source, at the same IP version.                                                                                                                                                                                                          |
+| `contains_ip_member.1`          | `contains_ip`         | The target address must fall inside the source network, at the same IP version.                                                                                                                                                                                                            |
+| `dns_name_kind.1`               | `domain`, `subdomain` | `value` must classify as this type against the bundled PSL: a registrable domain for `domain`, a name below one for `subdomain`.                                                                                                                                                           |
+| `has_subdomain_suffix.1`        | `has_subdomain`       | The target's `value` must end in `.` plus the source's `value`.                                                                                                                                                                                                                            |
+| `http_fingerprint_value_kind.1` | `http_fingerprint`    | `favicon_mmh3` requires the signed 32-bit integer spelling; `body_sha256` and `header_sha256` require 64 lowercase hex characters.                                                                                                                                                         |
+| `ip_address_version.1`          | `ip_address`          | `version` must equal the version of the address in `value`.                                                                                                                                                                                                                                |
+| `ip_cidr_version.1`             | `ip_cidr`             | `version` must equal the version of the network in `value`.                                                                                                                                                                                                                                |
+| `registrar_iana_assigned.1`     | `registrar`           | `iana_id` must be at least 1, because 0 is what an agent emits for a missing field.                                                                                                                                                                                                        |
+| `repository_owner_spelling.1`   | `repository`          | `owner` is checked against the grammar and length of the declared `platform`, and only `gitlab` accepts a `/` for nested groups.                                                                                                                                                           |
+| `secret_plaintext_keys.1`       | `secret`              | The node is rejected if it carries `value`, `secret`, `plaintext`, `password`, `token`, `key`, `credential`, `match` or `raw`, so the credential itself cannot reach storage.                                                                                                              |
+| `service_secure_flag.1`         | `service`             | A TLS-capable registry entry, such as `http`, additionally requires a boolean `secure`.                                                                                                                                                                                                    |
+| `tenant_id_spelling.1`          | `identity_tenant`     | `entra_id` requires a canonical lowercase UUID; `okta` requires the bare organization slug, so a dot is rejected.                                                                                                                                                                          |
+| `tls_fingerprint_length.1`      | `tls_fingerprint`     | `value` must be 62 characters for `jarm` and 32 for `ja3s`.                                                                                                                                                                                                                                |
+| `txt_record_diversion.1`        | `txt_record`          | A `value` that the dedicated type for its version tag accepts is rejected here: `v=spf1` belongs to `spf_record`, `v=DMARC1` to `dmarc_record`, `v=DKIM1` to `dkim_record` and `v=STSv1` to `mta_sts_policy`. A malformed tagged value, such as `v=spf1include:...`, stays a `txt_record`. |
 
-## Cross-field rules
+## Canonicalizations
 
-Each runs after the required map has validated the properties it reads.
+Each rewrites a declared non-canonical spelling in place before validation, identity and storage.
 
-| Node               | Rule                                                                                                                                                                          |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `domain`           | `value` must classify as a registrable domain against the bundled PSL, not a subdomain.                                                                                       |
-| `http_fingerprint` | `favicon_mmh3` requires the signed 32-bit integer spelling; `body_sha256` and `header_sha256` require 64 lowercase hex characters.                                            |
-| `identity_tenant`  | `entra_id` requires a canonical lowercase UUID; `okta` requires the bare organization slug, so a dot is rejected.                                                             |
-| `ip_address`       | `version` must equal the version of the address in `value`.                                                                                                                   |
-| `ip_cidr`          | `version` must equal the version of the network in `value`.                                                                                                                   |
-| `registrar`        | `iana_id` must be at least 1, because 0 is what an agent emits for a missing field.                                                                                           |
-| `repository`       | `owner` is checked against the grammar and length of the declared `platform`, and only `gitlab` accepts a `/` for nested groups.                                              |
-| `secret`           | The node is rejected if it carries `value`, `secret`, `plaintext`, `password`, `token`, `key`, `credential`, `match` or `raw`, so the credential itself cannot reach storage. |
-| `service`          | A TLS-capable registry entry, such as `http`, additionally requires a boolean `secure`.                                                                                       |
-| `storage_bucket`   | `name` is checked against the declared `provider`: length, grammar, and the prefixes, suffixes and substrings that provider reserves.                                         |
-| `subdomain`        | `value` must classify as a subdomain against the bundled PSL, not a registrable domain.                                                                                       |
-| `tls_fingerprint`  | `value` must be 62 characters for `jarm` and 32 for `ja3s`.                                                                                                                   |
-| `txt_record`       | `value` must not begin with `v=spf1`, `v=DMARC1`, `v=DKIM1` or `v=STSv1`; each has a dedicated type.                                                                          |
+| Canonicalization            | Types                        | Rewrite                                                                                                                                                                           |
+| --------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `caa_parameter_name_fold.1` | `caa_issue`, `caa_issuewild` | ASCII parameter names are lowercased, because RFC 8659 tags are case-insensitive while the parameter list is identity-bearing. A non-ASCII name is left for validation to reject. |
+| `endpoint_url_drop_query.1` | `endpoint`                   | Everything from the first `?` in `url` is removed before the URL is validated and hashed, so one path is one endpoint; parameter names belong to `parameter` nodes.               |
 
 ## Format rules
 

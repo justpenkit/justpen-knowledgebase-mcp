@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import time
 from collections.abc import Mapping
@@ -10,7 +9,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
-from ..catalog import catalog_manifest, catalog_schema, catalog_view, scope_order, validate_record
+from ..catalog import (
+    EndpointView,
+    catalog_manifest,
+    catalog_schema,
+    catalog_view,
+    check_endpoint_values,
+    scope_order,
+    validate_record,
+)
 from ..cursors import CursorBinding
 from ..errors import (
     ConflictError,
@@ -66,15 +73,6 @@ class _PreparedMutation:
     properties: dict[str, Any]
     parent_id: str | None = None
     endpoints: tuple[dict[str, Any] | None, dict[str, Any] | None] = (None, None)
-
-
-def _proper_subnet(
-    source: ipaddress.IPv4Network | ipaddress.IPv6Network,
-    target: ipaddress.IPv4Network | ipaddress.IPv6Network,
-) -> bool:
-    if isinstance(source, ipaddress.IPv4Network):
-        return isinstance(target, ipaddress.IPv4Network) and target != source and target.subnet_of(source)
-    return isinstance(target, ipaddress.IPv6Network) and target != source and target.subnet_of(source)
 
 
 def row_by_id(connection: apsw.Connection, kind: str, identifier: str | int) -> dict[str, Any] | None:
@@ -166,26 +164,24 @@ def _prepared_ref(
 
 
 def _validate_endpoints(type_name: str, source: dict[str, Any], target: dict[str, Any]) -> None:
+    """Gate the endpoint types and self edges; value checks wait for the merged properties."""
     definition = catalog_view()["relations"].get(type_name)
     if definition is None or source["type"] not in definition["sources"] or target["type"] not in definition["targets"]:
         raise InvalidParamsError("relation endpoint types are not allowed")
     if source["id"] == target["id"] and not definition["self_edge"]:
         raise InvalidParamsError("self edge is not allowed")
-    first, second = json.loads(source["properties"]), json.loads(target["properties"])
-    valid = True
-    if type_name == "has_subdomain":
-        valid = second["value"].endswith("." + first["value"])
-    elif type_name == "contains_ip":
-        source_network = ipaddress.ip_network(first["value"], strict=True)
-        target_address = ipaddress.ip_address(second["value"])
-        valid = first["version"] == second["version"] and source_network.version == target_address.version
-        valid = valid and target_address in source_network
-    elif type_name == "contains_cidr":
-        source_network = ipaddress.ip_network(first["value"], strict=True)
-        target_network = ipaddress.ip_network(second["value"], strict=True)
-        valid = first["version"] == second["version"] and _proper_subnet(source_network, target_network)
-    if not valid:
-        raise InvalidParamsError("relation endpoint constraint failed")
+
+
+def _validate_endpoint_values(
+    type_name: str, properties: dict[str, Any], source: dict[str, Any], target: dict[str, Any]
+) -> None:
+    """Run the catalog's endpoint value checks against the properties that will be stored."""
+    check_endpoint_values(
+        type_name,
+        properties,
+        EndpointView(cast("str", source["type"]), json.loads(source["properties"])),
+        EndpointView(cast("str", target["type"]), json.loads(target["properties"])),
+    )
 
 
 def _node_header(connection: apsw.Connection, mutation: NodeWrite) -> tuple[dict[str, Any] | None, str]:
@@ -437,6 +433,8 @@ def _prepare_relation(
     existing, properties = _deduplicate_relation(
         connection, mutation, existing, type_name, source, target, properties, key
     )
+    # After both merges: `_deduplicate_relation` re-merges onto an edge the write matched by key.
+    _validate_endpoint_values(type_name, properties, source, target)
     require_ready(connection, "nodes", source)
     require_ready(connection, "nodes", target)
     row = _preflight_row(existing, type_name, key, properties, synthetic_id)

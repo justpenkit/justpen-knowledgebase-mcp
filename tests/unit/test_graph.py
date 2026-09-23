@@ -8,6 +8,7 @@ import pytest
 from justpen_knowledgebase_mcp.catalog import catalog_manifest
 from justpen_knowledgebase_mcp.errors import (
     ConflictError,
+    ExpectedValidationError,
     InvalidParamsError,
     LimitError,
     NotFoundError,
@@ -120,11 +121,16 @@ def test_pending_relation_precedence_and_missing_endpoint(monkeypatch):
 def test_endpoint_constraints(relation, source_type, source, target_type, target, valid):
     first = owner(type=source_type, properties=json.dumps(source))
     second = owner(id=2, type=target_type, properties=json.dumps(target))
-    if valid:
+
+    def check():
         graph._validate_endpoints(relation, first, second)
+        graph._validate_endpoint_values(relation, {}, first, second)
+
+    if valid:
+        check()
     else:
-        with pytest.raises(InvalidParamsError):
-            graph._validate_endpoints(relation, first, second)
+        with pytest.raises((InvalidParamsError, ExpectedValidationError)):
+            check()
 
 
 def test_node_preparation_merge_identity_and_duplicate_boundaries(monkeypatch):
