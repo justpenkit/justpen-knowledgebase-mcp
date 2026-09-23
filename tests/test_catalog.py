@@ -128,7 +128,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "81a574e62edc797065e6083f7d19025094fbbf715ff5da60f8fbdf6b2ad1e5f6"
+    assert CATALOG_FINGERPRINT == "f0f7a73d66caf26bfabf6ef086974c2f7b9159ac2677395cae8a47f37cda71b1"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -319,6 +319,11 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("repository", {"platform": "github", "host": "github.com", "owner": "a" * 39, "name": "n" * 100}),
         ("secret", {"value_sha256": "a" * 64}),
         ("secret", {"value_sha256": "f" * 64, "verified": True, "detector": "aws"}),
+        (
+            "secret",
+            {"value_sha256": "f" * 64, "kind": "api_key", "key_id": "AKIAIOSFODNN7EXAMPLE", "detector": "aws"},
+        ),
+        ("secret", {"value_sha256": "f" * 64, "kind": "password_hash", "context": {"file": "dump.sql"}}),
         ("storage_bucket", {"provider": "aws_s3", "name": "example-assets"}),
         ("storage_bucket", {"provider": "aws_s3", "name": "a" * 63}),
         ("storage_bucket", {"provider": "gcp_gcs", "name": "example.appspot.com"}),
@@ -577,6 +582,14 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("secret", {}),
         ("secret", {"value_sha256": "a" * 64, "value": "hunter2"}),
         ("secret", {"value_sha256": "a" * 64, "password": "hunter2"}),
+        ("secret", {"value_sha256": "a" * 64, "Raw": "hunter2"}),
+        ("secret", {"value_sha256": "a" * 64, "RAWV2": "hunter2"}),
+        ("secret", {"value_sha256": "a" * 64, "Redacted": "hun***"}),
+        ("secret", {"value_sha256": "a" * 64, "context": {"Secret": "hunter2"}}),
+        ("secret", {"value_sha256": "a" * 64, "findings": [{"file": "a"}, {"Line": "pw=hunter2"}]}),
+        ("secret", {"value_sha256": "a" * 64, "kind": "ssh_key"}),
+        ("secret", {"value_sha256": "a" * 64, "key_id": "AKIA IOSFODNN7EXAMPLE"}),
+        ("secret", {"value_sha256": "a" * 64, "verified": "true"}),
         ("storage_bucket", {"provider": "azure_blob", "name": "example-storage"}),
         ("storage_bucket", {"provider": "azure_blob", "name": "a" * 25}),
         ("storage_bucket", {"provider": "aws_s3", "name": "a" * 64}),
@@ -913,6 +926,8 @@ def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[s
         ("exposes_secret", {"location": ""}),
         ("exposes_secret", {"location": "x" * 1025}),
         ("exposes_secret", {"location": "line\nbreak"}),
+        ("exposes_secret", {"location": "src/config.py", "Match": "AWS_SECRET=wJalr"}),
+        ("exposes_secret", {"location": "src/config.py", "gitleaks": {"Secret": "wJalr"}}),
         ("federates_with", {"namespace_type": "Federated"}),
         ("federates_with", {"namespace_type": "unknown"}),
     ],
@@ -1605,3 +1620,11 @@ def test_the_property_contract_refuses_contradictory_maps(
     monkeypatch.setattr(catalog_module, "_CATALOG", catalog)
     with pytest.raises(RuntimeError, match=message):
         catalog_module._ensure_property_contract()
+
+
+def test_a_plaintext_key_is_named_by_its_pointer_and_never_by_its_value() -> None:
+    with pytest.raises(ExpectedValidationError) as failure:
+        validate_record("nodes", "secret", {"value_sha256": "a" * 64, "ctx": {"a/b": {"Raw": "hunter2"}}})
+
+    assert failure.value.message == "/properties/ctx/a~1b/Raw: a secret record never carries the secret itself"
+    assert "hunter2" not in failure.value.message

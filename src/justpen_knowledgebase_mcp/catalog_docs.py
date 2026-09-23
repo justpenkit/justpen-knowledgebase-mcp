@@ -48,6 +48,10 @@ DOCS: dict[str, Any] = {
             "part, and ten colon-separated attributes, each '*', '-', or an escaped value optionally anchored "
             "by '*' or a run of '?'. The legacy 'cpe:/' URI binding that nmap prints is rejected; convert it."
         ),
+        "credential_key_id": (
+            "1 to 128 characters from ASCII letters, digits and `._:/+=-`: the public identifier half of a "
+            "two-part credential, such as an AWS access key id, never secret material."
+        ),
         "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
         "cwe": "A string matching `CWE-[0-9]{1,6}` exactly, uppercase as MITRE publishes it.",
         "dkim_selector": (
@@ -230,8 +234,9 @@ DOCS: dict[str, Any] = {
             "accepts a `/` for nested groups."
         ),
         "secret_plaintext_keys.1": (
-            "The node is rejected if it carries `value`, `secret`, `plaintext`, `password`, `token`, `key`, "
-            "`credential`, `match` or `raw`, so the credential itself cannot reach storage."
+            "The record is rejected if any key at any depth, in any case, is `value`, `secret`, `plaintext`, "
+            "`password`, `token`, `key`, `credential`, `match`, `raw`, `rawv2`, `redacted` or `line`, so the "
+            "credential itself cannot reach storage."
         ),
         "service_secure_flag.1": "A TLS-capable registry entry, such as `http`, additionally requires a boolean `secure`.",
         "tenant_id_spelling.1": (
@@ -339,7 +344,8 @@ DOCS: dict[str, Any] = {
             ),
             "notes": (
                 "Response digests are pivots on `http_fingerprint` nodes, not endpoint attributes. Raw response "
-                "bodies and headers belong in evidence."
+                "bodies and headers belong in evidence, where they are full-text indexed. Only the query is "
+                "removed from `url`: a secret carried in the path, such as a webhook token, stays in it."
             ),
             "properties": {
                 "url": "Absolute canonical http/https URL; a valid submitted query string is removed before identity.",
@@ -479,10 +485,19 @@ DOCS: dict[str, Any] = {
             "summary": "One exposed credential, identified only by the SHA-256 of the secret so its occurrences join.",
             "excludes": "Never the secret itself: a node carrying a plaintext-bearing key is rejected.",
             "notes": (
-                "Hash the credential exactly as issued, without quotes, assignment prefix or trailing newline. "
-                "An unsalted digest of a human-chosen password is a cracking target."
+                "Hash the secret part's UTF-8 bytes untrimmed: trufflehog `Raw` or the secret half of a "
+                "two-part `RawV2`, gitleaks `Secret` (never `Match`), a leak corpus password or its published "
+                "hash; in PEM, CRLF becomes LF. Compute it, then replace every secret field with `[REDACTED]` "
+                "before ingesting the output as evidence. A password digest is unsalted and reversible by "
+                "dictionary: treat the workspace as holding the passwords. Always send `kind`."
             ),
-            "properties": {"value_sha256": "Lowercase hex SHA-256 of the exact secret bytes."},
+            "properties": {
+                "value_sha256": "Lowercase hex SHA-256 of the exact secret bytes.",
+                "kind": "What the secret is; send it whenever the source says, and `other` only when it cannot.",
+                "detector": "The scanner rule that found it, such as trufflehog's `aws`; not identity.",
+                "verified": "Whether the scanner confirmed the credential works; the latest write wins.",
+                "key_id": "The public identifier half of a two-part credential, such as an AWS access key id.",
+            },
         },
         "service": {
             "summary": "The application protocol a port speaks, scoped to that port through `has_service`.",
@@ -633,7 +648,8 @@ DOCS: dict[str, Any] = {
         },
         "exposes_secret": {
             "summary": "The source exposes the secret at one location.",
-            "excludes": "Never the secret itself; the node holds only its digest.",
+            "excludes": "Never the secret itself; the node holds only its digest, and plaintext-bearing keys are refused.",
+            "notes": "Link evidence only after replacing every secret-bearing scanner field with `[REDACTED]`.",
             "properties": {"location": "Where the secret appears, such as a file path or URL path; identity-bearing."},
         },
         "federates_with": {

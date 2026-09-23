@@ -312,15 +312,21 @@ issues it, with no surrounding quotes, assignment prefix or trailing newline,
 or two observations of one key produce two digests.
 
 Three rules follow from the digest, and only the first is enforced. The server
-rejects a `secret` node carrying `value`, `secret`, `plaintext`, `password`,
-`token`, `key`, `credential`, `match` or `raw`, because an additional property
-is stored, property-indexed and full-text searchable, which would make a leaked
-plaintext searchable in the graph. Beyond that: treat `value_sha256` itself as
-sensitive, since an unsalted single-round digest of a human-chosen password is a
-cracking target, and the store as a whole is classified at the level of the
-credentials it indexes. Location is required on the `exposes_secret` edge and is
-part of its identity, so one key at five paths is five edges rather than one edge
-overwritten four times.
+rejects a `secret` node or an `exposes_secret` edge that carries, at any depth
+and in any case, a key named `value`, `secret`, `plaintext`, `password`,
+`token`, `key`, `credential`, `match`, `raw`, `rawv2`, `redacted` or `line`,
+because an additional property is stored, property-indexed and full-text
+searchable, which would make a leaked plaintext searchable in the graph. Beyond
+that: compute the digest from the scanner output, then replace every
+secret-bearing field (trufflehog `Raw`, `RawV2` and `Redacted`, gitleaks
+`Secret`, `Match` and `Line`) with `[REDACTED]` before ingesting the output as
+evidence. And treat `value_sha256` itself as sensitive: an unsalted
+single-round digest of a human-chosen password is reversible by dictionary, so
+the store as a whole is classified at the level of the credentials it indexes.
+Location is required on the `exposes_secret` edge and is part of its identity,
+so one key at five paths is five edges rather than one edge overwritten four
+times. The declared optional `kind`, `detector`, `verified` and `key_id` type
+the credential; always send `kind` when the source names it.
 
 `email_address` and `phone` are shared contact nodes reached through
 `has_contact`, whose required `role` is part of the edge identity, so one

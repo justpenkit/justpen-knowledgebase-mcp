@@ -37,6 +37,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         (CPE_NGINX, "cpe:2.3:o:-:-:-:-:-:-:-:-:-:-", "cpe:2.3:a:vendor:pro\\:duct:*:*:*:*:*:*:*:*"),
         ("", "cpe:/a:apache:http_server:2.4.41", "CPE:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*", "cpe:2.3:a:f5"),
     ),
+    "credential_key_id": (("AKIAIOSFODNN7EXAMPLE", "sk_live:1/a+b=="), ("", "AKIA IOSFODNN", "k" * 129, "\u00e9")),
     "cve": (("CVE-2026-1234", "CVE-1999-1234567"), ("cve-2026-1234", "CVE-26-1234", "CVE-2026-123", 20261234)),
     "cwe": (("CWE-79", "CWE-999999"), ("cwe-79", "CWE-1234567", "CWE-", "79", 79)),
     "dkim_selector": (("default", "selector1.sub", "a" * 63), ("Default", "s1._domainkey", "", "a" * 64, "s1-")),
@@ -234,8 +235,16 @@ CHECKS: dict[str, tuple[tuple[Record, ...], tuple[Record, ...]]] = {
         ),
     ),
     "secret_plaintext_keys.1": (
-        (("secret", {"value_sha256": "a" * 64, "detector": "aws"}),),
-        (("secret", {"value_sha256": "a" * 64, "password": "hunter2"}),),
+        (
+            ("secret", {"value_sha256": "a" * 64, "detector": "aws", "context": {"file": "a.env"}}),
+            ("exposes_secret", {"location": "src/config.py", "commit": "a" * 40}),
+        ),
+        (
+            ("secret", {"value_sha256": "a" * 64, "password": "hunter2"}),
+            ("secret", {"value_sha256": "a" * 64, "Raw": "hunter2"}),
+            ("secret", {"value_sha256": "a" * 64, "nested": [{"deeper": {"rawV2": "x"}}]}),
+            ("exposes_secret", {"location": "src/config.py", "Line": "AWS_SECRET=wJalr"}),
+        ),
     ),
     "service_secure_flag.1": (
         (("service", {"name": "http", "secure": True}), ("service", {"name": "ssh"})),

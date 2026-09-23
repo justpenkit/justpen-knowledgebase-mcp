@@ -45,6 +45,7 @@ _FORMATS: dict[str, int] = {
     "caa_parameters": 1,
     "cidr": 1,
     "cpe23": 1,
+    "credential_key_id": 1,
     "cve": 1,
     "cwe": 1,
     "dkim_selector": 1,
@@ -277,6 +278,22 @@ _NODES: dict[str, dict[str, Any]] = {
     "secret": {
         "identity": _identity(["value_sha256"]),
         "required": {"value_sha256": "sha256"},
+        "optional": {
+            "kind": [
+                "password",
+                "password_hash",
+                "api_key",
+                "access_token",
+                "private_key",
+                "session_token",
+                "connection_string",
+                "webhook_url",
+                "other",
+            ],
+            "detector": "tech_token",
+            "verified": "boolean",
+            "key_id": "credential_key_id",
+        },
         "checks": ["secret_plaintext_keys.1"],
     },
     "service": {
@@ -365,6 +382,7 @@ _RELATIONS = {
         ["secret"],
         required={"location": "printable_text_1024"},
         identity=_identity(["location"]),
+        checks=["secret_plaintext_keys.1"],
     ),
     "federates_with": _relation(_D, ["identity_tenant"], optional={"namespace_type": ["managed", "federated"]}),
     "has_contact": _relation(
@@ -671,16 +689,49 @@ def _cross_field_repository(_type_name: str, properties: dict[str, Any]) -> None
 
 
 # A secret node holds a digest so that occurrences join; the secret itself must never reach storage,
-# where an additional property would also be property-indexed and full-text searchable.
+# where an additional property would also be property-indexed and full-text searchable. The names
+# include the fields scanners use for the secret: trufflehog `Raw`, `RawV2` and `Redacted`, gitleaks
+# `Secret`, `Match` and `Line`.
 _SECRET_PLAINTEXT_KEYS = frozenset(
-    {"value", "secret", "plaintext", "password", "token", "key", "credential", "match", "raw"}
+    {
+        "value",
+        "secret",
+        "plaintext",
+        "password",
+        "token",
+        "key",
+        "credential",
+        "match",
+        "raw",
+        "rawv2",
+        "redacted",
+        "line",
+    }
 )
 
 
+def _plaintext_pointer(value: object, pointer: str) -> str | None:
+    """Return the JSON pointer of the first plaintext-bearing key at any depth, in any case."""
+    if isinstance(value, dict):
+        for key, item in sorted(cast("dict[str, object]", value).items()):
+            escaped = key.replace("~", "~0").replace("/", "~1")
+            if key.casefold() in _SECRET_PLAINTEXT_KEYS:
+                return f"{pointer}/{escaped}"
+            found = _plaintext_pointer(item, f"{pointer}/{escaped}")
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for index, item in enumerate(cast("list[object]", value)):
+            found = _plaintext_pointer(item, f"{pointer}/{index}")
+            if found is not None:
+                return found
+    return None
+
+
 def _cross_field_secret(_type_name: str, properties: dict[str, Any]) -> None:
-    carried = sorted(_SECRET_PLAINTEXT_KEYS.intersection(properties))
-    if carried:
-        raise ExpectedValidationError(f"/properties/{carried[0]}: a secret node never carries the secret itself")
+    carried = _plaintext_pointer(properties, "/properties")
+    if carried is not None:
+        raise ExpectedValidationError(f"{carried}: a secret record never carries the secret itself")
 
 
 _BUCKET_RULES: dict[str, tuple[int, int, str]] = {
@@ -1168,6 +1219,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "bucket_name": _valid_bucket_name,
         "cidr": lambda text: _parse_cidr(text) is not None,
         "cpe23": lambda text: len(text) <= 512 and _CPE23.fullmatch(text) is not None,
+        "credential_key_id": lambda text: re.fullmatch(r"[A-Za-z0-9._:/+=-]{1,128}", text) is not None,
         "cve": lambda text: re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", text) is not None,
         "cwe": lambda text: re.fullmatch(r"CWE-[0-9]{1,6}", text) is not None,
         "dkim_selector": _valid_dkim_selector,
