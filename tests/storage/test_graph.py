@@ -817,13 +817,13 @@ async def test_endpoint_values_are_checked_on_the_properties_that_will_be_stored
     """The value check runs after both merges: an id patch that omits a property still sees the
     stored one, and a keyless rewrite that deduplicates onto a stored edge sees the merged whole."""
     seen: list[dict[str, object]] = []
-    run, prose = catalog_module._ENDPOINT_CHECKS["has_subdomain_suffix.1"]
+    run = catalog_module._ENDPOINT_CHECKS["has_subdomain_suffix.1"]
 
     def recording(relation_props, source, target):
         seen.append(dict(relation_props))
         run(relation_props, source, target)
 
-    monkeypatch.setitem(catalog_module._ENDPOINT_CHECKS, "has_subdomain_suffix.1", (recording, prose))
+    monkeypatch.setitem(catalog_module._ENDPOINT_CHECKS, "has_subdomain_suffix.1", recording)
     nodes = [
         {"type": "domain", "properties": {"value": "example.com"}},
         {"type": "subdomain", "properties": {"value": "api.example.com"}},

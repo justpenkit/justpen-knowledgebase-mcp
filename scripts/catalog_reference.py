@@ -1,9 +1,10 @@
-"""Render the catalog contract as the documentation table set agents and readers share.
+"""Render the catalog contract as the documentation page agents and readers share.
 
 `kb_types` already returns the live contract, but nothing on the website listed it. Writing that
-list by hand would drift the moment a type changes, so this module derives every table from the
-same manifest the server validates against. `tests/test_catalog_reference.py` parses the published
-page back into data and compares it to the manifest, so a stale page fails the suite rather than
+list by hand would drift the moment a type changes, so this module derives every table and every
+sentence about a type from the same manifest and prose the server publishes.
+`tests/test_catalog_reference.py` compares the committed page byte for byte with this output after
+Markdown formatting, and parses it back into data, so a stale page fails the suite rather than
 misleading an agent.
 """
 
@@ -12,7 +13,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from justpen_knowledgebase_mcp.catalog import CATALOG_VERSION, catalog_manifest, rule_descriptions
+from justpen_knowledgebase_mcp.catalog import (
+    CATALOG_VERSION,
+    catalog_manifest,
+    common_descriptions,
+    format_descriptions,
+    rule_descriptions,
+    type_description,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -88,9 +96,14 @@ def _identity(identity: dict[str, Any]) -> str:
     return f"{properties}, with `{order['property']}` hashed order-independently"
 
 
+def _cell(text: str) -> str:
+    """A pipe inside a cell, even inside a code span, would end the cell."""
+    return text.replace("|", "\\|")
+
+
 def _table(headers: Sequence[str], rows: Iterable[Sequence[str]]) -> str:
     lines = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] * len(headers)) + "|"]
-    lines.extend("| " + " | ".join(row) + " |" for row in rows)
+    lines.extend("| " + " | ".join(_cell(cell) for cell in row) + " |" for row in rows)
     return "\n".join(lines)
 
 
@@ -143,22 +156,52 @@ def _matrix_rows(manifest: dict[str, Any]) -> list[list[str]]:
     return rows
 
 
+def _common_value(value: object) -> str:
+    if type(value) is bool:
+        return str(value).lower()
+    return f"`{value}`" if isinstance(value, str) else str(value)
+
+
+def _type_section(kind: str, name: str, definition: dict[str, Any]) -> list[str]:
+    """What one type models and excludes, how it is identified, what runs on it, and each property."""
+    docs = type_description(kind, name)
+    lines = [f"### `{name}`", "", docs["summary"], "", f"**Not modeled:** {docs['excludes']}", ""]
+    if "notes" in docs:
+        lines.extend([docs["notes"], ""])
+    facts = [f"**Identity:** {_identity(definition['identity'])}"]
+    if kind == "nodes":
+        facts.append(f"**Parent scope:** {_scope(definition['identity'])}")
+    else:
+        facts.append(f"**Sources:** {_code(definition['sources'])}")
+        facts.append(f"**Targets:** {_code(definition['targets'])}")
+        facts.append(f"**Self edge:** {'yes' if definition['self_edge'] else 'no'}")
+    facts.append(f"**Checks:** {_code(definition['checks'])}")
+    facts.append(f"**Canonicalizations:** {_code(definition['canonicalize'])}")
+    lines.extend(["<br>".join(facts), ""])
+    required = cast("dict[str, str | list[str]]", definition["required"])
+    if required:
+        rows = [[f"`{prop}`", "yes", _rule(rule), docs["properties"][prop]] for prop, rule in required.items()]
+        lines.extend([_table(["Property", "Required", "Rule", "Meaning"], rows), ""])
+    return lines
+
+
 def render() -> str:
     """Return the complete reference page for the catalog the server currently enforces."""
     manifest = catalog_manifest()
     common = cast("dict[str, Any]", manifest["common"])
-    formats = cast("dict[str, str]", manifest["formats"])
+    meanings = common_descriptions()
+    formats = format_descriptions()
     sections = [
         "# Catalog reference",
         "",
         f"Every table below is generated from catalog v{CATALOG_VERSION}, the same manifest the server"
-        " validates writes against. `kb_types` returns the identical contract at runtime and is the"
-        " source to read from a client; this page exists so the contract is reviewable without a"
-        " running server. Regenerate it with `make docs-catalog`.",
+        " validates writes against. `kb_types` returns the identical contract and the same descriptions at"
+        " runtime and is the source to read from a client; this page exists so the contract is reviewable"
+        " without a running server. Regenerate it with `make docs-catalog`.",
         "",
         f"The catalog declares **{len(manifest['nodes'])} node types** and"
         f" **{len(manifest['relations'])} relation types**. Conventions that the catalog does not"
-        " enforce, and the reasoning behind each type, live in"
+        " enforce, and the longer reasoning behind each type, live in"
         " [Graph and search](../tools/graph.md).",
         "",
         "## What a write is checked against",
@@ -169,31 +212,7 @@ def render() -> str:
         "",
         _table(
             ["Setting", "Value", "Meaning"],
-            [
-                [
-                    "`additional_properties`",
-                    str(common["additional_properties"]).lower(),
-                    "Properties outside the required map are accepted and stored unvalidated.",
-                ],
-                [
-                    "`coercion`",
-                    str(common["coercion"]).lower(),
-                    'No JSON type is converted. A string `"443"` is not an integer.',
-                ],
-                [
-                    "`required_nonnull`",
-                    str(common["required_nonnull"]).lower(),
-                    "A required property may not be null or absent.",
-                ],
-                ["`depth`", str(common["depth"]), "Maximum nesting depth of the properties object."],
-                [
-                    "`properties_bytes`",
-                    str(common["properties_bytes"]),
-                    "Maximum size of one canonical properties object, in UTF-8 bytes.",
-                ],
-                ["`integers`", f"`{common['integers']}`", "Integers outside signed 64-bit are rejected."],
-                ["`numbers`", f"`{common['numbers']}`", "NaN and infinity are rejected."],
-            ],
+            [[f"`{name}`", _common_value(common[name]), meanings[name]] for name in sorted(common)],
         ),
         "",
         "## Node types",
@@ -236,11 +255,22 @@ def render() -> str:
         "",
         "## Format rules",
         "",
-        "Every required property that is not an enum names one of these rules.",
+        "Every declared property that is not an enum names one of these rules. The version changes"
+        " whenever what the rule accepts changes.",
         "",
-        _table(["Rule", "Accepted spelling"], [[f"`{name}`", text] for name, text in sorted(formats.items())]),
+        _table(
+            ["Rule", "Version", "Accepted spelling"],
+            [[f"`{name}`", str(item["version"]), item["description"]] for name, item in sorted(formats.items())],
+        ),
+        "",
+        "## Node type details",
         "",
     ]
+    for name, definition in sorted(cast("dict[str, dict[str, Any]]", manifest["nodes"]).items()):
+        sections.extend(_type_section("nodes", name, definition))
+    sections.extend(["## Relation type details", ""])
+    for name, definition in sorted(cast("dict[str, dict[str, Any]]", manifest["relations"]).items()):
+        sections.extend(_type_section("relations", name, definition))
     return "\n".join(sections)
 
 

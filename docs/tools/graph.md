@@ -5,9 +5,12 @@
 **Input:** `kind` is `nodes` or `relations`; optional `type`; `limit` defaults to
 20 (1–100); optional cursor.
 
-**Output:** catalog entries with required property schemas,
-formats/enums/cross-field rules, and ready-only counts, plus common formats,
-`counts_deferred`, and `next_cursor`. Each entry has an `identity` object with a
+**Output:** catalog entries with required property schemas, formats and enums,
+the `checks` and `canonicalize` ids each type runs with their rules in
+`check_descriptions`, a `description` of what the type models and excludes and
+what each property means, and ready-only counts. The page also carries the
+shared `common` limits, every format with its behavior `version` and
+`description`, `counts_deferred`, and `next_cursor`. Each entry has an `identity` object with a
 `properties` array. Parent-scoped node types also include `scope`, for example
 `{"relation":"has_open_port","endpoint":"source"}` for `port`. A pending
 high-degree delete can defer counts rather than block discovery.
@@ -18,7 +21,7 @@ bounded admission. Listing types is discovery and does not replace `kb_status`.
 The same contract is tabulated on
 [Catalog types and formats](../reference/catalog.md): every node and relation
 type with its identity, parent scope, required properties and allowed endpoints,
-plus the format rules, the cross-field rules and a node-to-relation matrix. Read
+plus the format rules, the checks, the canonicalizations and a node-to-relation matrix. Read
 this page for the conventions and the reasoning; read that one to look a type up.
 
 ## `kb_write`
@@ -39,11 +42,11 @@ or storage errors. No partial batch commits.
 The catalog is the only place a type, its required properties, its identity, its
 parent scope and its allowed relation endpoint **types** are declared. `kb_types`
 returns that declaration, including the format rule behind every required
-property, so an agent can read the contract instead of guessing it. A few
-relations also constrain endpoint **values**, which `kb_types` does not publish:
-`has_subdomain` requires the target to end in the source, `contains_ip` and
-`contains_cidr` require real containment. Properties outside the required map
-are accepted as submitted and are not validated.
+property and the id of every check and canonicalization a type runs, so an
+agent can read the contract instead of guessing it. A few relations also check
+endpoint **values**: `has_subdomain` requires the target to end in the source,
+`contains_ip` and `contains_cidr` require real containment. Properties outside
+the required map are accepted as submitted and are not validated.
 
 `CONFLICT` also reports attempts to change an existing record's type, required
 identity fields, or relation endpoints, which are immutable. It also reports an

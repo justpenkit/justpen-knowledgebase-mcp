@@ -154,6 +154,6 @@ fields. Property `null` remains literal JSON data. `observed_at` uses the last
 writer's supplied timestamp even when it is chronologically older; it is not a
 maximum-time merge.
 
-All writes validate the merged full record and every cross-field relation rule
-before one transaction commits. One invalid record or missing evidence link
+All writes validate the merged full record and every check its type declares,
+including a relation's endpoint value checks, before one transaction commits. One invalid record or missing evidence link
 rejects the entire batch.

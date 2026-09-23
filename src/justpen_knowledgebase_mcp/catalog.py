@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import ipaddress
 import json
@@ -10,6 +11,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
+from .catalog_docs import CAPS as _DOC_CAPS, DOCS as _DOCS
 from .errors import ExpectedValidationError
 from .mutations import validate_properties
 from .psl import classify_dns_name
@@ -30,124 +32,47 @@ _COMMON = {
     "required_nonnull": True,
 }
 
-_FORMATS = {
-    "alpn_tokens": (
-        "An array of zero or more ASCII tokens matching `[A-Za-z0-9./_-]{1,255}`; order is not identity-significant "
-        "and duplicates are preserved."
-    ),
-    "asn": "A strict JSON integer from 0 through 4294967295.",
-    "bucket_name": (
-        "The provider-global name of an object-storage bucket: 3 to 222 lowercase ASCII characters from "
-        "letters, digits, hyphen, underscore and dot, starting and ending alphanumeric, without a doubled "
-        "dot, and never a dotted-quad IPv4 address. Every provider is stricter than this union rule, and "
-        "the declared provider fixes which of the narrower spellings is accepted."
-    ),
-    "caa_parameters": (
-        "An array of objects with name and value strings. Names start alphanumeric and continue alphanumeric or "
-        "hyphen. Values are empty or use ASCII 0x21-0x3A and 0x3C-0x7E."
-    ),
-    "cidr": "Canonical strict IPv4 or IPv6 network with an explicit prefix length.",
-    "cpe23_or_empty": (
-        "The empty string, or a lowercase CPE 2.3 formatted string (NIST IR 7695): 'cpe:2.3:' followed by the "
-        "part and ten colon-separated components, each '*', '-', or an escaped attribute value optionally "
-        "anchored by '*' or a run of '?', at most 512 characters. The legacy 'cpe:/' URI binding is rejected. "
-        "No required map references this rule, so a stored cpe property is never checked against it; the rule "
-        "states the spelling writers must produce and readers must re-validate."
-    ),
-    "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
-    "cwe": "A string matching `CWE-[0-9]{1,6}` exactly, uppercase as MITRE publishes it.",
-    "dkim_selector": (
-        "A lowercase ASCII DKIM selector of at most 253 bytes - in practice far less, since the owner name "
-        "`<selector>._domainkey.<domain>` must itself fit in 253 bytes - as one or more dot-separated labels "
-        "of at most 63 bytes each, written without the `_domainkey` suffix or the domain."
-    ),
-    "dmarc": (
-        "Printable ASCII of at most 4096 characters beginning with 'v=DMARC1' followed by a semicolon, a normal "
-        "space, or end of text."
-    ),
-    "dns_name": (
-        "A lowercase ASCII domain or subdomain spelling classified by the bundled ICANN PSL; at least two labels, "
-        "labels at most 63 bytes, total at most 253 bytes, and no trailing dot."
-    ),
-    "dns_or_explicit_empty": "dns_name or the explicit empty string for no SNI offer; IP literals are rejected.",
-    "email_address": (
-        "A lowercase ASCII mailbox of at most 254 characters: an RFC 5322 dot-atom local part of at most 64 "
-        "characters, one `@`, and a domain that satisfies dns_name. Quoted local parts, address literals and "
-        "display names are rejected. A local part is case-sensitive on the wire; this rule requires the "
-        "lowercase spelling anyway, so one mailbox is one node."
-    ),
-    "http_fingerprint_value": (
-        "Either a signed 32-bit decimal integer written in ASCII without a leading zero or a plus sign, for a "
-        "MurmurHash3 favicon hash, or exactly 64 lowercase hexadecimal characters for a response digest. The "
-        "declared kind fixes which one is accepted."
-    ),
-    "http_url": (
-        "Canonical absolute ASCII http/https URL with lowercase host, mandatory path, no userinfo, fragment, "
-        "whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase percent escape. "
-        "A submitted query string is validated and then removed before identity and storage, so one endpoint "
-        "holds one path; parameter names belong to parameter nodes."
-    ),
-    "ip": "Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.",
-    "ip_version": "A strict JSON integer equal to 4 or 6.",
-    "method": "One to 32 characters matching an uppercase HTTP method token.",
-    "mta_sts": (
-        "Printable ASCII of at most 4096 characters beginning with 'v=STSv1' followed by a semicolon, a normal "
-        "space, or end of text: the TXT record at `_mta-sts.<domain>`, not the policy file body."
-    ),
-    "parameter_name": (
-        "1 to 128 printable ASCII characters without space, `&`, `=`, or `#`; one single parameter name, "
-        "never a raw query string."
-    ),
-    "phone_e164": "An E.164 number: `+`, a leading digit from 1 through 9, and in total 2 to 15 digits.",
-    "printable_text_1024": "A string of 1-1024 printable Unicode characters.",
-    "printable_text_200": "A string of 1-200 printable Unicode characters.",
-    "redirect_status": "A strict JSON integer in 301, 302, 303, 307, or 308.",
-    "repo_name": (
-        "A 1-100 character lowercase ASCII repository name from letters, digits, dot, underscore and hyphen, "
-        "holding at least one alphanumeric character and never the reserved `.` or `..`. Hosting platforms "
-        "resolve names case-insensitively, so the lowercase spelling is required to keep one repository one node."
-    ),
-    "repo_owner": (
-        "A 1-255 character lowercase ASCII owner path of one or more `/`-separated segments, each 1-100 "
-        "characters from letters, digits, dot, underscore and hyphen and each starting and ending "
-        "alphanumeric. The separator exists for nested GitLab groups; the declared platform fixes whether "
-        "more than one segment is accepted."
-    ),
-    "rir_handle": (
-        "A regional-registry object handle of 2 to 64 ASCII characters, starting and ending alphanumeric and "
-        "continuing alphanumeric or hyphen. Handles are case-sensitive and stored exactly as the registry "
-        "publishes them: RIPE and AFRINIC derive them from the organisation name and preserve its case "
-        "(ORG-nG51-RIPE, ORG-Ab1-AFRINIC), so a writer must never uppercase one. Handles are unique within one "
-        "registry, never across registries."
-    ),
-    "service_name": "A member of the bundled versioned service name whitelist.",
-    "sha256": "Exactly 64 lowercase ASCII hexadecimal characters.",
-    "spf": "Printable ASCII beginning with `v=spf1` followed by a normal space or end of text.",
-    "srv_label": "A 2-63 byte lowercase ASCII SRV label beginning with underscore.",
-    "tech_token": (
-        "A 1-63 character lowercase ASCII technology slug that starts and ends alphanumeric and may contain "
-        "interior dot, underscore, plus, or hyphen."
-    ),
-    "tenant_id": (
-        "A 1-128 character lowercase ASCII identity-tenant identifier that starts and ends alphanumeric and "
-        "may contain interior dot, underscore or hyphen. The declared provider fixes the narrower spelling, "
-        "and every member of the provider enum has one: a canonical lowercase UUID for Entra ID, a bare "
-        "organization slug for Okta."
-    ),
-    "tls_cipher_name": (
-        "The spelling of an IANA TLS cipher suite name: 5 to 128 uppercase ASCII characters beginning 'TLS_', "
-        "with underscore-separated alphanumeric components. Shape only; membership in the IANA registry is not "
-        "checked, so a well-formed name that no suite bears is accepted."
-    ),
-    "tls_fingerprint_value": (
-        "Exactly 32 lowercase hexadecimal characters for a JA3S MD5 digest, or exactly 62 for a JARM "
-        "fingerprint. The declared kind fixes which length is accepted."
-    ),
-    "txt_value": (
-        "1 to 4096 printable ASCII characters, the concatenated and unquoted character-strings of one TXT RRset."
-    ),
-    "uint8": "A strict JSON integer from 0 through 255.",
-    "uint16": "A strict JSON integer from 0 through 65535.",
+# Every format id with its behavior version. The prose lives in `catalog_docs.DOCS`; the version
+# moves, and with it the fingerprint, whenever what the validator accepts changes.
+_FORMATS: dict[str, int] = {
+    "alpn_tokens": 1,
+    "asn": 1,
+    "bucket_name": 1,
+    "caa_parameters": 1,
+    "cidr": 1,
+    "cpe23_or_empty": 1,
+    "cve": 1,
+    "cwe": 1,
+    "dkim_selector": 1,
+    "dmarc": 1,
+    "dns_name": 1,
+    "dns_or_explicit_empty": 1,
+    "email_address": 1,
+    "http_fingerprint_value": 1,
+    "http_url": 1,
+    "ip": 1,
+    "ip_version": 1,
+    "method": 1,
+    "mta_sts": 1,
+    "parameter_name": 1,
+    "phone_e164": 1,
+    "printable_text_1024": 1,
+    "printable_text_200": 1,
+    "redirect_status": 1,
+    "repo_name": 1,
+    "repo_owner": 1,
+    "rir_handle": 1,
+    "service_name": 1,
+    "sha256": 1,
+    "spf": 1,
+    "srv_label": 1,
+    "tech_token": 1,
+    "tenant_id": 1,
+    "tls_cipher_name": 1,
+    "tls_fingerprint_value": 1,
+    "txt_value": 1,
+    "uint8": 1,
+    "uint16": 1,
 }
 
 
@@ -768,93 +693,32 @@ def _proper_subnet(
 # Every check runs after the required map validated the properties it reads. An id names one
 # behavior: changing what a callable accepts means a new version suffix, which changes the
 # fingerprint, so a workspace written under the old behavior is refused rather than reinterpreted.
-_CHECKS: dict[str, tuple[Callable[[str, dict[str, Any]], None], str]] = {
-    "bucket_name_spelling.1": (
-        _cross_field_storage_bucket,
-        "`name` is checked against the declared `provider`: length, grammar, and the prefixes, suffixes and "
-        "substrings that provider reserves.",
-    ),
-    "dns_name_kind.1": (
-        _cross_field_dns_name,
-        "`value` must classify as this type against the bundled PSL: a registrable domain for `domain`, a "
-        "name below one for `subdomain`.",
-    ),
-    "http_fingerprint_value_kind.1": (
-        _cross_field_http_fingerprint,
-        "`favicon_mmh3` requires the signed 32-bit integer spelling; `body_sha256` and `header_sha256` require "
-        "64 lowercase hex characters.",
-    ),
-    "ip_address_version.1": (
-        _cross_field_ip_address,
-        "`version` must equal the version of the address in `value`.",
-    ),
-    "ip_cidr_version.1": (
-        _cross_field_ip_cidr,
-        "`version` must equal the version of the network in `value`.",
-    ),
-    "registrar_iana_assigned.1": (
-        _cross_field_registrar,
-        "`iana_id` must be at least 1, because 0 is what an agent emits for a missing field.",
-    ),
-    "repository_owner_spelling.1": (
-        _cross_field_repository,
-        "`owner` is checked against the grammar and length of the declared `platform`, and only `gitlab` "
-        "accepts a `/` for nested groups.",
-    ),
-    "secret_plaintext_keys.1": (
-        _cross_field_secret,
-        "The node is rejected if it carries `value`, `secret`, `plaintext`, `password`, `token`, `key`, "
-        "`credential`, `match` or `raw`, so the credential itself cannot reach storage.",
-    ),
-    "service_secure_flag.1": (
-        _cross_field_service,
-        "A TLS-capable registry entry, such as `http`, additionally requires a boolean `secure`.",
-    ),
-    "tenant_id_spelling.1": (
-        _cross_field_identity_tenant,
-        "`entra_id` requires a canonical lowercase UUID; `okta` requires the bare organization slug, so a dot "
-        "is rejected.",
-    ),
-    "tls_fingerprint_length.1": (
-        _cross_field_tls_fingerprint,
-        "`value` must be 62 characters for `jarm` and 32 for `ja3s`.",
-    ),
-    "txt_record_diversion.1": (
-        _cross_field_txt_record,
-        "A `value` that the dedicated type for its version tag accepts is rejected here: `v=spf1` belongs to "
-        "`spf_record`, `v=DMARC1` to `dmarc_record`, `v=DKIM1` to `dkim_record` and `v=STSv1` to "
-        "`mta_sts_policy`. A malformed tagged value, such as `v=spf1include:...`, stays a `txt_record`.",
-    ),
+_CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
+    "bucket_name_spelling.1": _cross_field_storage_bucket,
+    "dns_name_kind.1": _cross_field_dns_name,
+    "http_fingerprint_value_kind.1": _cross_field_http_fingerprint,
+    "ip_address_version.1": _cross_field_ip_address,
+    "ip_cidr_version.1": _cross_field_ip_cidr,
+    "registrar_iana_assigned.1": _cross_field_registrar,
+    "repository_owner_spelling.1": _cross_field_repository,
+    "secret_plaintext_keys.1": _cross_field_secret,
+    "service_secure_flag.1": _cross_field_service,
+    "tenant_id_spelling.1": _cross_field_identity_tenant,
+    "tls_fingerprint_length.1": _cross_field_tls_fingerprint,
+    "txt_record_diversion.1": _cross_field_txt_record,
 }
 
 # Checks that read both endpoints' stored properties as well as the relation's own. They run after
 # the relation's properties are merged and deduplicated, so they see what will be stored.
-_ENDPOINT_CHECKS: dict[str, tuple[Callable[[Mapping[str, Any], EndpointView, EndpointView], None], str]] = {
-    "contains_cidr_proper_subnet.1": (
-        _endpoint_contains_cidr,
-        "The target network must be a proper subnet of the source, at the same IP version.",
-    ),
-    "contains_ip_member.1": (
-        _endpoint_contains_ip,
-        "The target address must fall inside the source network, at the same IP version.",
-    ),
-    "has_subdomain_suffix.1": (
-        _endpoint_subdomain_suffix,
-        "The target's `value` must end in `.` plus the source's `value`.",
-    ),
+_ENDPOINT_CHECKS: dict[str, Callable[[Mapping[str, Any], EndpointView, EndpointView], None]] = {
+    "contains_cidr_proper_subnet.1": _endpoint_contains_cidr,
+    "contains_ip_member.1": _endpoint_contains_ip,
+    "has_subdomain_suffix.1": _endpoint_subdomain_suffix,
 }
 
-_CANONICALIZATIONS: dict[str, tuple[Callable[[dict[str, Any]], None], str]] = {
-    "caa_parameter_name_fold.1": (
-        _canonicalize_caa_parameters,
-        "ASCII parameter names are lowercased, because RFC 8659 tags are case-insensitive while the parameter "
-        "list is identity-bearing. A non-ASCII name is left for validation to reject.",
-    ),
-    "endpoint_url_drop_query.1": (
-        _canonicalize_endpoint_url,
-        "Everything from the first `?` in `url` is removed before the URL is validated and hashed, so one path "
-        "is one endpoint; parameter names belong to `parameter` nodes.",
-    ),
+_CANONICALIZATIONS: dict[str, Callable[[dict[str, Any]], None]] = {
+    "caa_parameter_name_fold.1": _canonicalize_caa_parameters,
+    "endpoint_url_drop_query.1": _canonicalize_endpoint_url,
 }
 
 _RULE_ID = re.compile(r"[a-z][a-z0-9_]*\.[1-9][0-9]*")
@@ -863,7 +727,7 @@ _RULE_ID = re.compile(r"[a-z][a-z0-9_]*\.[1-9][0-9]*")
 def _build_catalog(
     nodes: Mapping[str, Mapping[str, Any]],
     relations: Mapping[str, Mapping[str, Any]],
-    formats: Mapping[str, object],
+    formats: Mapping[str, int],
     checks: Mapping[str, object],
     endpoint_checks: Mapping[str, object],
     canonicalizations: Mapping[str, object],
@@ -876,6 +740,8 @@ def _build_catalog(
     rather than surfacing as a KeyError on the first write.
     """
     unused = {*checks, *endpoint_checks, *canonicalizations}
+    if any(type(version) is not int or version < 1 for version in formats.values()):
+        raise RuntimeError("every format carries a positive integer behavior version")
     built: dict[str, Any] = {"common": _COMMON, "formats": dict(formats), "version": CATALOG_VERSION}
     for kind, definitions in (("nodes", nodes), ("relations", relations)):
         built[kind] = {}
@@ -950,8 +816,65 @@ def catalog_view() -> Mapping[str, Any]:
 
 def rule_descriptions() -> dict[str, str]:
     """Describe every check and canonicalization id the manifest publishes."""
-    tables = (_CHECKS, _ENDPOINT_CHECKS, _CANONICALIZATIONS)
-    return {rule_id: prose for table in tables for rule_id, (_run, prose) in table.items()}
+    return {**_DOCS["checks"], **_DOCS["canonicalizations"]}
+
+
+def format_descriptions() -> dict[str, dict[str, Any]]:
+    """Pair every format id with its behavior version and its accepted spelling."""
+    return {name: {"version": version, "description": _DOCS["formats"][name]} for name, version in _FORMATS.items()}
+
+
+def common_descriptions() -> dict[str, str]:
+    """Explain each shared limit in the manifest's `common` block."""
+    return dict(_DOCS["common"])
+
+
+def type_description(kind: str, type_name: str) -> dict[str, Any]:
+    """Say what one type models and excludes, why it is shaped so, and what each property means."""
+    return copy.deepcopy(cast("dict[str, Any]", _DOCS[kind][type_name]))
+
+
+def _declared_properties(definition: Mapping[str, Any]) -> set[str]:
+    return set(definition["required"])
+
+
+def _ensure_docs_contract() -> None:
+    """Fail at import if the prose and the contract disagree, or a text outgrows its cap.
+
+    The prose is outside the fingerprint, so nothing else would notice a type, property, format or
+    rule that `kb_types` publishes without a description, or a description left behind by a rename.
+    """
+    pairs = [
+        ("formats", set(_FORMATS), set(_DOCS["formats"])),
+        ("checks", {*_CHECKS, *_ENDPOINT_CHECKS}, set(_DOCS["checks"])),
+        ("canonicalizations", set(_CANONICALIZATIONS), set(_DOCS["canonicalizations"])),
+        ("common", set(_COMMON), set(_DOCS["common"])),
+        ("nodes", set(_CATALOG["nodes"]), set(_DOCS["nodes"])),
+        ("relations", set(_CATALOG["relations"]), set(_DOCS["relations"])),
+    ]
+    for section, declared, described in pairs:
+        if declared != described:
+            raise RuntimeError(f"catalog docs for {section} disagree with the contract: {sorted(declared ^ described)}")
+    texts: list[tuple[str, str, str]] = [
+        *(("format", name, text) for name, text in _DOCS["formats"].items()),
+        *(("rule", name, text) for name, text in rule_descriptions().items()),
+        *(("common", name, text) for name, text in _DOCS["common"].items()),
+    ]
+    for kind in ("nodes", "relations"):
+        for type_name, definition in cast("dict[str, dict[str, Any]]", _CATALOG[kind]).items():
+            docs = cast("dict[str, Any]", _DOCS[kind][type_name])
+            if set(docs) - {"summary", "excludes", "notes", "properties"} or not {"summary", "excludes"} <= set(docs):
+                raise RuntimeError(f"catalog docs for {type_name} need summary and excludes, and nothing else")
+            if set(docs["properties"]) != _declared_properties(definition):
+                raise RuntimeError(f"catalog docs for {type_name} do not describe exactly its declared properties")
+            texts.extend((key, type_name, docs[key]) for key in ("summary", "excludes", "notes") if key in docs)
+            texts.extend(("property", f"{type_name}.{name}", text) for name, text in docs["properties"].items())
+    for cap, name, text in texts:
+        if type(text) is not str or not 1 <= len(text) <= _DOC_CAPS[cap]:
+            raise RuntimeError(f"catalog {cap} text for {name} is empty or longer than {_DOC_CAPS[cap]} characters")
+
+
+_ensure_docs_contract()
 
 
 def _definition(kind: str, type_name: str) -> Mapping[str, Any] | None:
@@ -964,7 +887,7 @@ def canonicalize_record(kind: str, type_name: str, properties: dict[str, Any]) -
     """Apply the type's declared canonicalizations in place, in their published order."""
     definition = _definition(kind, type_name)
     for rule_id in definition["canonicalize"] if definition is not None else ():
-        _CANONICALIZATIONS[rule_id][0](properties)
+        _CANONICALIZATIONS[rule_id](properties)
 
 
 def _published_rule(rule: str | list[str] | tuple[str, ...]) -> str | list[str]:
@@ -986,9 +909,9 @@ def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> No
             # spelling clients already receive, so routing this read changes no client-visible text.
             raise ExpectedValidationError(f"/properties/{field}: expected {_published_rule(rule)}")
     for rule_id in definition["checks"]:
-        entry = _CHECKS.get(rule_id)
-        if entry is not None:
-            entry[0](type_name, properties)
+        check = _CHECKS.get(rule_id)
+        if check is not None:
+            check(type_name, properties)
 
 
 def check_endpoint_values(
@@ -1003,9 +926,9 @@ def check_endpoint_values(
     if definition is None:
         raise ExpectedValidationError("unknown catalog type")
     for rule_id in definition["checks"]:
-        entry = _ENDPOINT_CHECKS.get(rule_id)
-        if entry is not None:
-            entry[0](relation_props, source, target)
+        check = _ENDPOINT_CHECKS.get(rule_id)
+        if check is not None:
+            check(relation_props, source, target)
 
 
 def _enum(kind: str, type_name: str, field: str) -> set[str]:

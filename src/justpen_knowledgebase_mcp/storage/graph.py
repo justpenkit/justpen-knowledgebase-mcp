@@ -15,7 +15,10 @@ from ..catalog import (
     catalog_schema,
     catalog_view,
     check_endpoint_values,
+    format_descriptions,
+    rule_descriptions,
     scope_order,
+    type_description,
     validate_record,
 )
 from ..cursors import CursorBinding
@@ -817,6 +820,7 @@ def graph_types(connection: apsw.Connection, token: OperationToken, request: Typ
     except ValueError as exc:
         raise InvalidParamsError("invalid cursor") from exc
     names = [request.type] if request.type is not None else sorted(definitions)
+    descriptions = rule_descriptions()
     items: list[Any] = []
     deferred = False
     for name in names[after : after + request.limit]:
@@ -832,13 +836,22 @@ def graph_types(connection: apsw.Connection, token: OperationToken, request: Typ
                 ).get
         else:
             deferred = True
+        definition = definitions[name]
+        rules = [*definition["checks"], *definition["canonicalize"]]
         items.append(
-            {"type": name, **definitions[name], "properties_schema": catalog_schema(request.kind, name), "count": count}
+            {
+                "type": name,
+                **definition,
+                "description": type_description(request.kind, name),
+                "check_descriptions": {rule_id: descriptions[rule_id] for rule_id in rules},
+                "properties_schema": catalog_schema(request.kind, name),
+                "count": count,
+            }
         )
     return {
         "types": items,
         "counts_deferred": deferred,
         "common": manifest["common"],
-        "formats": manifest["formats"],
+        "formats": format_descriptions(),
         "next_cursor": binding.encode(after + len(items)) if after + len(items) < len(names) else None,
     }

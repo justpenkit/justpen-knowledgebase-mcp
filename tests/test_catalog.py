@@ -125,7 +125,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "5e3c91707572953dae5b479ddf6a19d1c8b6c4bf87623b2a76993327d8c2337b"
+    assert CATALOG_FINGERPRINT == "b80e7d9ae0cef8d58bf6f6e48f641ca9781a8642c645399aa4c5e5827ff0ca17"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1280,7 +1280,7 @@ def test_golden_check_cases(rule_id: str, record: tuple[str, dict[str, object]],
     for field, rule in catalog_manifest()[kind][type_name]["required"].items():
         assert catalog_module._valid_field(properties[field], rule), f"{rule_id}: {field} fails its own rule"
     with pytest.raises(ExpectedValidationError):
-        catalog_module._CHECKS[rule_id][0](type_name, properties)
+        catalog_module._CHECKS[rule_id](type_name, properties)
 
 
 @pytest.mark.parametrize(
@@ -1332,7 +1332,7 @@ def test_golden_canonicalization_cases(
     kind = _kind(type_name)
     assert rule_id in catalog_manifest()[kind][type_name]["canonicalize"]
     properties = copy.deepcopy(before)
-    catalog_module._CANONICALIZATIONS[rule_id][0](properties)
+    catalog_module._CANONICALIZATIONS[rule_id](properties)
     assert properties == after
 
 
@@ -1370,19 +1370,21 @@ def test_the_builder_reproduces_the_published_contract() -> None:
 
 def test_renaming_or_versioning_a_rule_id_changes_the_contract() -> None:
     """Pre-mortem 1: the fingerprint covers ids and versions, so a rename or a bump moves it."""
-    run, prose = catalog_module._CHECKS["dns_name_kind.1"]
+    run = catalog_module._CHECKS["dns_name_kind.1"]
     checks = {key: value for key, value in catalog_module._CHECKS.items() if key != "dns_name_kind.1"}
     nodes = _with_rule(catalog_module._NODES, "domain", "checks", ["dns_name_kind.2"])
     nodes = _with_rule(nodes, "subdomain", "checks", ["dns_name_kind.2"])
 
-    assert _rebuilt(nodes=nodes, checks={**checks, "dns_name_kind.2": (run, prose)}) != catalog_module.CATALOG_JSON
+    assert _rebuilt(nodes=nodes, checks={**checks, "dns_name_kind.2": run}) != catalog_module.CATALOG_JSON
     canon = catalog_module._CANONICALIZATIONS
     moved = {**canon, "endpoint_url_drop_query.2": canon["endpoint_url_drop_query.1"]}
     del moved["endpoint_url_drop_query.1"]
     nodes = _with_rule(catalog_module._NODES, "endpoint", "canonicalize", ["endpoint_url_drop_query.2"])
     assert _rebuilt(nodes=nodes, canonicalizations=moved) != catalog_module.CATALOG_JSON
-    formats = {**catalog_module._FORMATS, "unused_rule": "An added format."}
+    formats = {**catalog_module._FORMATS, "unused_rule": 1}
     assert _rebuilt(formats=formats) != catalog_module.CATALOG_JSON
+    bumped = {**catalog_module._FORMATS, "http_url": 2}
+    assert _rebuilt(formats=bumped) != catalog_module.CATALOG_JSON
 
 
 @pytest.mark.parametrize(
@@ -1404,6 +1406,7 @@ def test_renaming_or_versioning_a_rule_id_changes_the_contract() -> None:
             {"checks": {**catalog_module._CHECKS, "orphan_rule.1": catalog_module._CHECKS["dns_name_kind.1"]}},
             "no type uses",
         ),
+        ({"formats": {**catalog_module._FORMATS, "http_url": 0}}, "positive integer behavior version"),
     ],
 )
 def test_the_builder_refuses_a_dangling_misplaced_or_unused_rule(changes: dict[str, object], message: str) -> None:
@@ -1418,7 +1421,7 @@ def test_relation_checks_run_inside_record_validation(monkeypatch: pytest.Monkey
     def record(type_name: str, _properties: dict[str, object]) -> None:
         seen.append(type_name)
 
-    monkeypatch.setitem(catalog_module._CHECKS, "probe_relation.1", (record, "probe"))
+    monkeypatch.setitem(catalog_module._CHECKS, "probe_relation.1", record)
     relations = _with_rule(catalog_module._RELATIONS, "resolves_to", "checks", ["probe_relation.1"])
     view = catalog_module._read_only(json.loads(_rebuilt(relations=relations)))
     monkeypatch.setattr(catalog_module, "_CATALOG_VIEW", view)
@@ -1432,3 +1435,49 @@ def test_every_rule_id_is_described() -> None:
     descriptions = catalog_module.rule_descriptions()
     assert set(descriptions) == _published_ids("checks") | _published_ids("canonicalize")
     assert all(descriptions.values())
+
+
+@pytest.mark.parametrize("kind", ["nodes", "relations"])
+def test_every_type_and_property_is_described(kind: str) -> None:
+    """AC-1: every type says what it models and what it does not, and every declared property,
+    format and rule has its own description."""
+    for type_name, definition in catalog_manifest()[kind].items():
+        docs = catalog_module.type_description(kind, type_name)
+        assert docs["summary"], type_name
+        assert docs["excludes"], type_name
+        assert set(docs["properties"]) == set(definition["required"]), type_name
+    assert set(catalog_module.format_descriptions()) == set(catalog_manifest()["formats"])
+    assert set(catalog_module.common_descriptions()) == set(catalog_manifest()["common"])
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    [
+        (("nodes", "domain", "summary"), "", "empty or longer"),
+        (("nodes", "domain", "notes"), "x" * 601, "empty or longer"),
+        (("formats", "http_url"), "x" * 601, "empty or longer"),
+        (("checks", "dns_name_kind.1"), None, "disagree with the contract"),
+        (("nodes", "domain", "properties", "value"), None, "exactly its declared properties"),
+        (("nodes", "domain", "owner"), "x", "summary and excludes"),
+    ],
+)
+def test_the_docs_contract_refuses_missing_stale_and_oversized_prose(
+    monkeypatch: pytest.MonkeyPatch, path: tuple[str, ...], value: str | None, message: str
+) -> None:
+    docs = copy.deepcopy(catalog_module._DOCS)
+    target = docs
+    for key in path[:-1]:
+        target = target[key]
+    if value is None:
+        del target[path[-1]]
+    else:
+        target[path[-1]] = value
+    monkeypatch.setattr(catalog_module, "_DOCS", docs)
+    with pytest.raises(RuntimeError, match=message):
+        catalog_module._ensure_docs_contract()
+
+
+def test_type_description_is_an_isolated_copy() -> None:
+    first = catalog_module.type_description("nodes", "domain")
+    first["properties"]["value"] = "changed"
+    assert catalog_module.type_description("nodes", "domain")["properties"]["value"] != "changed"

@@ -43,7 +43,7 @@ def register(mcp: FastMCP) -> None:
         limit: Annotated[int, Field(ge=1, le=100)] = 20,
         cursor: str | None = None,
     ) -> ToolResult:
-        """Discover permitted types, required properties, machine-readable identity objects (properties plus optional parent scope), schemas and ready-only counts. Keys are calculated by this MCP; agents cannot define types. Counts may be deferred; list success is not database health."""
+        """Discover permitted types, required properties, machine-readable identity objects (properties plus optional parent scope), schemas, check and canonicalization ids with their rules, a description of what each type models and excludes, and ready-only counts. Keys are calculated by this MCP; agents cannot define types. Counts may be deferred; list success is not database health."""
         return await invoke(ctx, "types", locals(), TypesRequest)
 
     @mcp.tool(
