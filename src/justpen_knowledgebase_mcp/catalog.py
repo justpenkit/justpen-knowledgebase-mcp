@@ -387,7 +387,7 @@ _NODES: dict[str, dict[str, Any]] = {
     "service": {
         "identity": _identity(["name"], scope=_SCOPE_SERVICE),
         "required": {"name": "service_name"},
-        "optional": {"product": "printable_text_200", "version": "tech_version"},
+        "optional": {"product": "printable_text_200", "version": "tech_version", "secure": "boolean"},
         "checks": ["service_secure_flag.1"],
     },
     "spf_record": {"identity": _identity(["value"]), "required": {"value": "spf"}},

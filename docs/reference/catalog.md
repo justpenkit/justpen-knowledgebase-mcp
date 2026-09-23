@@ -687,11 +687,12 @@ The application protocol a port speaks, scoped to that port through `has_service
 
 **Identity:** `name`<br>**Parent scope:** `has_service` (source)<br>**Checks:** `service_secure_flag.1`<br>**Canonicalizations:** —
 
-| Property  | Required | Rule                 | Meaning                                                     |
-| --------- | -------- | -------------------- | ----------------------------------------------------------- |
-| `name`    | yes      | `service_name`       | A member of the bundled Nmap-derived service-name registry. |
-| `product` | no       | `printable_text_200` | The product a version probe names, such as `OpenSSH`.       |
-| `version` | no       | `tech_version`       | The version a version probe reports.                        |
+| Property  | Required | Rule                 | Meaning                                                                            |
+| --------- | -------- | -------------------- | ---------------------------------------------------------------------------------- |
+| `name`    | yes      | `service_name`       | A member of the bundled Nmap-derived service-name registry.                        |
+| `product` | no       | `printable_text_200` | The product a version probe names, such as `OpenSSH`.                              |
+| `secure`  | no       | `boolean`            | Whether the service runs over TLS; required for a TLS-capable name such as `http`. |
+| `version` | no       | `tech_version`       | The version a version probe reports.                                               |
 
 ### `spf_record`
 

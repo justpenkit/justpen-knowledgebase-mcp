@@ -646,6 +646,7 @@ DOCS: dict[str, Any] = {
             "properties": {
                 "name": "A member of the bundled Nmap-derived service-name registry.",
                 "product": "The product a version probe names, such as `OpenSSH`.",
+                "secure": "Whether the service runs over TLS; required for a TLS-capable name such as `http`.",
                 "version": "The version a version probe reports.",
             },
         },

@@ -135,7 +135,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "145cbbf41be12607bfc28386e6871ba195acc3121759ecda7d5d9d408bfae1bf"
+    assert CATALOG_FINGERPRINT == "2283dea705af8778e7d861d842009406348e9d6ab12050b61dd424ecb4b57793"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -216,7 +216,6 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("service", {"name": "http", "secure": True}),
         ("service", {"name": "http", "secure": False}),
         ("service", {"name": "ssh"}),
-        ("service", {"name": "ssh", "secure": "observed"}),
         ("service", {"name": "unknown"}),
         ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "x", "severity": "info"}),
         ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "x" * 200, "severity": "critical"}),
@@ -447,6 +446,7 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("port", {"number": 443, "transport": "TCP"}),
         ("service", {"name": "http"}),
         ("service", {"name": "http", "secure": 1}),
+        ("service", {"name": "ssh", "secure": "observed"}),
         ("service", {"name": "X11"}),
         ("service", {"name": "ssl/http"}),
         ("service", {"name": "definitely-not-registered"}),

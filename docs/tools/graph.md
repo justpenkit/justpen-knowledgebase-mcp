@@ -63,7 +63,8 @@ invalid.
 Nmap-derived service-name registry; the server does not normalize an arbitrary
 Nmap label during `kb_write`. Names whose registry entry is TLS-capable, such as
 `http`, require a strict boolean `secure` property. For other service names,
-`secure` is an optional additional property.
+`secure` is optional, but it is a declared property and must be a boolean when
+present.
 
 Object patches merge recursively, arrays replace whole values, and `{}` leaves
 existing object children. Required identity cannot change. Explicit `null`
