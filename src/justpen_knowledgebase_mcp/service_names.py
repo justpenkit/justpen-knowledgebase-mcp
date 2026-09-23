@@ -1,5 +1,6 @@
 """Load and query the bundled service name registry."""
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -68,6 +69,18 @@ def _load_registry() -> _Registry:
         if secure:
             secure_required_names.add(name)
     return _Registry(frozenset(names), frozenset(secure_required_names))
+
+
+def registry_digest() -> str:
+    """Hash the parsed whitelist and its secure flags, not the file bytes."""
+    registry = _load_registry()
+    canonical = {
+        "names": sorted(registry.names),
+        "secure_required": sorted(registry.secure_required_names),
+        "version": REGISTRY_VERSION,
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("ascii")).hexdigest()
 
 
 def is_service_name(name: str) -> bool:

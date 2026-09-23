@@ -1,0 +1,167 @@
+{
+  "source": "leak_corpus",
+  "files": {
+    "leakcheck.json": "json"
+  },
+  "rows": [
+    {
+      "path": "success",
+      "sink": "non_storable",
+      "reason": "the API call's status, not a fact about the credential"
+    },
+    {
+      "path": "found",
+      "sink": "non_storable",
+      "reason": "the result count of this query"
+    },
+    {
+      "path": "quota",
+      "sink": "non_storable",
+      "reason": "the caller's remaining API quota"
+    },
+    {
+      "path": "result[].email",
+      "sink": {
+        "node": "email_address",
+        "property": "value"
+      },
+      "transform": [
+        "lower"
+      ]
+    },
+    {
+      "path": "result[].source.name",
+      "sink": {
+        "relation": "authenticates",
+        "property": "breach"
+      },
+      "transform": [
+        "leakcheck_breach_token"
+      ]
+    },
+    {
+      "path": "result[].source.name",
+      "sink": {
+        "relation": "authenticates",
+        "property": "breach_title"
+      }
+    },
+    {
+      "path": "result[].source.breach_date",
+      "sink": {
+        "relation": "authenticates",
+        "property": "breach_date"
+      },
+      "transform": [
+        "partial_date"
+      ]
+    },
+    {
+      "path": "result[].source.unverified",
+      "sink": "evidence"
+    },
+    {
+      "path": "result[].source.passwordless",
+      "sink": "evidence"
+    },
+    {
+      "path": "result[].source.compilation",
+      "sink": "evidence"
+    },
+    {
+      "path": "result[].username",
+      "sink": {
+        "relation": "authenticates",
+        "property": "username"
+      }
+    },
+    {
+      "path": "result[].password",
+      "sink": {
+        "node": "secret",
+        "property": "value_sha256"
+      },
+      "transform": [
+        "sha256_hex"
+      ],
+      "redact": true
+    },
+    {
+      "path": "result[].hashed_password",
+      "sink": {
+        "node": "secret",
+        "property": "value_sha256"
+      },
+      "transform": [
+        "sha256_hex"
+      ],
+      "redact": true
+    },
+    {
+      "path": "result[].first_name",
+      "sink": "non_storable",
+      "reason": "a person's name: personal PII"
+    },
+    {
+      "path": "result[].last_name",
+      "sink": "non_storable",
+      "reason": "a person's name: personal PII"
+    },
+    {
+      "path": "result[].name",
+      "sink": "non_storable",
+      "reason": "a person's name: personal PII"
+    },
+    {
+      "path": "result[].dob",
+      "sink": "non_storable",
+      "reason": "a date of birth: personal PII"
+    },
+    {
+      "path": "result[].address",
+      "sink": "non_storable",
+      "reason": "a postal address: personal PII"
+    },
+    {
+      "path": "result[].zip",
+      "sink": "non_storable",
+      "reason": "part of a postal address: personal PII"
+    },
+    {
+      "path": "result[].phone",
+      "sink": "non_storable",
+      "reason": "a personal phone number: personal PII"
+    },
+    {
+      "path": "result[].fields",
+      "sink": "evidence"
+    },
+    {
+      "path": "result[].collected",
+      "sink": "evidence",
+      "documented_only": true
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "secret",
+        "property": "kind"
+      },
+      "values": [
+        "password",
+        "password_hash"
+      ],
+      "reason": "the field name fixes the kind: `password` is plaintext, `hashed_password` a published hash"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "leakcheck"
+      ],
+      "reason": "the corpus the result came from"
+    }
+  ]
+}

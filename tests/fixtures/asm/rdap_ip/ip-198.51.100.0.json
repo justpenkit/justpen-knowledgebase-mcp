@@ -1,0 +1,247 @@
+{
+  "rdapConformance": [
+    "nro_rdap_profile_0",
+    "rdap_level_0",
+    "cidr0"
+  ],
+  "notices": [
+    {
+      "title": "Terms of Service",
+      "description": [
+        "By using the ARIN RDAP/Whois service, you are agreeing to the RDAP/Whois Terms of Use"
+      ],
+      "links": [
+        {
+          "href": "https://www.arin.net/resources/registry/whois/tou/",
+          "rel": "terms-of-service",
+          "type": "text/html",
+          "value": "https://rdap.arin.net/registry/ip/198.51.100.0"
+        }
+      ]
+    }
+  ],
+  "objectClassName": "ip network",
+  "handle": "NET-198-51-100-0-1",
+  "startAddress": "198.51.100.0",
+  "endAddress": "198.51.100.255",
+  "ipVersion": "v4",
+  "name": "EXAMPLE-NET-1",
+  "type": "DIRECT ALLOCATION",
+  "country": "US",
+  "parentHandle": "NET-198-0-0-0-0",
+  "cidr0_cidrs": [
+    {
+      "v4prefix": "198.51.100.0",
+      "length": 24
+    }
+  ],
+  "status": [
+    "active"
+  ],
+  "port43": "whois.arin.net",
+  "events": [
+    {
+      "eventAction": "registration",
+      "eventDate": "2009-06-29T12:15:30-04:00"
+    },
+    {
+      "eventAction": "last changed",
+      "eventDate": "2024-05-24T10:19:53-04:00"
+    }
+  ],
+  "links": [
+    {
+      "href": "https://rdap.arin.net/registry/ip/198.51.100.0",
+      "rel": "self",
+      "type": "application/rdap+json",
+      "value": "https://rdap.arin.net/registry/ip/198.51.100.0"
+    },
+    {
+      "href": "https://whois.arin.net/rest/net/NET-198-51-100-0-1",
+      "rel": "alternate",
+      "type": "application/xml",
+      "value": "https://rdap.arin.net/registry/ip/198.51.100.0"
+    }
+  ],
+  "remarks": [
+    {
+      "title": "Registration Comments",
+      "description": [
+        "Addresses in this network are used for documentation."
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "objectClassName": "entity",
+      "handle": "EXNET-1",
+      "roles": [
+        "registrant"
+      ],
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Example Networks"
+          ],
+          [
+            "adr",
+            {
+              "label": "100 Example Street\nAnytown\nCA\n90210\nUnited States"
+            },
+            "text",
+            [
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              ""
+            ]
+          ],
+          [
+            "kind",
+            {},
+            "text",
+            "org"
+          ]
+        ]
+      ],
+      "port43": "whois.arin.net",
+      "events": [
+        {
+          "eventAction": "last changed",
+          "eventDate": "2024-05-24T10:19:53-04:00"
+        }
+      ],
+      "links": [
+        {
+          "href": "https://rdap.arin.net/registry/entity/EXNET-1",
+          "rel": "self",
+          "type": "application/rdap+json",
+          "value": "https://rdap.arin.net/registry/ip/198.51.100.0"
+        },
+        {
+          "href": "https://whois.arin.net/rest/org/EXNET-1",
+          "rel": "alternate",
+          "type": "application/xml",
+          "value": "https://rdap.arin.net/registry/ip/198.51.100.0"
+        }
+      ],
+      "entities": [
+        {
+          "objectClassName": "entity",
+          "handle": "EXNOC-ARIN",
+          "roles": [
+            "technical",
+            "abuse"
+          ],
+          "vcardArray": [
+            "vcard",
+            [
+              [
+                "version",
+                {},
+                "text",
+                "4.0"
+              ],
+              [
+                "adr",
+                {
+                  "label": "100 Example Street\nAnytown\nCA\n90210\nUnited States"
+                },
+                "text",
+                [
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "",
+                  ""
+                ]
+              ],
+              [
+                "fn",
+                {},
+                "text",
+                "Example Network Operations"
+              ],
+              [
+                "org",
+                {},
+                "text",
+                "Example Networks"
+              ],
+              [
+                "kind",
+                {},
+                "text",
+                "group"
+              ],
+              [
+                "email",
+                {},
+                "text",
+                "noc@example.net"
+              ],
+              [
+                "tel",
+                {
+                  "type": [
+                    "work",
+                    "voice"
+                  ]
+                },
+                "text",
+                "+1-703-555-0100"
+              ]
+            ]
+          ],
+          "port43": "whois.arin.net",
+          "status": [
+            "validated"
+          ],
+          "events": [
+            {
+              "eventAction": "last changed",
+              "eventDate": "2024-01-10T08:00:00-05:00"
+            }
+          ],
+          "links": [
+            {
+              "href": "https://rdap.arin.net/registry/entity/EXNOC-ARIN",
+              "rel": "self",
+              "type": "application/rdap+json",
+              "value": "https://rdap.arin.net/registry/ip/198.51.100.0"
+            },
+            {
+              "href": "https://whois.arin.net/rest/poc/EXNOC-ARIN",
+              "rel": "alternate",
+              "type": "application/xml",
+              "value": "https://rdap.arin.net/registry/ip/198.51.100.0"
+            }
+          ],
+          "remarks": [
+            {
+              "title": "Registration Comments",
+              "description": [
+                "Report abuse to noc@example.net."
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,395 @@
+{
+  "source": "nmap",
+  "files": {
+    "scan.xml": "xml"
+  },
+  "rows": [
+    {
+      "path": "nmaprun.@scanner",
+      "sink": "evidence",
+      "reason": "the scanner name, a constant"
+    },
+    {
+      "path": "nmaprun.@args",
+      "sink": "evidence",
+      "reason": "the recorded command line; SOURCE.md restates it"
+    },
+    {
+      "path": "nmaprun.@start",
+      "sink": "evidence",
+      "reason": "scan start; the host's endtime is the observation time"
+    },
+    {
+      "path": "nmaprun.@startstr",
+      "sink": "evidence",
+      "reason": "scan start in local text form"
+    },
+    {
+      "path": "nmaprun.@version",
+      "sink": "evidence",
+      "reason": "the nmap version; SOURCE.md restates it"
+    },
+    {
+      "path": "nmaprun.@xmloutputversion",
+      "sink": "evidence",
+      "reason": "the XML format version"
+    },
+    {
+      "path": "nmaprun.scaninfo[].@type",
+      "sink": "evidence",
+      "reason": "scan technique, scanner configuration"
+    },
+    {
+      "path": "nmaprun.scaninfo[].@protocol",
+      "sink": "evidence",
+      "reason": "scan protocol, scanner configuration"
+    },
+    {
+      "path": "nmaprun.scaninfo[].@numservices",
+      "sink": "evidence",
+      "reason": "how many ports were probed, scanner configuration"
+    },
+    {
+      "path": "nmaprun.scaninfo[].@services",
+      "sink": "evidence",
+      "reason": "the probed port list, scanner configuration"
+    },
+    {
+      "path": "nmaprun.verbose[].@level",
+      "sink": "evidence",
+      "reason": "scanner configuration"
+    },
+    {
+      "path": "nmaprun.debugging[].@level",
+      "sink": "evidence",
+      "reason": "scanner configuration"
+    },
+    {
+      "path": "nmaprun.host[].@starttime",
+      "sink": "evidence",
+      "reason": "host scan start; the endtime is the observation time"
+    },
+    {
+      "path": "nmaprun.host[].@endtime",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "epoch_utc"
+      ]
+    },
+    {
+      "path": "nmaprun.host[].status[].@state",
+      "sink": "non_storable",
+      "reason": "only hosts that are up carry open ports to write"
+    },
+    {
+      "path": "nmaprun.host[].status[].@reason",
+      "sink": "non_storable",
+      "reason": "scanner-internal"
+    },
+    {
+      "path": "nmaprun.host[].status[].@reason_ttl",
+      "sink": "non_storable",
+      "reason": "scanner-internal"
+    },
+    {
+      "path": "nmaprun.host[].address[].@addr",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      }
+    },
+    {
+      "path": "nmaprun.host[].address[].@addr",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "nmaprun.host[].address[].@addrtype",
+      "sink": "non_storable",
+      "reason": "restates the address family that version reads off the address"
+    },
+    {
+      "path": "nmaprun.host[].address[].@vendor",
+      "sink": "non_storable",
+      "documented_only": true,
+      "reason": "MAC vendor, present only for a mac address on a local segment"
+    },
+    {
+      "path": "nmaprun.host[].hostnames[].hostname[].@name",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_subdomain"
+      ]
+    },
+    {
+      "path": "nmaprun.host[].hostnames[].hostname[].@name",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_domain"
+      ]
+    },
+    {
+      "path": "nmaprun.host[].hostnames[].hostname[].@type",
+      "sink": "evidence",
+      "reason": "user (the target name) selects resolves_to, PTR selects reverse_resolves_to"
+    },
+    {
+      "path": "nmaprun.host[].ports[].extraports[].@state",
+      "sink": "non_storable",
+      "documented_only": true,
+      "reason": "ports that are not open are not written"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].@protocol",
+      "sink": {
+        "node": "port",
+        "property": "transport"
+      }
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].@portid",
+      "sink": {
+        "node": "port",
+        "property": "number"
+      },
+      "transform": [
+        "int_value"
+      ]
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].state[].@state",
+      "sink": "non_storable",
+      "reason": "only open ports are written (--open), and the has_open_port edge is the state"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].state[].@reason",
+      "sink": "non_storable",
+      "reason": "scanner-internal"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].state[].@reason_ttl",
+      "sink": "non_storable",
+      "reason": "scanner-internal"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@name",
+      "sink": {
+        "node": "service",
+        "property": "name"
+      }
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@product",
+      "sink": {
+        "node": "service",
+        "property": "product"
+      }
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@product",
+      "sink": {
+        "node": "technology",
+        "property": "name"
+      },
+      "transform": [
+        "detector_token"
+      ]
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@version",
+      "sink": {
+        "node": "service",
+        "property": "version"
+      }
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@version",
+      "sink": {
+        "relation": "runs_technology",
+        "property": "version"
+      }
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@extrainfo",
+      "sink": "non_storable",
+      "reason": "free-form nmap detail; kept in evidence"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@tunnel",
+      "sink": {
+        "node": "service",
+        "property": "secure"
+      },
+      "transform": [
+        "nmap_tunnel_secure"
+      ]
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@method",
+      "sink": "non_storable",
+      "reason": "scanner-internal: table lookup or probe"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@conf",
+      "sink": "non_storable",
+      "reason": "scanner-internal detection confidence"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@ostype",
+      "sink": "evidence",
+      "documented_only": true,
+      "reason": "OS family from a service banner; no catalog home"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@hostname",
+      "sink": "evidence",
+      "documented_only": true,
+      "reason": "a name the banner reports, unverified"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@devicetype",
+      "sink": "evidence",
+      "documented_only": true,
+      "reason": "device class from a banner; no catalog home"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].@servicefp",
+      "sink": "evidence",
+      "documented_only": true,
+      "reason": "submission fingerprint of an unmatched service"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].cpe[].#text",
+      "sink": {
+        "node": "technology",
+        "property": "cpe"
+      },
+      "transform": [
+        "cpe22_uri_to_cpe23",
+        "cpe_product_level"
+      ]
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].service[].cpe[].#text",
+      "sink": {
+        "relation": "runs_technology",
+        "property": "cpe"
+      },
+      "transform": [
+        "cpe22_uri_to_cpe23"
+      ]
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].script[].@id",
+      "sink": "evidence",
+      "reason": "names the script; this mapping reads ssh-hostkey"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].script[].@output",
+      "sink": {
+        "node": "host_key",
+        "property": "fingerprint_sha256"
+      },
+      "transform": [
+        "nmap_ssh_hostkey_sha256",
+        "openssh_b64_to_hex"
+      ]
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].script[].table[].elem[].@key",
+      "sink": "evidence",
+      "reason": "names which element the text is"
+    },
+    {
+      "path": "nmaprun.host[].ports[].port[].script[].table[].elem[].#text",
+      "sink": {
+        "node": "host_key",
+        "property": "algorithm"
+      },
+      "transform": [
+        "ssh_host_key_algorithm"
+      ]
+    },
+    {
+      "path": "nmaprun.host[].times[].@srtt",
+      "sink": "non_storable",
+      "reason": "round-trip timing, volatile"
+    },
+    {
+      "path": "nmaprun.host[].times[].@rttvar",
+      "sink": "non_storable",
+      "reason": "round-trip timing, volatile"
+    },
+    {
+      "path": "nmaprun.host[].times[].@to",
+      "sink": "non_storable",
+      "reason": "probe timeout, scanner-internal"
+    },
+    {
+      "path": "nmaprun.runstats[].finished[].@time",
+      "sink": "evidence",
+      "reason": "scan end, run bookkeeping"
+    },
+    {
+      "path": "nmaprun.runstats[].finished[].@timestr",
+      "sink": "evidence",
+      "reason": "scan end in local text form"
+    },
+    {
+      "path": "nmaprun.runstats[].finished[].@summary",
+      "sink": "evidence",
+      "reason": "run summary text"
+    },
+    {
+      "path": "nmaprun.runstats[].finished[].@elapsed",
+      "sink": "non_storable",
+      "reason": "volatile run metric"
+    },
+    {
+      "path": "nmaprun.runstats[].finished[].@exit",
+      "sink": "evidence",
+      "reason": "run status"
+    },
+    {
+      "path": "nmaprun.runstats[].hosts[].@up",
+      "sink": "evidence",
+      "reason": "run statistics"
+    },
+    {
+      "path": "nmaprun.runstats[].hosts[].@down",
+      "sink": "evidence",
+      "reason": "run statistics"
+    },
+    {
+      "path": "nmaprun.runstats[].hosts[].@total",
+      "sink": "evidence",
+      "reason": "run statistics"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "nmap"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

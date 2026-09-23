@@ -1,0 +1,78 @@
+{
+  "source": "mta_sts",
+  "files": {
+    "mta-sts.txt": "kv_text"
+  },
+  "rows": [
+    {
+      "path": "version",
+      "sink": "non_storable",
+      "reason": "STSv1 is the only policy version, and the TXT value already carries it"
+    },
+    {
+      "path": "mode",
+      "sink": {
+        "node": "mta_sts_policy",
+        "property": "mode"
+      }
+    },
+    {
+      "path": "max_age",
+      "sink": {
+        "node": "mta_sts_policy",
+        "property": "max_age"
+      },
+      "transform": [
+        "int_value"
+      ]
+    },
+    {
+      "path": "mx",
+      "sink": {
+        "node": "mta_sts_policy",
+        "property": "mx"
+      },
+      "transform": [
+        "mta_sts_mx_lines",
+        "sorted_set"
+      ]
+    },
+    {
+      "path": "*",
+      "sink": "evidence",
+      "documented_only": true,
+      "reason": "an RFC 8461 sts-policy-extension field; none is defined, so it stays in evidence"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "values": [
+        "example.com"
+      ],
+      "reason": "the policy is fetched from https://mta-sts.example.com/.well-known/mta-sts.txt (SOURCE.md); the policy domain is that host without its mta-sts label, and the file body never names it"
+    },
+    {
+      "sink": {
+        "node": "mta_sts_policy",
+        "property": "value"
+      },
+      "values": [
+        "v=STSv1; id=20260901T000000;"
+      ],
+      "reason": "the policy node's identity is the TXT record at _mta-sts.example.com that announced the policy (queried alongside the fetch, SOURCE.md); the policy file body does not carry it"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "mta_sts"
+      ],
+      "reason": "the source that produced the output"
+    }
+  ]
+}

@@ -1,27 +1,34 @@
-"""Catalog v2 manifest, schema, and strict validator contracts."""
+"""Catalog v3 manifest, schema, and strict validator contracts."""
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
 import justpen_knowledgebase_mcp.catalog as catalog_module
+from justpen_knowledgebase_mcp import psl, service_names
 from justpen_knowledgebase_mcp.catalog import (
     CATALOG_FINGERPRINT,
     CATALOG_VERSION,
+    EndpointView,
     catalog_manifest,
     catalog_schema,
     catalog_view,
+    check_endpoint_values,
     validate_record,
 )
 from justpen_knowledgebase_mcp.errors import ExpectedValidationError
 from justpen_knowledgebase_mcp.identity import identity_key
 
+from . import catalog_golden as golden
+
 CPE_NGINX = "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*"
+CPE_NGINX_PRODUCT = "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*"
 
 NODE_TYPES = {
     "domain",
@@ -55,6 +62,9 @@ NODE_TYPES = {
     "repository",
     "secret",
     "storage_bucket",
+    "whois_registration",
+    "cloud_account",
+    "cloud_resource",
 }
 RELATION_TYPES = {
     "resolves_to",
@@ -101,6 +111,11 @@ RELATION_TYPES = {
     "has_mta_sts_policy",
     "owns_repository",
     "presents_host_key",
+    "has_registration",
+    "hosted_on",
+    "in_account",
+    "authenticates",
+    "links_to",
 }
 
 
@@ -113,14 +128,14 @@ def _invalid(kind: str, type_name: str, properties: dict[str, object]) -> None:
         validate_record(kind, type_name, properties)
 
 
-def test_manifest_has_only_catalog_v2_types_and_stable_fingerprint() -> None:
+def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     manifest = catalog_manifest()
 
-    assert CATALOG_VERSION == 2
-    assert manifest["version"] == 2
+    assert CATALOG_VERSION == 3
+    assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "d25e5c37a1e363eccfcadbd7919aac85b017b730380badd765fd3c1a9252c7c9"
+    assert CATALOG_FINGERPRINT == "b13948852d5624c5b7c4e51fe33a0216473ca8b68e8356fcb97982f0acad513a"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -165,7 +180,7 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         "scope": {"relation": "has_service", "endpoint": "source"},
     }
     assert manifest["nodes"]["finding"]["identity"] == {
-        "properties": ["title"],
+        "properties": ["rule", "matcher"],
         "scope": {"relation": "has_finding", "endpoint": "source"},
     }
     assert manifest["nodes"]["mta_sts_policy"]["identity"] == {
@@ -190,30 +205,41 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("ip_address", {"value": "2001:db8::1", "version": 6}),
         ("ip_cidr", {"value": "0.0.0.0/0", "version": 4}),
         ("ip_cidr", {"value": "2001:db8::/128", "version": 6}),
-        ("asn", {"value": 0}),
         ("asn", {"value": 4294967295}),
+        ("asn", {"value": 15169, "name": "GOOGLE", "country": "US", "rir": "arin"}),
+        ("ip_cidr", {"value": "8.8.8.0/24", "version": 4, "netname": "GOGL", "country": "US", "rir": "arin"}),
+        ("organization", {"registry": "arin", "handle": "GOGL", "name": "Google LLC"}),
         ("spf_record", {"value": "v=spf1"}),
         ("spf_record", {"value": "v=spf1  include:example.com -all"}),
-        ("port", {"number": 0, "transport": "tcp"}),
+        ("spf_record", {"value": "v=spf1 " + "a" * 4089}),
         ("port", {"number": 65535, "transport": "sctp"}),
         ("service", {"name": "http", "secure": True}),
         ("service", {"name": "http", "secure": False}),
         ("service", {"name": "ssh"}),
-        ("service", {"name": "ssh", "secure": "observed"}),
         ("service", {"name": "unknown"}),
-        ("finding", {"title": "x", "severity": "info"}),
-        ("finding", {"title": "x" * 200, "severity": "critical"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "x", "severity": "info"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "x" * 200, "severity": "critical"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "x", "severity": "unknown"}),
+        (
+            "finding",
+            {"rule": "nuclei:expired-ssl", "matcher": "my_host.example.com:expired", "title": "x", "severity": "low"},
+        ),
+        ("finding", {"rule": "bbot:badsecrets", "matcher": "0123456789abcdef", "title": "x", "severity": "high"}),
         ("certificate", {"der_sha256": "a" * 64}),
         ("endpoint", {"url": "https://api.example.com/a%2Fb?q=X", "method": "PROPFIND"}),
         ("endpoint", {"url": "https://example.com/?", "method": "GET"}),
         ("endpoint", {"url": "https://[2001:db8::1]:8443/", "method": "GET"}),
         ("endpoint", {"url": "http://x/", "method": "M" * 32}),
+        ("endpoint", {"url": "https://www.example.com/my-page/bootstrap-5.3.0.min.css?cache-bust=1", "method": "GET"}),
+        ("endpoint", {"url": "https://my_service.example.com/", "method": "GET"}),
+        ("endpoint", {"url": "https://_acme.dev_env.example.com:8443/a", "method": "GET"}),
         ("cve", {"value": "CVE-2026-1234"}),
         ("cve", {"value": "CVE-1999-1234567"}),
         ("technology", {"name": "nginx"}),
         ("technology", {"name": "a"}),
         ("technology", {"name": "a" * 63}),
-        ("technology", {"name": "php_7.4+x", "cpe": CPE_NGINX, "categories": ["web-server"]}),
+        ("technology", {"name": "php_7.4+x", "cpe": CPE_NGINX_PRODUCT, "categories": ["web-server"]}),
+        ("technology", {"name": "nginx", "cpe": "cpe:2.3:a:f5:nginx:-:*:*:*:*:*:*:*"}),
         ("dmarc_record", {"value": "v=DMARC1"}),
         ("dmarc_record", {"value": "v=DMARC1; p=reject; rua=mailto:dmarc@example.com"}),
         ("dmarc_record", {"value": "v=DMARC1 p=none"}),
@@ -252,6 +278,62 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("cwe", {"value": "CWE-1"}),
         ("cwe", {"value": "CWE-999999"}),
         ("cwe", {"value": "CWE-89", "name": "SQL Injection"}),
+        (
+            "cve",
+            {
+                "value": "CVE-2021-44228",
+                "cvss_score": 10,
+                "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+                "epss_score": 0.97556,
+                "epss_percentile": 1,
+                "kev_added": "2021-12-10",
+                "published": "2021-12-10T10:15:09.143Z",
+            },
+        ),
+        ("subdomain", {"value": "random.example.com", "wildcard": True, "wildcard_answer": False}),
+        ("ip_address", {"value": "104.16.0.1", "version": 4, "cdn_provider": "cloudflare", "cloud_provider": "aws"}),
+        (
+            "certificate",
+            {
+                "der_sha256": "b" * 64,
+                "subject_cn": "*.example.com",
+                "issuer_dn": "CN=R3,O=Let's Encrypt,C=US",
+                "not_before": "2026-01-01T00:00:00Z",
+                "not_after": "2026-04-01T00:00:00Z",
+                "serial": "3a2f",
+            },
+        ),
+        ("service", {"name": "ssh", "product": "OpenSSH", "version": "8.9p1"}),
+        (
+            "repository",
+            {
+                "platform": "github",
+                "host": "github.com",
+                "owner": "example-org",
+                "name": "web",
+                "default_branch": "main",
+                "visibility": "public",
+                "archived": False,
+                "fork": True,
+            },
+        ),
+        (
+            "endpoint",
+            {
+                "url": "https://example.com/",
+                "method": "GET",
+                "status": 200,
+                "title": "Example Domain",
+                "content_length": 1256,
+                "content_type": "text/html",
+                "webserver": "ECS (dcb/7F83)",
+            },
+        ),
+        ("certificate", {"der_sha256": "a" * 64, "self_signed": True}),
+        (
+            "mta_sts_policy",
+            {"value": "v=STSv1; id=1", "mode": "enforce", "max_age": 604800, "mx": ["*.example.net", "mx.example.com"]},
+        ),
         ("organization", {"registry": "arin", "handle": "ORG-GOGL-1-ARIN"}),
         ("organization", {"registry": "ripe", "handle": "ORG-GC128-RIPE"}),
         ("organization", {"registry": "apnic", "handle": "A1"}),
@@ -291,6 +373,11 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("repository", {"platform": "github", "host": "github.com", "owner": "a" * 39, "name": "n" * 100}),
         ("secret", {"value_sha256": "a" * 64}),
         ("secret", {"value_sha256": "f" * 64, "verified": True, "detector": "aws"}),
+        (
+            "secret",
+            {"value_sha256": "f" * 64, "kind": "api_key", "key_id": "AKIAIOSFODNN7EXAMPLE", "detector": "aws"},
+        ),
+        ("secret", {"value_sha256": "f" * 64, "kind": "password_hash", "context": {"file": "dump.sql"}}),
         ("storage_bucket", {"provider": "aws_s3", "name": "example-assets"}),
         ("storage_bucket", {"provider": "aws_s3", "name": "a" * 63}),
         ("storage_bucket", {"provider": "gcp_gcs", "name": "example.appspot.com"}),
@@ -329,21 +416,30 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("ip_address", {"value": "192.168.001.1", "version": 4}),
         ("ip_address", {"value": "192.0.2.1", "version": True}),
         ("ip_address", {"value": "192.0.2.1", "version": "4"}),
+        ("ip_address", {"value": "::ffff:192.0.2.1", "version": 6}),
+        ("ip_address", {"value": "::ffff:c000:201", "version": 6}),
         ("ip_cidr", {"value": "192.0.2.1/24", "version": 4}),
         ("ip_cidr", {"value": "192.0.2.0", "version": 4}),
         ("ip_cidr", {"value": "192.0.2.0/255.255.255.0", "version": 4}),
         ("ip_cidr", {"value": "2001:DB8::/32", "version": 6}),
         ("ip_cidr", {"value": "192.0.2.0/24", "version": 6}),
         ("ip_cidr", {"value": "192.0.2.0/24", "version": False}),
+        ("asn", {"value": 0}),
         ("asn", {"value": -1}),
         ("asn", {"value": 4294967296}),
         ("asn", {"value": True}),
         ("asn", {"value": "64512"}),
+        ("asn", {"value": 15169, "country": "us"}),
+        ("asn", {"value": 15169, "rir": "RIPE"}),
+        ("ip_cidr", {"value": "8.8.8.0/24", "version": 4, "netname": ""}),
+        ("organization", {"registry": "arin", "handle": "GOGL", "name": None}),
         ("spf_record", {"value": "v=spf10"}),
         ("spf_record", {"value": " v=spf1"}),
         ("spf_record", {"value": "v=spf1\t-all"}),
         ("spf_record", {"value": "v=spf1\n-all"}),
         ("spf_record", {"value": "v=spf1 é"}),
+        ("spf_record", {"value": "v=spf1 " + "a" * 4090}),
+        ("port", {"number": 0, "transport": "tcp"}),
         ("port", {"number": -1, "transport": "tcp"}),
         ("port", {"number": 65536, "transport": "tcp"}),
         ("port", {"number": True, "transport": "tcp"}),
@@ -351,14 +447,22 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("port", {"number": 443, "transport": "TCP"}),
         ("service", {"name": "http"}),
         ("service", {"name": "http", "secure": 1}),
+        ("service", {"name": "ssh", "secure": "observed"}),
         ("service", {"name": "X11"}),
         ("service", {"name": "ssl/http"}),
         ("service", {"name": "definitely-not-registered"}),
-        ("finding", {"title": "", "severity": "low"}),
-        ("finding", {"title": "x" * 201, "severity": "low"}),
-        ("finding", {"title": "line\nbreak", "severity": "low"}),
-        ("finding", {"title": 1, "severity": "low"}),
-        ("finding", {"title": "title", "severity": "unknown"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "", "severity": "low"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "x" * 201, "severity": "low"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "line\nbreak", "severity": "low"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": 1, "severity": "low"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "title", "severity": "Unknown"}),
+        ("finding", {"title": "t", "severity": "low"}),
+        ("finding", {"rule": "nuclei:x", "title": "t", "severity": "low"}),
+        ("finding", {"rule": "Nuclei:x", "matcher": "", "title": "t", "severity": "low"}),
+        ("finding", {"rule": "nuclei", "matcher": "", "title": "t", "severity": "low"}),
+        ("finding", {"rule": "nuclei:a b", "matcher": "", "title": "t", "severity": "low"}),
+        ("finding", {"rule": "nuclei:x", "matcher": "a b", "title": "t", "severity": "low"}),
+        ("finding", {"rule": "nuclei:x", "matcher": "m" * 401, "title": "t", "severity": "low"}),
         ("certificate", {"der_sha256": "A" * 64}),
         ("certificate", {"der_sha256": "a" * 63}),
         ("endpoint", {"url": "HTTPS://example.com/", "method": "GET"}),
@@ -373,8 +477,16 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("endpoint", {"url": "https://example.com/\\a", "method": "GET"}),
         ("endpoint", {"url": "https://example.com/%GG", "method": "GET"}),
         ("endpoint", {"url": "https://192.168.001.1/", "method": "GET"}),
+        ("endpoint", {"url": "https://[::ffff:192.0.2.1]/", "method": "GET"}),
+        ("endpoint", {"url": "https://my_example.com/", "method": "GET"}),
+        ("endpoint", {"url": "https://_.example.com/", "method": "GET"}),
+        ("endpoint", {"url": "https://api.Example.com/", "method": "GET"}),
         ("endpoint", {"url": "https://example.com/", "method": "get"}),
         ("endpoint", {"url": "https://example.com/", "method": "M" * 33}),
+        ("endpoint", {"url": "https://example.com/search?a b<>", "method": "GET"}),
+        ("endpoint", {"url": "https://example.com/search?q=%zz", "method": "GET"}),
+        ("endpoint", {"url": "https://example.com/search?q=\u00e9", "method": "GET"}),
+        ("endpoint", {"url": "https://example.com?q=1", "method": "GET"}),
         ("cve", {"value": "cve-2026-1234"}),
         ("cve", {"value": "CVE-26-1234"}),
         ("cve", {"value": "CVE-2026-123"}),
@@ -387,6 +499,9 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("technology", {"name": "a" * 64}),
         ("technology", {"name": "ngin x"}),
         ("technology", {"name": 1}),
+        ("technology", {"name": "nginx", "cpe": CPE_NGINX}),
+        ("technology", {"name": "nginx", "cpe": ""}),
+        ("technology", {"name": "nginx", "cpe": "cpe:/a:f5:nginx"}),
         ("dmarc_record", {"value": "v=DMARC10"}),
         ("dmarc_record", {"value": "V=DMARC1; p=none"}),
         ("dmarc_record", {"value": "v=dmarc1; p=none"}),
@@ -452,6 +567,23 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("cwe", {"value": "CWE-1234567"}),
         ("cwe", {"value": "79"}),
         ("cwe", {"value": 79}),
+        ("cwe", {"value": "CWE-79", "name": ""}),
+        ("cve", {"value": "CVE-2021-44228", "cvss_score": 9.85}),
+        ("cve", {"value": "CVE-2021-44228", "epss_score": "0.97"}),
+        ("cve", {"value": "CVE-2021-44228", "kev_added": "2021-12-10T00:00:00Z"}),
+        ("cve", {"value": "CVE-2021-44228", "published": "2021-12-10T10:15:09.143"}),
+        ("domain", {"value": "example.com", "wildcard": "yes"}),
+        ("ip_address", {"value": "104.16.0.1", "version": 4, "cdn_provider": "Cloudflare"}),
+        ("certificate", {"der_sha256": "b" * 64, "serial": "3A:2F"}),
+        ("repository", {"platform": "github", "host": "github.com", "owner": "o", "name": "n", "visibility": "Public"}),
+        ("endpoint", {"url": "https://example.com/", "method": "GET", "status": "200"}),
+        ("endpoint", {"url": "https://example.com/", "method": "GET", "status": 99}),
+        ("endpoint", {"url": "https://example.com/", "method": "GET", "content_type": "text/html; charset=utf-8"}),
+        ("endpoint", {"url": "https://example.com/", "method": "GET", "content_length": -1}),
+        ("endpoint", {"url": "https://example.com/", "method": "GET", "title": None}),
+        ("certificate", {"der_sha256": "a" * 64, "self_signed": "yes"}),
+        ("mta_sts_policy", {"value": "v=STSv1; id=1", "mode": "Enforce"}),
+        ("mta_sts_policy", {"value": "v=STSv1; id=1", "mx": ["mx2.example.com", "mx1.example.com"]}),
         ("organization", {"registry": "ARIN", "handle": "ORG-GOGL-1-ARIN"}),
         ("organization", {"registry": "iana", "handle": "ORG-1"}),
         ("organization", {"registry": "arin", "handle": "ORG-"}),
@@ -523,6 +655,14 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("secret", {}),
         ("secret", {"value_sha256": "a" * 64, "value": "hunter2"}),
         ("secret", {"value_sha256": "a" * 64, "password": "hunter2"}),
+        ("secret", {"value_sha256": "a" * 64, "Raw": "hunter2"}),
+        ("secret", {"value_sha256": "a" * 64, "RAWV2": "hunter2"}),
+        ("secret", {"value_sha256": "a" * 64, "Redacted": "hun***"}),
+        ("secret", {"value_sha256": "a" * 64, "context": {"Secret": "hunter2"}}),
+        ("secret", {"value_sha256": "a" * 64, "findings": [{"file": "a"}, {"Line": "pw=hunter2"}]}),
+        ("secret", {"value_sha256": "a" * 64, "kind": "ssh_key"}),
+        ("secret", {"value_sha256": "a" * 64, "key_id": "AKIA IOSFODNN7EXAMPLE"}),
+        ("secret", {"value_sha256": "a" * 64, "verified": "true"}),
         ("storage_bucket", {"provider": "azure_blob", "name": "example-storage"}),
         ("storage_bucket", {"provider": "azure_blob", "name": "a" * 25}),
         ("storage_bucket", {"provider": "aws_s3", "name": "a" * 64}),
@@ -686,9 +826,15 @@ def test_relation_endpoint_matrices_are_exact() -> None:
                 "identity_tenant",
                 "secret",
                 "mta_sts_policy",
+                "whois_registration",
+                "cloud_account",
+                "cloud_resource",
             ],
             ["finding"],
         ),
+        "hosted_on": (["domain", "subdomain", "endpoint"], ["cloud_resource"]),
+        "in_account": (["cloud_resource", "storage_bucket"], ["cloud_account"]),
+        "has_registration": (["domain"], ["whois_registration"]),
         "presents_certificate": (["service"], ["certificate"]),
         "presents_host_key": (["service"], ["host_key"]),
         "serves_endpoint": (["service"], ["endpoint"]),
@@ -697,12 +843,26 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "runs_technology": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "protected_by": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "backed_by_bucket": (["domain", "subdomain", "endpoint"], ["storage_bucket"]),
-        "exposes_secret": (["repository", "endpoint", "storage_bucket"], ["secret"]),
+        "exposes_secret": (["repository", "endpoint", "storage_bucket", "cloud_resource"], ["secret"]),
         "federates_with": (d, ["identity_tenant"]),
         "has_contact": (
-            ["organization", "registrar", "domain", "subdomain", "repository"],
-            ["email_address", "phone"],
+            ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration"],
+            ["email_address", "phone", "endpoint"],
         ),
+        "authenticates": (
+            ["secret"],
+            [
+                "email_address",
+                "cloud_account",
+                "identity_tenant",
+                "repository",
+                "service",
+                "endpoint",
+                "storage_bucket",
+                "cloud_resource",
+            ],
+        ),
+        "links_to": (["endpoint"], ["endpoint"]),
         "has_http_fingerprint": (["endpoint"], ["http_fingerprint"]),
         "has_mta_sts_policy": (d, ["mta_sts_policy"]),
         "owns_repository": (d, ["repository"]),
@@ -710,7 +870,7 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "has_dkim_selector": (d, ["dkim_record"]),
         "has_parameter": (["endpoint"], ["parameter"]),
         "has_tls_fingerprint": (["service"], ["tls_fingerprint"]),
-        "registered_through": (["domain"], ["registrar"]),
+        "registered_through": (["whois_registration"], ["registrar"]),
         "has_weakness": (["finding", "cve"], ["cwe"]),
         "operated_by": (["asn", "ip_cidr"], ["organization"]),
         "has_txt_record": (d, ["txt_record"]),
@@ -781,10 +941,25 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         ("exposes_secret", {"location": "src/config.py"}),
         ("exposes_secret", {"location": "x" * 1024, "commit": "a" * 40}),
         ("federates_with", {"namespace_type": "federated"}),
+        ("federates_with", {"namespace_type": "managed", "federation_brand": "Contoso"}),
         ("has_http_fingerprint", {}),
         ("has_mta_sts_policy", {}),
         ("owns_repository", {}),
         ("presents_host_key", {}),
+        ("authenticates", {"username": "", "breach": ""}),
+        (
+            "authenticates",
+            {
+                "username": "alice@example.com",
+                "breach": "hibp:collection-1",
+                "breach_title": "Collection #1",
+                "breach_date": "2019-01",
+                "verified": False,
+            },
+        ),
+        ("links_to", {"element": ""}),
+        ("links_to", {"element": "script", "attribute": "src"}),
+        ("has_contact", {"role": "iodef"}),
     ],
 )
 def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[str, object]) -> None:
@@ -856,6 +1031,19 @@ def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[s
         ("exposes_secret", {"location": ""}),
         ("exposes_secret", {"location": "x" * 1025}),
         ("exposes_secret", {"location": "line\nbreak"}),
+        ("exposes_secret", {"location": "src/config.py", "Match": "AWS_SECRET=wJalr"}),
+        ("exposes_secret", {"location": "src/config.py", "gitleaks": {"Secret": "wJalr"}}),
+        ("authenticates", {"username": "alice"}),
+        ("authenticates", {"username": "a b", "breach": ""}),
+        ("authenticates", {"username": "", "breach": "LinkedIn"}),
+        ("authenticates", {"username": "", "breach": "hibp:Collection #1"}),
+        ("authenticates", {"username": "", "breach": "", "breach_date": "2019-13"}),
+        ("authenticates", {"username": "", "breach": "", "password": "hunter2"}),
+        ("links_to", {"element": "A"}),
+        ("links_to", {"element": "a", "attribute": ""}),
+        ("has_contact", {"role": "IODEF"}),
+        ("federates_with", {"namespace_type": "Federated"}),
+        ("federates_with", {"namespace_type": "unknown"}),
     ],
 )
 def test_invalid_relation_types_bounds_and_grammars(type_name: str, properties: dict[str, object]) -> None:
@@ -865,7 +1053,6 @@ def test_invalid_relation_types_bounds_and_grammars(type_name: str, properties: 
 @pytest.mark.parametrize(
     "value",
     [
-        "",
         CPE_NGINX,
         "cpe:2.3:a:apache:http_server:2.4.41:*:*:*:*:*:*:*",
         "cpe:2.3:a:vendor:product:8.???:*:*:*:*:*:*:*",
@@ -874,12 +1061,13 @@ def test_invalid_relation_types_bounds_and_grammars(type_name: str, properties: 
     ],
 )
 def test_cpe23_rule_accepts_the_formatted_string_binding(value: str) -> None:
-    assert catalog_module._valid_field(value, "cpe23_or_empty")
+    assert catalog_module._valid_field(value, "cpe23")
 
 
 @pytest.mark.parametrize(
     "value",
     [
+        "",
         "cpe:/a:apache:http_server:2.4.41",
         "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*",
         "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*:*",
@@ -889,22 +1077,15 @@ def test_cpe23_rule_accepts_the_formatted_string_binding(value: str) -> None:
         "cpe:2.3:a:f5:" + "n" * 512 + ":*:*:*:*:*:*:*:*",
     ],
 )
-def test_cpe23_rule_rejects_legacy_uri_and_malformed_bindings(value: str) -> None:
-    assert not catalog_module._valid_field(value, "cpe23_or_empty")
+def test_cpe23_rule_rejects_empty_legacy_uri_and_malformed_bindings(value: str) -> None:
+    """D-14: the unused `cpe23_or_empty` rule is gone; an absent cpe is an absent key, not ''."""
+    assert not catalog_module._valid_field(value, "cpe23")
 
 
-def test_cpe23_rule_is_published_without_a_consuming_required_map() -> None:
-    manifest = catalog_manifest()
-    referenced = {
-        rule
-        for kind in ("nodes", "relations")
-        for definition in manifest[kind].values()
-        for rule in definition["required"].values()
-        if isinstance(rule, str)
-    }
-
-    assert "cpe23_or_empty" in manifest["formats"]
-    assert "cpe23_or_empty" not in referenced
+def test_a_versioned_cpe_is_read_through_its_escaped_colons() -> None:
+    assert catalog_module._cpe_version("cpe:2.3:a:vendor:pro\\:duct:-:*:*:*:*:*:*:*") == "-"
+    assert catalog_module._cpe_version("cpe:2.3:a:ven\\\\:prod:1:*:*:*:*:*:*:*") == "1"
+    assert catalog_module._cpe_version("cpe:/a:f5:nginx") is None
 
 
 def test_every_order_independent_property_is_required_by_its_own_type() -> None:
@@ -988,12 +1169,14 @@ def test_scope_declarations_are_derived_rather_than_mirrored_by_hand() -> None:
         "dkim_record": "has_dkim_selector",
         "parameter": "has_parameter",
         "mta_sts_policy": "has_mta_sts_policy",
+        "whois_registration": "has_registration",
     }
     order = catalog_module.scope_order()
     assert set(order) == set(catalog_module.scope_relations())
     assert order.index("port") < order.index("service") < order.index("finding")
     assert order.index("parameter") < order.index("finding")
     assert order.index("dkim_record") < order.index("finding")
+    assert order.index("whois_registration") < order.index("finding")
 
 
 def test_scope_order_refuses_a_cycle_instead_of_emitting_a_partial_order(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1061,24 +1244,23 @@ def test_every_relation_endpoint_names_a_declared_node_type() -> None:
             assert set(definition[field]) <= nodes, f"{type_name}.{field} names an unknown node type"
 
 
-def test_every_required_rule_is_published_and_executable() -> None:
+def test_every_declared_rule_is_published_and_executable() -> None:
     """A rule missing from _FORMATS is undocumented, and one missing from _schema_for_rule
     degrades the discovery schema to a bare string, and one published but referenced by nothing is
-    dead weight an agent still has to read. The positive cases above cover the third place a rule
-    has to exist, _valid_field, which rejects every value without it."""
+    dead weight an agent still has to read. The golden cases cover the third place a rule has to
+    exist, _valid_field, which rejects every value without it. Optional maps count as uses."""
     manifest = catalog_manifest()
     used: set[str] = set()
     for kind in ("nodes", "relations"):
         for type_name, definition in manifest[kind].items():
-            for field, rule in definition["required"].items():
+            for field, rule in {**definition["required"], **definition["optional"]}.items():
                 if isinstance(rule, list):
                     continue
                 assert rule in manifest["formats"], f"{kind}.{type_name}.{field} uses an unpublished rule"
                 assert catalog_schema(kind, type_name)["properties"][field].get("format") == rule
                 used.add(rule)
 
-    # `cpe23_or_empty` is the one deliberate exception, covered by its own test above.
-    assert set(manifest["formats"]) - used == {"cpe23_or_empty"}
+    assert set(manifest["formats"]) == used
 
 
 def _plain(value: object) -> object:
@@ -1117,6 +1299,7 @@ def test_catalog_view_is_one_shared_object_matching_the_isolated_manifest() -> N
         ("relations", "caa_issue", "identity", "order_independent"),
         ("common",),
         ("formats",),
+        ("registries",),
     ],
 )
 def test_catalog_view_mappings_refuse_mutation_at_every_depth(path: tuple[str, ...]) -> None:
@@ -1212,11 +1395,477 @@ def test_enum_rule_rejection_keeps_the_published_list_spelling() -> None:
     client receives has to stay the list spelling it has always been, so routing that read changes
     no client-visible text. Without `_published_rule` this reads `expected ('info', ...)`."""
     with pytest.raises(ExpectedValidationError) as failure:
-        validate_record("nodes", "finding", {"title": "t", "severity": "catastrophic"})
+        validate_record(
+            "nodes", "finding", {"rule": "manual:x", "matcher": "", "title": "t", "severity": "catastrophic"}
+        )
     assert str(failure.value.message) == (
-        "/properties/severity: expected ['info', 'low', 'medium', 'high', 'critical']"
+        "/properties/severity: expected ['info', 'low', 'medium', 'high', 'critical', 'unknown']"
     )
 
     with pytest.raises(ExpectedValidationError) as scalar:
         validate_record("nodes", "domain", {"value": 1})
     assert str(scalar.value.message) == "/properties/value: expected dns_name"
+
+
+def _kind(type_name: str) -> str:
+    return "nodes" if type_name in catalog_manifest()["nodes"] else "relations"
+
+
+def _published_ids(key: str) -> set[str]:
+    manifest = catalog_manifest()
+    return {rule_id for kind in ("nodes", "relations") for d in manifest[kind].values() for rule_id in d[key]}
+
+
+def test_every_format_check_and_canonicalization_has_golden_cases() -> None:
+    """A published id without cases, or cases for an id nobody publishes, fails here."""
+    assert set(golden.FORMATS) == set(catalog_manifest()["formats"])
+    assert set(golden.CHECKS).isdisjoint(golden.ENDPOINT_CHECKS)
+    assert {*golden.CHECKS, *golden.ENDPOINT_CHECKS} == _published_ids("checks")
+    assert set(golden.CANONICALIZATIONS) == _published_ids("canonicalize")
+    for table in (golden.FORMATS, golden.CHECKS, golden.ENDPOINT_CHECKS, golden.CANONICALIZATIONS):
+        for rule_id, (first, second) in table.items():
+            assert first, rule_id
+            assert second, rule_id
+
+
+@pytest.mark.parametrize(
+    ("rule", "value", "accepted"),
+    [
+        (rule, value, accepted)
+        for rule, cases in sorted(golden.FORMATS.items())
+        for accepted, values in zip((True, False), cases, strict=True)
+        for value in values
+    ],
+)
+def test_golden_format_cases(rule: str, value: object, *, accepted: bool) -> None:
+    assert catalog_module._valid_field(copy.deepcopy(value), rule) is accepted
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "record", "accepted"),
+    [
+        (rule_id, record, accepted)
+        for rule_id, cases in sorted(golden.CHECKS.items())
+        for accepted, records in zip((True, False), cases, strict=True)
+        for record in records
+    ],
+)
+def test_golden_check_cases(rule_id: str, record: tuple[str, dict[str, object]], *, accepted: bool) -> None:
+    type_name, properties = copy.deepcopy(record)
+    kind = _kind(type_name)
+    assert rule_id in catalog_manifest()[kind][type_name]["checks"]
+    if accepted:
+        validate_record(kind, type_name, properties)
+        return
+    for field, rule in catalog_manifest()[kind][type_name]["required"].items():
+        assert catalog_module._valid_field(properties[field], rule), f"{rule_id}: {field} fails its own rule"
+    with pytest.raises(ExpectedValidationError):
+        catalog_module._CHECKS[rule_id](type_name, properties)
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "case", "accepted"),
+    [
+        (rule_id, case, accepted)
+        for rule_id, cases in sorted(golden.ENDPOINT_CHECKS.items())
+        for accepted, endpoint_cases in zip((True, False), cases, strict=True)
+        for case in endpoint_cases
+    ],
+)
+def test_golden_endpoint_check_cases(
+    rule_id: str,
+    case: tuple[dict[str, object], tuple[str, dict[str, object]], tuple[str, dict[str, object]]],
+    *,
+    accepted: bool,
+) -> None:
+    relation_props, (source_type, source), (target_type, target) = copy.deepcopy(case)
+    relations = [
+        name
+        for name, definition in catalog_manifest()["relations"].items()
+        if rule_id in definition["checks"]
+        and source_type in definition["sources"]
+        and target_type in definition["targets"]
+    ]
+    assert relations, rule_id
+    validate_record("nodes", source_type, source)
+    validate_record("nodes", target_type, target)
+    views = (EndpointView(source_type, source), EndpointView(target_type, target))
+    for relation in relations:
+        if accepted:
+            check_endpoint_values(relation, relation_props, *views)
+        else:
+            with pytest.raises(ExpectedValidationError):
+                check_endpoint_values(relation, relation_props, *views)
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "type_name", "before", "after"),
+    [
+        (rule_id, type_name, before, after)
+        for rule_id, (rewrites, kept) in sorted(golden.CANONICALIZATIONS.items())
+        for type_name, before, after in (*rewrites, *((name, value, value) for name, value in kept))
+    ],
+)
+def test_golden_canonicalization_cases(
+    rule_id: str, type_name: str, before: dict[str, object], after: dict[str, object]
+) -> None:
+    kind = _kind(type_name)
+    assert rule_id in catalog_manifest()[kind][type_name]["canonicalize"]
+    properties = copy.deepcopy(before)
+    catalog_module._CANONICALIZATIONS[rule_id](properties)
+    assert properties == after
+
+
+def test_endpoint_values_are_checked_only_by_the_relation_that_declares_them() -> None:
+    """A relation without endpoint checks accepts any stored values its type gate let through."""
+    far = EndpointView("subdomain", {"value": "unrelated.example.org"})
+    check_endpoint_values("cname_to", {}, EndpointView("domain", {"value": "example.com"}), far)
+    with pytest.raises(ExpectedValidationError, match="unknown catalog type"):
+        check_endpoint_values("hostname_of", {}, far, far)
+
+
+def _rebuilt(
+    *,
+    nodes: Mapping[str, Mapping[str, Any]] = catalog_module._NODES,
+    relations: Mapping[str, Mapping[str, Any]] = catalog_module._RELATIONS,
+    formats: Mapping[str, int] = catalog_module._FORMATS,
+    checks: Mapping[str, object] = catalog_module._CHECKS,
+    endpoint_checks: Mapping[str, object] = catalog_module._ENDPOINT_CHECKS,
+    canonicalizations: Mapping[str, object] = catalog_module._CANONICALIZATIONS,
+    registries: Mapping[str, str] = catalog_module._REGISTRIES,
+) -> str:
+    built = catalog_module._build_catalog(
+        nodes, relations, formats, checks, endpoint_checks, canonicalizations, registries
+    )
+    return json.dumps(built, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _with_rule(
+    kind_table: Mapping[str, Mapping[str, object]], type_name: str, key: str, ids: list[str]
+) -> dict[str, Mapping[str, object]]:
+    return {**kind_table, type_name: {**kind_table[type_name], key: ids}}
+
+
+def test_the_builder_reproduces_the_published_contract() -> None:
+    assert _rebuilt() == catalog_module.CATALOG_JSON
+
+
+def test_renaming_or_versioning_a_rule_id_changes_the_contract() -> None:
+    """The fingerprint covers ids and versions, so a rename or a bump moves it."""
+    run = catalog_module._CHECKS["dns_name_kind.1"]
+    checks = {key: value for key, value in catalog_module._CHECKS.items() if key != "dns_name_kind.1"}
+    nodes = _with_rule(catalog_module._NODES, "domain", "checks", ["dns_name_kind.2"])
+    nodes = _with_rule(nodes, "subdomain", "checks", ["dns_name_kind.2"])
+
+    assert _rebuilt(nodes=nodes, checks={**checks, "dns_name_kind.2": run}) != catalog_module.CATALOG_JSON
+    canon = catalog_module._CANONICALIZATIONS
+    moved = {**canon, "endpoint_url_drop_query.2": canon["endpoint_url_drop_query.1"]}
+    del moved["endpoint_url_drop_query.1"]
+    nodes = _with_rule(catalog_module._NODES, "endpoint", "canonicalize", ["endpoint_url_drop_query.2"])
+    assert _rebuilt(nodes=nodes, canonicalizations=moved) != catalog_module.CATALOG_JSON
+    formats = {**catalog_module._FORMATS, "unused_rule": 1}
+    assert _rebuilt(formats=formats) != catalog_module.CATALOG_JSON
+    bumped = {**catalog_module._FORMATS, "http_url": 2}
+    assert _rebuilt(formats=bumped) != catalog_module.CATALOG_JSON
+    refreshed = {**catalog_module._REGISTRIES, "public_suffix_list": "0" * 64}
+    assert _rebuilt(registries=refreshed) != catalog_module.CATALOG_JSON
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        (
+            {"nodes": _with_rule(catalog_module._NODES, "domain", "checks", ["dns_name_kind.9"])},
+            "names rule dns_name_kind.9",
+        ),
+        (
+            {"nodes": _with_rule(catalog_module._NODES, "domain", "checks", ["has_subdomain_suffix.1"])},
+            "names rule has_subdomain_suffix.1",
+        ),
+        (
+            {"nodes": _with_rule(catalog_module._NODES, "domain", "checks", ["DNS.1"])},
+            "names rule DNS.1",
+        ),
+        (
+            {"checks": {**catalog_module._CHECKS, "orphan_rule.1": catalog_module._CHECKS["dns_name_kind.1"]}},
+            "no type uses",
+        ),
+        ({"formats": {**catalog_module._FORMATS, "http_url": 0}}, "positive integer behavior version"),
+    ],
+)
+def test_the_builder_refuses_a_dangling_misplaced_or_unused_rule(changes: dict[str, Any], message: str) -> None:
+    with pytest.raises(RuntimeError, match=message):
+        _rebuilt(**changes)
+
+
+def test_relation_checks_run_inside_record_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-12: a relation may declare a property check, not only an endpoint check."""
+    seen: list[str] = []
+
+    def record(type_name: str, _properties: dict[str, object]) -> None:
+        seen.append(type_name)
+
+    monkeypatch.setitem(catalog_module._CHECKS, "probe_relation.1", record)
+    relations = _with_rule(catalog_module._RELATIONS, "resolves_to", "checks", ["probe_relation.1"])
+    view = catalog_module._read_only(json.loads(_rebuilt(relations=relations)))
+    monkeypatch.setattr(catalog_module, "_CATALOG_VIEW", view)
+
+    validate_record("relations", "resolves_to", {})
+
+    assert seen == ["resolves_to"]
+
+
+def test_every_rule_id_is_described() -> None:
+    descriptions = catalog_module.rule_descriptions()
+    assert set(descriptions) == _published_ids("checks") | _published_ids("canonicalize")
+    assert all(descriptions.values())
+
+
+@pytest.mark.parametrize("kind", ["nodes", "relations"])
+def test_every_type_and_property_is_described(kind: str) -> None:
+    """Every type says what it models and what it does not, and every declared property,
+    format and rule has its own description."""
+    for type_name, definition in catalog_manifest()[kind].items():
+        docs = catalog_module.type_description(kind, type_name)
+        assert docs["summary"], type_name
+        assert docs["excludes"], type_name
+        assert set(docs["properties"]) == {*definition["required"], *definition["optional"]}, type_name
+    assert set(catalog_module.format_descriptions()) == set(catalog_manifest()["formats"])
+    assert set(catalog_module.common_descriptions()) == set(catalog_manifest()["common"])
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    [
+        (("nodes", "domain", "summary"), "", "empty or longer"),
+        (("nodes", "domain", "notes"), "x" * 601, "empty or longer"),
+        (("formats", "http_url"), "x" * 601, "empty or longer"),
+        (("checks", "dns_name_kind.1"), None, "disagree with the contract"),
+        (("nodes", "domain", "properties", "value"), None, "exactly its declared properties"),
+        (("nodes", "domain", "owner"), "x", "summary and excludes"),
+    ],
+)
+def test_the_docs_contract_refuses_missing_stale_and_oversized_prose(
+    monkeypatch: pytest.MonkeyPatch, path: tuple[str, ...], value: str | None, message: str
+) -> None:
+    docs = copy.deepcopy(catalog_module._DOCS)
+    target = docs
+    for key in path[:-1]:
+        target = target[key]
+    if value is None:
+        del target[path[-1]]
+    else:
+        target[path[-1]] = value
+    monkeypatch.setattr(catalog_module, "_DOCS", docs)
+    with pytest.raises(RuntimeError, match=message):
+        catalog_module._ensure_docs_contract()
+
+
+def test_type_description_is_an_isolated_copy() -> None:
+    first = catalog_module.type_description("nodes", "domain")
+    first["properties"]["value"] = "changed"
+    assert catalog_module.type_description("nodes", "domain")["properties"]["value"] != "changed"
+
+
+def _view_with(monkeypatch: pytest.MonkeyPatch, kind: str, type_name: str, key: str, value: object) -> None:
+    """Serve validation from a rebuilt catalog in which one type declares something extra."""
+    table = catalog_module._NODES if kind == "nodes" else catalog_module._RELATIONS
+    changed = {**table, type_name: {**table[type_name], key: value}}
+    rebuilt = _rebuilt(nodes=changed) if kind == "nodes" else _rebuilt(relations=changed)
+    view = catalog_module._read_only(json.loads(rebuilt))
+    monkeypatch.setattr(catalog_module, "_CATALOG_VIEW", view)
+
+
+@pytest.mark.parametrize(
+    ("properties", "accepted"),
+    [
+        ({"value": "example.com"}, True),
+        ({"value": "example.com", "note": "registered in 2004"}, True),
+        ({"value": "example.com", "undeclared": None}, True),
+        ({"value": "example.com", "note": ""}, False),
+        ({"value": "example.com", "note": None}, False),
+        ({"value": "example.com", "note": 1}, False),
+    ],
+)
+def test_declared_optional_properties_are_validated_when_present(
+    monkeypatch: pytest.MonkeyPatch, properties: dict[str, object], *, accepted: bool
+) -> None:
+    """An invalid declared attribute is rejected, an absent one and an undeclared key are
+    accepted, and null is never a value: clearing is `remove_properties`."""
+    _view_with(monkeypatch, "nodes", "domain", "optional", {"note": "printable_text_200"})
+    if accepted:
+        validate_record("nodes", "domain", properties)
+        return
+    with pytest.raises(ExpectedValidationError) as failure:
+        validate_record("nodes", "domain", properties)
+    assert failure.value.message == "/properties/note: expected printable_text_200"
+
+
+def test_optional_properties_reach_the_discovery_schema_but_not_its_required_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    table = catalog_module._NODES
+    changed = {**table, "domain": {**table["domain"], "optional": {"note": "printable_text_200"}}}
+    monkeypatch.setattr(catalog_module, "CATALOG_JSON", _rebuilt(nodes=changed))
+    schema = catalog_schema("nodes", "domain")
+
+    assert schema["required"] == ["value"]
+    assert schema["properties"]["note"] == {"type": "string", "format": "printable_text_200"}
+
+
+def _catalog_with(kind: str, type_name: str, **changes: object) -> dict[str, object]:
+    table = catalog_module._NODES if kind == "nodes" else catalog_module._RELATIONS
+    changed = {**table, type_name: {**table[type_name], **changes}}
+    return json.loads(_rebuilt(nodes=changed) if kind == "nodes" else _rebuilt(relations=changed))
+
+
+@pytest.mark.parametrize(
+    ("catalog", "message"),
+    [
+        (_catalog_with("nodes", "domain", optional={"value": "dns_name"}), "declares \\['value'\\] twice"),
+        (
+            _catalog_with("nodes", "domain", identity={"properties": ["value", "note"]}, optional={"note": "cve"}),
+            "identity names a property outside its required map",
+        ),
+        (
+            {
+                **_catalog_with("nodes", "domain", optional={"label": "printable_text_200"}),
+                "relations": _catalog_with("relations", "resolves_to", optional={"label": "cve"})["relations"],
+            },
+            "optional label has one rule on",
+        ),
+        (_catalog_with("nodes", "secret", optional={"Password": "printable_text_200"}), "plaintext-bearing name"),
+    ],
+)
+def test_the_property_contract_refuses_contradictory_maps(
+    monkeypatch: pytest.MonkeyPatch, catalog: dict[str, object], message: str
+) -> None:
+    monkeypatch.setattr(catalog_module, "_CATALOG", catalog)
+    with pytest.raises(RuntimeError, match=message):
+        catalog_module._ensure_property_contract()
+
+
+def test_a_plaintext_key_is_named_by_its_pointer_and_never_by_its_value() -> None:
+    with pytest.raises(ExpectedValidationError) as failure:
+        validate_record("nodes", "secret", {"value_sha256": "a" * 64, "ctx": {"a/b": {"Raw": "hunter2"}}})
+
+    assert failure.value.message == "/properties/ctx/a~1b/Raw: a secret record never carries the secret itself"
+    assert "hunter2" not in failure.value.message
+
+
+def test_ac10_attribute_properties_are_declared() -> None:
+    """Exploit metadata, HTTP metadata, CDN/WAF/cloud range classification on addresses,
+    wildcard DNS and CPE/version each have a declared, validated home."""
+    manifest = catalog_manifest()
+    expected = {
+        ("nodes", "cve"): {"cvss_score", "cvss_vector", "epss_score", "epss_percentile", "kev_added", "published"},
+        ("nodes", "finding"): {"cvss_score", "cvss_vector", "confidence", "tags", "scanner", "description"},
+        ("nodes", "endpoint"): {"status", "title", "content_length", "content_type", "webserver"},
+        ("nodes", "ip_address"): {"cdn_provider", "waf_provider", "cloud_provider"},
+        ("nodes", "domain"): {"wildcard"},
+        ("nodes", "subdomain"): {"wildcard", "wildcard_answer"},
+        ("nodes", "technology"): {"cpe"},
+        ("relations", "runs_technology"): {"version", "cpe"},
+    }
+    for (kind, type_name), names in expected.items():
+        assert names <= set(manifest[kind][type_name]["optional"]), type_name
+    # A registrable domain's parent is a public suffix, which has no wildcard answer to compare (D-23).
+    assert "wildcard_answer" not in manifest["nodes"]["domain"]["optional"]
+    assert "wildcard_answer" in manifest["nodes"]["subdomain"]["optional"]
+
+
+def test_every_cloud_hostname_pattern_has_one_example_that_matches_only_it() -> None:
+    assert set(golden.CLOUD_HOSTS) == set(catalog_module._CLOUD_HOST_PATTERNS)
+    for name, hostname in golden.CLOUD_HOSTS.items():
+        assert catalog_module._valid_field(hostname, "dns_name"), hostname
+        matched = [
+            other
+            for other, pattern in catalog_module._CLOUD_HOST_PATTERNS.items()
+            if catalog_module._match_host(hostname, pattern)[0]
+        ]
+        assert matched == [name], hostname
+
+
+def test_every_canonical_cloud_hostname_example_is_a_valid_resource() -> None:
+    for name, hostname in golden.CLOUD_HOSTS.items():
+        pattern = catalog_module._CLOUD_HOST_PATTERNS[name]
+        properties = {"service": pattern.service, "hostname": hostname}
+        if pattern.canonical:
+            validate_record("nodes", "cloud_resource", properties)
+        else:
+            with pytest.raises(ExpectedValidationError, match="an alias of"):
+                validate_record("nodes", "cloud_resource", properties)
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        catalog_module._host("aws_cloudfront", "<azure_name>", "cloudfront", "net"),
+        catalog_module._host("gcp_app_engine", "<firebase_site>", "appspot", "com"),
+    ],
+)
+def test_overlapping_cloud_hostname_patterns_are_refused_at_import(
+    monkeypatch: pytest.MonkeyPatch, pattern: object
+) -> None:
+    monkeypatch.setitem(catalog_module._CLOUD_HOST_PATTERNS, "overlap", pattern)
+    with pytest.raises(RuntimeError, match="may overlap"):
+        catalog_module._ensure_cloud_patterns_disjoint()
+
+
+def test_registry_digests_hash_parsed_content_not_file_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A checkout that turns LF into CRLF parses to the same rules and so the same digest,
+    while any change to the rules themselves moves the digest and with it the fingerprint."""
+    snapshot = psl._read_resource_bytes(psl._SNAPSHOT_RESOURCE)
+    assert psl._parse_rules(snapshot.replace(b"\n", b"\r\n")) == psl._parse_rules(snapshot)
+    assert catalog_module.catalog_manifest()["registries"] == {
+        "public_suffix_list": psl.rules_digest(),
+        "service_names": service_names.registry_digest(),
+    }
+    rules = psl._load_rules()
+    widened = psl._Rules(rules.exact | {"example"}, rules.wildcards, rules.exceptions)
+    before = psl.rules_digest()
+    monkeypatch.setattr(psl, "_load_rules", lambda: widened)
+    assert psl.rules_digest() != before
+    registry = service_names._load_registry()
+    flipped = service_names._Registry(registry.names, registry.secure_required_names ^ {"ssh"})
+    service_before = service_names.registry_digest()
+    monkeypatch.setattr(service_names, "_load_registry", lambda: flipped)
+    assert service_names.registry_digest() != service_before
+
+
+V3_NODE_TYPES = {"whois_registration", "cloud_account", "cloud_resource"}
+V3_RELATION_TYPES = {"has_registration", "hosted_on", "in_account", "authenticates", "links_to"}
+
+
+def test_every_type_declares_identity_checks_and_description() -> None:
+    """Every type catalog v3 adds declares what it models, a required map that holds its identity,
+    and the checks that keep one real thing one node."""
+    manifest = catalog_manifest()
+    for kind, added in (("nodes", V3_NODE_TYPES), ("relations", V3_RELATION_TYPES)):
+        for type_name in added:
+            definition = manifest[kind][type_name]
+            docs = catalog_module.type_description(kind, type_name)
+            assert docs["summary"], type_name
+            assert docs["excludes"], type_name
+            assert set(definition["identity"]["properties"]) <= set(definition["required"]), type_name
+            if kind == "nodes":
+                assert definition["required"], type_name
+                assert definition["checks"], type_name
+            else:
+                assert definition["sources"], type_name
+                assert definition["targets"], type_name
+    assert manifest["relations"]["has_registration"]["checks"] == ["has_registration_suffix_match.1"]
+    assert manifest["relations"]["in_account"]["checks"] == ["in_account_provider_match.1"]
+    assert "secret_plaintext_keys.1" in manifest["relations"]["authenticates"]["checks"]
+
+
+def test_osint_areas_are_typed_and_person_company_are_absent() -> None:
+    """WHOIS registrations, typed credentials, code repositories and cloud assets have homes, and
+    person and company types stay out of scope by decision."""
+    manifest = catalog_manifest()
+    assert {"whois_registration", "secret", "repository", "cloud_account", "cloud_resource"} <= set(manifest["nodes"])
+    assert {"authenticates", "exposes_secret", "registered_through", "in_account"} <= set(manifest["relations"])
+    assert "kind" in manifest["nodes"]["secret"]["optional"]
+    banned = ("person", "people", "individual", "company", "employee", "contact_person")
+    for kind in ("nodes", "relations"):
+        assert not [name for name in manifest[kind] if any(word in name for word in banned)], kind

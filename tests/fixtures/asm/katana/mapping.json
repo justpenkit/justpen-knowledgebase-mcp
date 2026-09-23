@@ -1,0 +1,206 @@
+{
+  "source": "katana",
+  "files": {
+    "output.jsonl": "jsonl"
+  },
+  "rows": [
+    {
+      "path": "timestamp",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "request.method",
+      "sink": {
+        "node": "endpoint",
+        "property": "method"
+      }
+    },
+    {
+      "path": "request.endpoint",
+      "sink": {
+        "node": "endpoint",
+        "property": "url"
+      },
+      "transform": [
+        "url_without_query",
+        "url_with_path"
+      ]
+    },
+    {
+      "path": "request.body",
+      "sink": "evidence"
+    },
+    {
+      "path": "request.headers.*",
+      "sink": "evidence"
+    },
+    {
+      "path": "request.tag",
+      "sink": {
+        "relation": "links_to",
+        "property": "element"
+      }
+    },
+    {
+      "path": "request.attribute",
+      "sink": {
+        "relation": "links_to",
+        "property": "attribute"
+      }
+    },
+    {
+      "path": "request.source",
+      "sink": {
+        "node": "endpoint",
+        "property": "url"
+      },
+      "transform": [
+        "url_without_query",
+        "url_with_path"
+      ]
+    },
+    {
+      "path": "request.raw",
+      "sink": "evidence"
+    },
+    {
+      "path": "response.status_code",
+      "sink": {
+        "node": "endpoint",
+        "property": "status"
+      }
+    },
+    {
+      "path": "response.headers.*",
+      "sink": "evidence"
+    },
+    {
+      "path": "response.headers.content-type",
+      "sink": {
+        "node": "endpoint",
+        "property": "content_type"
+      },
+      "transform": [
+        "media_type_essence"
+      ]
+    },
+    {
+      "path": "response.headers.server",
+      "sink": {
+        "node": "endpoint",
+        "property": "webserver"
+      }
+    },
+    {
+      "path": "response.body",
+      "sink": "evidence"
+    },
+    {
+      "path": "response.content_length",
+      "sink": {
+        "node": "endpoint",
+        "property": "content_length"
+      }
+    },
+    {
+      "path": "response.technologies",
+      "sink": {
+        "node": "technology",
+        "property": "name"
+      },
+      "each": true,
+      "transform": [
+        "wappalyzer_name_slug"
+      ]
+    },
+    {
+      "path": "response.technologies",
+      "sink": {
+        "relation": "runs_technology",
+        "property": "version"
+      },
+      "each": true,
+      "transform": [
+        "wappalyzer_version"
+      ]
+    },
+    {
+      "path": "response.raw",
+      "sink": "evidence"
+    },
+    {
+      "path": "response.forms[].method",
+      "sink": {
+        "node": "endpoint",
+        "property": "method"
+      }
+    },
+    {
+      "path": "response.forms[].action",
+      "sink": {
+        "node": "endpoint",
+        "property": "url"
+      },
+      "transform": [
+        "url_without_query",
+        "url_with_path"
+      ]
+    },
+    {
+      "path": "response.forms[].enctype",
+      "sink": "evidence"
+    },
+    {
+      "path": "response.forms[].parameters",
+      "sink": {
+        "node": "parameter",
+        "property": "name"
+      },
+      "each": true
+    },
+    {
+      "path": "response.knowledgebase.*",
+      "sink": "evidence"
+    },
+    {
+      "path": "error",
+      "sink": "evidence"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "endpoint",
+        "property": "method"
+      },
+      "values": [
+        "GET"
+      ],
+      "reason": "a request.source page is one katana fetched by navigation, which is always a GET"
+    },
+    {
+      "sink": {
+        "node": "parameter",
+        "property": "location"
+      },
+      "values": [
+        "body"
+      ],
+      "reason": "the form posts application/x-www-form-urlencoded, so its fields travel in the body"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "katana"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

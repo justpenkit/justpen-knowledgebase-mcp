@@ -12,7 +12,7 @@ from justpen_knowledgebase_mcp.errors import ConflictError, RecordConflictError
 from justpen_knowledgebase_mcp.identity import identity_key
 from justpen_knowledgebase_mcp.jobs import JobRunner
 from justpen_knowledgebase_mcp.models import DeleteRequest
-from justpen_knowledgebase_mcp.storage.graph import _validate_endpoints, row_by_id
+from justpen_knowledgebase_mcp.storage.graph import _validate_endpoint_values, _validate_endpoints, row_by_id
 from justpen_knowledgebase_mcp.storage.job_recovery import recover_intents
 from justpen_knowledgebase_mcp.storage.jobs import JobStore
 
@@ -128,6 +128,7 @@ async def test_two_parent_jobs_lost_metadata_cancel_and_bounded_completion(kb):
             assert source_row is not None
             assert target_row is not None
             _validate_endpoints(kind, source_row, target_row)
+            _validate_endpoint_values(kind, properties, source_row, target_row)
             assert key == identity_key("relations", kind, properties)
 
     await kb.workers.read(validate_fixture)

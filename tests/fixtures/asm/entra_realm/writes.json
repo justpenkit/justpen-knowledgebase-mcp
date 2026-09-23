@@ -1,0 +1,63 @@
+[
+  {
+    "file": "openid-configuration.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "identity_tenant",
+          "properties": {
+            "provider": "entra_id",
+            "tenant_id": "11111111-2222-4333-8444-555555555555"
+          },
+          "source": "entra_realm"
+        }
+      ],
+      "relations": []
+    }
+  },
+  {
+    "file": "getuserrealm.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.com"
+          },
+          "source": "entra_realm"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "sts.example.com"
+          },
+          "source": "entra_realm"
+        }
+      ],
+      "relations": [
+        {
+          "type": "federates_with",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "ref": "0:0"
+          },
+          "properties": {
+            "namespace_type": "federated"
+          }
+        },
+        {
+          "type": "has_subdomain",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

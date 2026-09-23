@@ -43,7 +43,7 @@ def register(mcp: FastMCP) -> None:
         limit: Annotated[int, Field(ge=1, le=100)] = 20,
         cursor: str | None = None,
     ) -> ToolResult:
-        """Discover permitted types, required properties, machine-readable identity objects (properties plus optional parent scope), schemas and ready-only counts. Keys are calculated by this MCP; agents cannot define types. Counts may be deferred; list success is not database health."""
+        """Discover permitted types, required properties, machine-readable identity objects (properties plus optional parent scope), schemas, check and canonicalization ids with their rules, a description of what each type models and excludes, and ready-only counts. Keys are calculated by this MCP; agents cannot define types. Counts may be deferred; list success is not database health."""
         return await invoke(ctx, "types", locals(), TypesRequest)
 
     @mcp.tool(
@@ -56,7 +56,7 @@ def register(mcp: FastMCP) -> None:
         nodes: Annotated[list[NodeWrite], Field(default_factory=list[NodeWrite], max_length=100)],
         relations: Annotated[list[RelationWrite], Field(default_factory=list[RelationWrite], max_length=100)],
     ) -> ToolResult:
-        """Atomically upsert 1-100 nodes/relations using kb_types. New parent-scoped nodes require exactly one declared scope relation in this request; existing scoped IDs do not. The MCP computes keys and forbids re-parenting. ID patches preserve omitted metadata; explicit null clears label/source, while property null is literal data. Endpoints are immutable. Evidence links are explicit."""
+        """Atomically upsert 1-100 nodes/relations using kb_types. New parent-scoped nodes require exactly one declared scope relation in this request; existing scoped IDs do not. The MCP computes keys and forbids re-parenting. ID patches preserve omitted metadata; explicit null clears label/source, while property null is literal data except for declared properties, which reject it. Endpoints are immutable. Evidence links are explicit."""
         return await invoke(ctx, "write", locals(), WriteRequest)
 
     @mcp.tool(

@@ -1,0 +1,50 @@
+{
+  "source": "aws_sts_identity",
+  "files": {
+    "caller-identity.json": "json"
+  },
+  "rows": [
+    {
+      "path": "UserId",
+      "sink": "evidence"
+    },
+    {
+      "path": "Account",
+      "sink": {
+        "node": "cloud_account",
+        "property": "account_id"
+      }
+    },
+    {
+      "path": "Arn",
+      "sink": {
+        "node": "cloud_account",
+        "property": "account_id"
+      },
+      "transform": [
+        "arn_account"
+      ]
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "cloud_account",
+        "property": "provider"
+      },
+      "values": [
+        "aws"
+      ],
+      "reason": "STS answers for an AWS account"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "aws-sts"
+      ],
+      "reason": "the API that produced the output"
+    }
+  ]
+}

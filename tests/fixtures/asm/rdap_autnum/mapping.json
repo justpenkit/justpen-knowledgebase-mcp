@@ -1,0 +1,229 @@
+{
+  "source": "rdap_autnum",
+  "files": {
+    "as64496.json": "json"
+  },
+  "rows": [
+    {
+      "path": "handle",
+      "sink": "evidence"
+    },
+    {
+      "path": "startAutnum",
+      "sink": {
+        "node": "asn",
+        "property": "value"
+      },
+      "transform": [
+        "rdap_single_autnum"
+      ]
+    },
+    {
+      "path": "endAutnum",
+      "sink": "non_storable",
+      "reason": "equals startAutnum for one AS; a block of several numbers is not one asn node"
+    },
+    {
+      "path": "name",
+      "sink": {
+        "node": "asn",
+        "property": "name"
+      }
+    },
+    {
+      "path": "country",
+      "sink": {
+        "node": "asn",
+        "property": "country"
+      }
+    },
+    {
+      "path": "type",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "status",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].handle",
+      "sink": {
+        "node": "organization",
+        "property": "handle"
+      },
+      "transform": [
+        "rdap_holder_handle"
+      ]
+    },
+    {
+      "path": "entities[].vcardArray",
+      "sink": {
+        "node": "organization",
+        "property": "name"
+      },
+      "transform": [
+        "rdap_holder_name"
+      ]
+    },
+    {
+      "path": "entities[].vcardArray",
+      "sink": {
+        "node": "email_address",
+        "property": "value"
+      },
+      "transform": [
+        "rdap_abuse_email"
+      ]
+    },
+    {
+      "path": "entities[].vcardArray",
+      "sink": {
+        "node": "phone",
+        "property": "value"
+      },
+      "transform": [
+        "rdap_abuse_phone"
+      ]
+    },
+    {
+      "path": "entities[].vcardArray",
+      "sink": "non_storable",
+      "reason": "maintainer and role names, the holder's postal address and phone and card metadata; person and company types are out of scope, so only the holder fn and the abuse contact leave the card"
+    },
+    {
+      "path": "entities[].roles",
+      "sink": {
+        "relation": "has_contact",
+        "property": "role"
+      },
+      "transform": [
+        "rdap_abuse_role"
+      ],
+      "each": true
+    },
+    {
+      "path": "entities[].links[].value",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].links[].rel",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].links[].href",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].objectClassName",
+      "sink": "evidence"
+    },
+    {
+      "path": "links[].value",
+      "sink": "evidence"
+    },
+    {
+      "path": "links[].rel",
+      "sink": "evidence"
+    },
+    {
+      "path": "links[].href",
+      "sink": "evidence"
+    },
+    {
+      "path": "links[].type",
+      "sink": "evidence"
+    },
+    {
+      "path": "events[].eventAction",
+      "sink": "evidence"
+    },
+    {
+      "path": "events[].eventDate",
+      "sink": "evidence"
+    },
+    {
+      "path": "rdapConformance",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].title",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].description",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].value",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].rel",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].href",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].type",
+      "sink": "evidence"
+    },
+    {
+      "path": "remarks[].description",
+      "sink": "evidence"
+    },
+    {
+      "path": "port43",
+      "sink": {
+        "node": "asn",
+        "property": "rir"
+      },
+      "transform": [
+        "rir_from_whois_server"
+      ]
+    },
+    {
+      "path": "port43",
+      "sink": {
+        "node": "organization",
+        "property": "registry"
+      },
+      "transform": [
+        "rir_from_whois_server"
+      ]
+    },
+    {
+      "path": "objectClassName",
+      "sink": "evidence"
+    },
+    {
+      "path": "redacted[].name.description",
+      "sink": "evidence"
+    },
+    {
+      "path": "redacted[].reason.description",
+      "sink": "evidence"
+    },
+    {
+      "path": "redacted[].prePath",
+      "sink": "evidence"
+    },
+    {
+      "path": "redacted[].method",
+      "sink": "evidence"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "rdap_autnum"
+      ],
+      "reason": "the source that produced the output"
+    }
+  ]
+}

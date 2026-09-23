@@ -1,0 +1,472 @@
+{
+  "source": "nvd_cve",
+  "files": {
+    "CVE-2021-44228.json": "json",
+    "CVE-2025-24813.json": "json"
+  },
+  "rows": [
+    {
+      "path": "resultsPerPage",
+      "sink": "non_storable",
+      "reason": "paging of the API response"
+    },
+    {
+      "path": "startIndex",
+      "sink": "non_storable",
+      "reason": "paging of the API response"
+    },
+    {
+      "path": "totalResults",
+      "sink": "non_storable",
+      "reason": "paging of the API response"
+    },
+    {
+      "path": "format",
+      "sink": "non_storable",
+      "reason": "the API's constant response format name"
+    },
+    {
+      "path": "version",
+      "sink": "non_storable",
+      "reason": "the API's version, not a fact about the CVE"
+    },
+    {
+      "path": "timestamp",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "vulnerabilities[].cve.id",
+      "sink": {
+        "node": "cve",
+        "property": "value"
+      }
+    },
+    {
+      "path": "vulnerabilities[].cve.sourceIdentifier",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.published",
+      "sink": {
+        "node": "cve",
+        "property": "published"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "vulnerabilities[].cve.lastModified",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.vulnStatus",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.cveTags",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.descriptions[].lang",
+      "sink": "non_storable",
+      "reason": "advisory prose, not an asset fact"
+    },
+    {
+      "path": "vulnerabilities[].cve.descriptions[].value",
+      "sink": "non_storable",
+      "reason": "advisory prose, not an asset fact"
+    },
+    {
+      "path": "vulnerabilities[].cve.affected[].source",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.affected[].affectedData[].vendor",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.affected[].affectedData[].product",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.affected[].affectedData[].versions[].version",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.affected[].affectedData[].versions[].lessThan",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.affected[].affectedData[].versions[].versionType",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.affected[].affectedData[].versions[].status",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.affected[].affectedData[].versions[].changes[].at",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.affected[].affectedData[].versions[].changes[].status",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV31[].source",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV31[].type",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV31[].cvssData.*",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV31[].cvssData.vectorString",
+      "sink": {
+        "node": "cve",
+        "property": "cvss_vector"
+      },
+      "transform": [
+        "nvd_preferred_cvss"
+      ]
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV31[].cvssData.baseScore",
+      "sink": {
+        "node": "cve",
+        "property": "cvss_score"
+      },
+      "transform": [
+        "cvss_one_decimal",
+        "nvd_preferred_cvss"
+      ]
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV31[].exploitabilityScore",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV31[].impactScore",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].source",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].type",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].cvssData.version",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].cvssData.vectorString",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].cvssData.baseScore",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].cvssData.accessVector",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].cvssData.accessComplexity",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].cvssData.authentication",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].cvssData.confidentialityImpact",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].cvssData.integrityImpact",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].cvssData.availabilityImpact",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].baseSeverity",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].exploitabilityScore",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].impactScore",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].acInsufInfo",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].obtainAllPrivilege",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].obtainUserPrivilege",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].obtainOtherPrivilege",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV2[].userInteractionRequired",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.ssvcV203[].source",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.ssvcV203[].ssvcData.timestamp",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.ssvcV203[].ssvcData.id",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.ssvcV203[].ssvcData.options[].*",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.ssvcV203[].ssvcData.role",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.ssvcV203[].ssvcData.version",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.cisaExploitAdd",
+      "sink": {
+        "node": "cve",
+        "property": "kev_added"
+      }
+    },
+    {
+      "path": "vulnerabilities[].cve.cisaActionDue",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.cisaRequiredAction",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.cisaVulnerabilityName",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.weaknesses[].source",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.weaknesses[].type",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.weaknesses[].description[].lang",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].cve.weaknesses[].description[].value",
+      "sink": {
+        "node": "cwe",
+        "property": "value"
+      }
+    },
+    {
+      "path": "vulnerabilities[].cve.configurations[].nodes[].operator",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.configurations[].nodes[].negate",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.configurations[].nodes[].cpeMatch[].vulnerable",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.configurations[].nodes[].cpeMatch[].criteria",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.configurations[].nodes[].cpeMatch[].versionStartIncluding",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.configurations[].nodes[].cpeMatch[].versionEndExcluding",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.configurations[].nodes[].cpeMatch[].matchCriteriaId",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.configurations[].operator",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.references[].url",
+      "sink": "non_storable",
+      "reason": "advisory links, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.references[].source",
+      "sink": "non_storable",
+      "reason": "advisory links, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.references[].tags",
+      "sink": "non_storable",
+      "reason": "advisory links, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.affected[].affectedData[].defaultStatus",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.affected[].affectedData[].versions[].lessThanOrEqual",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV40[].cvssData.baseScore",
+      "sink": {
+        "node": "cve",
+        "property": "cvss_score"
+      },
+      "transform": [
+        "cvss_one_decimal",
+        "nvd_preferred_cvss"
+      ],
+      "documented_only": true
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV40[].cvssData.vectorString",
+      "sink": {
+        "node": "cve",
+        "property": "cvss_vector"
+      },
+      "transform": [
+        "nvd_preferred_cvss"
+      ],
+      "documented_only": true
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV40[].cvssData.*",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV40[].source",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV40[].type",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV30[].cvssData.baseScore",
+      "sink": {
+        "node": "cve",
+        "property": "cvss_score"
+      },
+      "transform": [
+        "cvss_one_decimal",
+        "nvd_preferred_cvss"
+      ],
+      "documented_only": true
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV30[].cvssData.vectorString",
+      "sink": {
+        "node": "cve",
+        "property": "cvss_vector"
+      },
+      "transform": [
+        "nvd_preferred_cvss"
+      ],
+      "documented_only": true
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV30[].cvssData.*",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV30[].source",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV30[].type",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV30[].exploitabilityScore",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "vulnerabilities[].cve.metrics.cvssMetricV30[].impactScore",
+      "sink": "evidence",
+      "documented_only": true
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "nvd"
+      ],
+      "reason": "the API that produced the output"
+    }
+  ]
+}

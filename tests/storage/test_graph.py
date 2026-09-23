@@ -8,11 +8,18 @@ from uuid import uuid4
 
 import pytest
 
+import justpen_knowledgebase_mcp.catalog as catalog_module
 from justpen_knowledgebase_mcp.config import ServerConfig
-from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, NotFoundError, RecordConflictError
+from justpen_knowledgebase_mcp.errors import (
+    ConflictError,
+    ExpectedValidationError,
+    InvalidParamsError,
+    NotFoundError,
+    RecordConflictError,
+)
 from justpen_knowledgebase_mcp.models import GetRequest, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
-from justpen_knowledgebase_mcp.storage.graph import _validate_endpoints, graph_types
+from justpen_knowledgebase_mcp.storage.graph import _validate_endpoint_values, _validate_endpoints, graph_types
 
 from .graph_fixtures import admit, evidence_fixture, graph_node, scoped_stack
 
@@ -49,10 +56,11 @@ pytestmark = pytest.mark.integration
         ),
     ],
 )
-def test_catalog_v2_structural_endpoints_accept_locked_relationships(
+def test_structural_endpoints_accept_locked_relationships(
     relation: str, source: dict[str, object], target: dict[str, object]
 ) -> None:
     _validate_endpoints(relation, source, target)
+    _validate_endpoint_values(relation, {}, source, target)
 
 
 @pytest.mark.parametrize(
@@ -95,11 +103,12 @@ def test_catalog_v2_structural_endpoints_accept_locked_relationships(
         ),
     ],
 )
-def test_catalog_v2_structural_endpoints_reject_invalid_relationships(
+def test_structural_endpoints_reject_invalid_relationships(
     relation: str, source: dict[str, object], target: dict[str, object]
 ) -> None:
-    with pytest.raises(InvalidParamsError, match="relation endpoint constraint failed"):
-        _validate_endpoints(relation, source, target)
+    _validate_endpoints(relation, source, target)
+    with pytest.raises(ExpectedValidationError, match="relation endpoint constraint failed"):
+        _validate_endpoint_values(relation, {}, source, target)
 
 
 def write(value):
@@ -485,7 +494,7 @@ async def test_unlimited_lifetime_links_and_owner_bound_pagination(tmp_path):
         rest = await kb.types(TypesRequest(kind="nodes", cursor=types["next_cursor"]))
         assert rest["next_cursor"] is None
         counts = {item["type"]: item["count"] for item in [*types["types"], *rest["types"]]}
-        assert len(counts) == 31
+        assert len(counts) == len(catalog_module.catalog_manifest()["nodes"])
         assert counts["ip_address"] == 1
         assert counts["endpoint"] == 0
 
@@ -804,6 +813,206 @@ async def test_endpoint_cross_field_constraints_rollback_batch(tmp_path, relatio
         assert await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get) == 0
 
 
+async def test_endpoint_values_are_checked_on_the_properties_that_will_be_stored(tmp_path, monkeypatch):
+    """The value check runs after both merges: an id patch that omits a property still sees the
+    stored one, and a keyless rewrite that deduplicates onto a stored edge sees the merged whole."""
+    seen: list[dict[str, object]] = []
+    run = catalog_module._ENDPOINT_CHECKS["has_subdomain_suffix.1"]
+
+    def recording(relation_props, source, target):
+        seen.append(dict(relation_props))
+        run(relation_props, source, target)
+
+    monkeypatch.setitem(catalog_module._ENDPOINT_CHECKS, "has_subdomain_suffix.1", recording)
+    nodes = [
+        {"type": "domain", "properties": {"value": "example.com"}},
+        {"type": "subdomain", "properties": {"value": "api.example.com"}},
+    ]
+    edge = {"type": "has_subdomain", "source_ref": {"node_index": 0}, "target_ref": {"node_index": 1}}
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        created = await kb.write(write({"nodes": nodes, "relations": [{**edge, "properties": {"seen_by": "dnsx"}}]}))
+        await kb.write(write({"relations": [{"id": created["relations"][0]["id"], "properties": {}}]}))
+        again = await kb.write(write({"nodes": nodes, "relations": [{**edge, "properties": {"round": 2}}]}))
+
+        assert again["relations"][0]["id"] == created["relations"][0]["id"]
+        assert seen == [{"seen_by": "dnsx"}, {"seen_by": "dnsx"}, {"seen_by": "dnsx", "round": 2}]
+
+
+@pytest.mark.parametrize(
+    ("nodes", "relation", "message"),
+    [
+        (
+            [
+                {"type": "ip_address", "properties": {"value": "192.0.2.1", "version": 4}},
+                {"type": "subdomain", "properties": {"value": "api.other.com"}},
+            ],
+            {"type": "has_subdomain", "target_ref": {"node_index": 1}, "properties": {}},
+            "relation endpoint types are not allowed",
+        ),
+        (
+            [{"type": "ip_cidr", "properties": {"value": "192.0.2.0/24", "version": 4}}],
+            {"type": "contains_cidr", "target_ref": {"node_index": 0}, "properties": {}},
+            "self edge is not allowed",
+        ),
+        (
+            [
+                {"type": "domain", "properties": {"value": "example.com"}},
+                {"type": "endpoint", "properties": {"url": "https://iodef.example.com/r", "method": "GET"}},
+            ],
+            {"type": "has_contact", "target_ref": {"node_index": 1}, "properties": {"role": "Abuse"}},
+            "/properties/role: expected",
+        ),
+    ],
+)
+async def test_endpoint_value_errors_come_after_the_type_and_property_gates(tmp_path, nodes, relation, message):
+    """Moving the value check after the merge fixes which error a doubly invalid
+    write reports. The endpoint type and self-edge gate still come first, then the relation's own
+    properties, and only then the endpoint values; each case below also fails its value check."""
+    request = {"nodes": nodes, "relations": [{**relation, "source_ref": {"node_index": 0}}]}
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        with pytest.raises(InvalidParamsError, match=message):
+            await kb.write(write(request))
+
+
+async def test_a_registration_is_scoped_to_one_domain_and_keyed_by_its_registry_id(tmp_path):
+    """A registration needs its `has_registration` edge in the same write, cannot move to a
+    second domain, and a re-registration under a new registry id is a second node."""
+    registration = {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}
+    domain = {"type": "domain", "properties": {"value": "example.com"}}
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        with pytest.raises(InvalidParamsError, match="exactly one has_registration"):
+            await kb.write(write({"nodes": [domain, {"type": "whois_registration", "properties": registration}]}))
+
+        edge = {"type": "has_registration", "source_ref": {"node_index": 0}, "target_ref": {"node_index": 1}}
+        created = await kb.write(
+            write(
+                {
+                    "nodes": [domain, {"type": "whois_registration", "properties": registration}],
+                    "relations": [{**edge, "properties": {}}],
+                }
+            )
+        )
+        other = await kb.write(write({"nodes": [{"type": "domain", "properties": {"value": "example.net"}}]}))
+        with pytest.raises(InvalidParamsError, match="different parent"):
+            await kb.write(
+                write(
+                    {
+                        "relations": [
+                            {
+                                "type": "has_registration",
+                                "source_ref": {"id": other["nodes"][0]["id"]},
+                                "target_ref": {"id": created["nodes"][1]["id"]},
+                                "properties": {},
+                            }
+                        ]
+                    }
+                )
+            )
+        with pytest.raises(InvalidParamsError, match="relation endpoint constraint failed"):
+            await kb.write(
+                write(
+                    {
+                        "nodes": [
+                            {"type": "domain", "properties": {"value": "example.org"}},
+                            {"type": "whois_registration", "properties": registration},
+                        ],
+                        "relations": [{**edge, "properties": {}}],
+                    }
+                )
+            )
+        renewed = {**registration, "registration_expires": "2027-08-13T04:00:00Z"}
+        again = await kb.write(
+            write(
+                {
+                    "nodes": [domain, {"type": "whois_registration", "properties": renewed}],
+                    "relations": [{**edge, "properties": {}}],
+                }
+            )
+        )
+        dropped = {"registry": "com", "registry_domain_id": "9999999_DOMAIN_COM-VRSN"}
+        reregistered = await kb.write(
+            write(
+                {
+                    "nodes": [domain, {"type": "whois_registration", "properties": dropped}],
+                    "relations": [{**edge, "properties": {}}],
+                }
+            )
+        )
+
+        assert again["nodes"][1]["id"] == created["nodes"][1]["id"]
+        assert reregistered["nodes"][1]["id"] != created["nodes"][1]["id"]
+
+
+async def test_a_contact_role_is_checked_on_the_merged_edge(tmp_path):
+    """An id patch that omits `role` still passes the role gate, because the check reads the
+    stored role through the merge; a registration role on the name itself is refused."""
+    registration = {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        created = await kb.write(
+            write(
+                {
+                    "nodes": [
+                        {"type": "domain", "properties": {"value": "example.com"}},
+                        {"type": "whois_registration", "properties": registration},
+                        {"type": "email_address", "properties": {"value": "hostmaster@example.com"}},
+                    ],
+                    "relations": [
+                        {
+                            "type": "has_registration",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 1},
+                            "properties": {},
+                        },
+                        {
+                            "type": "has_contact",
+                            "source_ref": {"node_index": 1},
+                            "target_ref": {"node_index": 2},
+                            "properties": {"role": "registrant"},
+                        },
+                    ],
+                }
+            )
+        )
+        contact = created["relations"][1]["id"]
+        patched = await kb.write(write({"relations": [{"id": contact, "properties": {"seen_by": "rdap"}}]}))
+        assert patched["relations"][0]["updated"] is True
+
+        iodef = await kb.write(
+            write(
+                {
+                    "nodes": [
+                        {"type": "endpoint", "properties": {"url": "https://iodef.example.com/r", "method": "POST"}}
+                    ],
+                    "relations": [
+                        {
+                            "type": "has_contact",
+                            "source_ref": {"id": created["nodes"][0]["id"]},
+                            "target_ref": {"node_index": 0},
+                            "properties": {"role": "iodef"},
+                        }
+                    ],
+                }
+            )
+        )
+        await kb.write(write({"relations": [{"id": iodef["relations"][0]["id"], "properties": {"seen_by": "dnsx"}}]}))
+
+        with pytest.raises(InvalidParamsError, match="attach to a whois_registration"):
+            await kb.write(
+                write(
+                    {
+                        "relations": [
+                            {
+                                "type": "has_contact",
+                                "source_ref": {"id": created["nodes"][0]["id"]},
+                                "target_ref": {"id": created["nodes"][2]["id"]},
+                                "properties": {"role": "registrant"},
+                            }
+                        ]
+                    }
+                )
+            )
+
+
 async def test_cname_cycles_and_self_edges_are_preserved(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
@@ -852,8 +1061,24 @@ async def test_a_finding_scopes_to_a_parameter_that_is_itself_scoped_to_an_endpo
                 {"type": "endpoint", "properties": {"url": "https://example.com/b", "method": "GET"}},
                 {"type": "parameter", "properties": {"name": "id", "location": "query"}},
                 {"type": "parameter", "properties": {"name": "id", "location": "query"}},
-                {"type": "finding", "properties": {"title": "reflected value", "severity": "medium"}},
-                {"type": "finding", "properties": {"title": "reflected value", "severity": "medium"}},
+                {
+                    "type": "finding",
+                    "properties": {
+                        "rule": "manual:reflected-value",
+                        "matcher": "",
+                        "title": "reflected value",
+                        "severity": "medium",
+                    },
+                },
+                {
+                    "type": "finding",
+                    "properties": {
+                        "rule": "manual:reflected-value",
+                        "matcher": "",
+                        "title": "reflected value",
+                        "severity": "medium",
+                    },
+                },
             ],
             "relations": [
                 {

@@ -69,6 +69,17 @@ def test_guard_rejects_v1_catalog_contract():
     assert "v1-catalog-fingerprint" not in str(rejected.value)
 
 
+def test_guard_rejects_v2_catalog_contract():
+    value = guard()
+    v2_fingerprint = "d25e5c37a1e363eccfcadbd7919aac85b017b730380badd765fd3c1a9252c7c9"
+    v2 = (schema.SCHEMA_VERSION, 2, v2_fingerprint, schema.INDEX_FORMAT_VERSION, value.paths)
+    # The catalog version and fingerprint both differ; the guard reports the coarser one.
+    with pytest.raises(ContractMismatchError, match="stored catalog version differs") as rejected:
+        value.check(database(cursor(rows=[(0, "blob_sha256")]), cursor(value=v2)))
+    assert rejected.value.dimension == "catalog version"
+    assert v2_fingerprint not in str(rejected.value)
+
+
 @pytest.mark.parametrize("raw", ["{}", "[]", "null", "invalid", '{"wal_low_bytes":true}'])
 def test_policy_requires_complete_strict_persisted_schema(raw):
     with pytest.raises(ConfigurationError):

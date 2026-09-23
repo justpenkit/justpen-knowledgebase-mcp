@@ -1,0 +1,109 @@
+[
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "www.example.com"
+          },
+          "observed_at": "2026-09-20T10:22:40.118273Z",
+          "source": "cdncheck"
+        },
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "198.51.100.20",
+            "version": 4
+          },
+          "observed_at": "2026-09-20T10:22:40.118273Z",
+          "source": "cdncheck"
+        },
+        {
+          "type": "technology",
+          "properties": {
+            "name": "cloudfront"
+          },
+          "observed_at": "2026-09-20T10:22:40.118273Z",
+          "source": "cdncheck"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "protected_by",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {
+            "kind": "cdn"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "198.51.100.21",
+            "version": 4,
+            "cdn_provider": "cloudfront"
+          },
+          "observed_at": "2026-09-20T10:22:40.201938Z",
+          "source": "cdncheck"
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "203.0.113.50",
+            "version": 4,
+            "waf_provider": "sucuri"
+          },
+          "observed_at": "2026-09-20T10:22:40.309112Z",
+          "source": "cdncheck"
+        }
+      ]
+    }
+  },
+  {
+    "file": "output.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "198.51.100.77",
+            "version": 4,
+            "cloud_provider": "aws"
+          },
+          "observed_at": "2026-09-20T10:22:40.417203Z",
+          "source": "cdncheck"
+        }
+      ]
+    }
+  }
+]

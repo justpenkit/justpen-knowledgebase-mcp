@@ -44,6 +44,8 @@ nav:
       - Overview: tools/index.md
       - Graph and search: tools/graph.md
       - Catalog types and formats: reference/catalog.md
+      - ASM and OSINT coverage: reference/asm-coverage.md
+      - Catalog v3 design review: reference/catalog-review.md
       - Evidence: tools/evidence.md
       - Maintenance: tools/maintenance.md
   - Contributing:

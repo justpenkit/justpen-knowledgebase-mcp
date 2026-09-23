@@ -1,23 +1,30 @@
-"""Catalog v2 manifest, discovery schema, and strict record validators."""
+"""Catalog v3 manifest, discovery schema, and strict record validators."""
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import ipaddress
 import json
+import math
 import re
+from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
+from itertools import pairwise
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
+from .catalog_docs import CAPS as _DOC_CAPS, DOCS as _DOCS
 from .errors import ExpectedValidationError
 from .mutations import validate_properties
-from .psl import classify_dns_name
-from .service_names import is_service_name, secure_required
+from .psl import classify_dns_name, rules_digest
+from .service_names import is_service_name, registry_digest, secure_required
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-CATALOG_VERSION = 2
+CATALOG_VERSION = 3
 
 _COMMON = {
     "additional_properties": True,
@@ -25,128 +32,82 @@ _COMMON = {
     "depth": 16,
     "integers": "signed64",
     "numbers": "finite double",
+    "optional_nonnull": True,
     "properties_bytes": 65536,
     "required_nonnull": True,
 }
 
-_FORMATS = {
-    "alpn_tokens": (
-        "An array of zero or more ASCII tokens matching `[A-Za-z0-9./_-]{1,255}`; order is not identity-significant "
-        "and duplicates are preserved."
-    ),
-    "asn": "A strict JSON integer from 0 through 4294967295.",
-    "bucket_name": (
-        "The provider-global name of an object-storage bucket: 3 to 222 lowercase ASCII characters from "
-        "letters, digits, hyphen, underscore and dot, starting and ending alphanumeric, without a doubled "
-        "dot, and never a dotted-quad IPv4 address. Every provider is stricter than this union rule, and "
-        "the declared provider fixes which of the narrower spellings is accepted."
-    ),
-    "caa_parameters": (
-        "An array of objects with name and value strings. Names start alphanumeric and continue alphanumeric or "
-        "hyphen. Values are empty or use ASCII 0x21-0x3A and 0x3C-0x7E."
-    ),
-    "cidr": "Canonical strict IPv4 or IPv6 network with an explicit prefix length.",
-    "cpe23_or_empty": (
-        "The empty string, or a lowercase CPE 2.3 formatted string (NIST IR 7695): 'cpe:2.3:' followed by the "
-        "part and ten colon-separated components, each '*', '-', or an escaped attribute value optionally "
-        "anchored by '*' or a run of '?', at most 512 characters. The legacy 'cpe:/' URI binding is rejected. "
-        "No required map references this rule, so a stored cpe property is never checked against it; the rule "
-        "states the spelling writers must produce and readers must re-validate."
-    ),
-    "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
-    "cwe": "A string matching `CWE-[0-9]{1,6}` exactly, uppercase as MITRE publishes it.",
-    "dkim_selector": (
-        "A lowercase ASCII DKIM selector of at most 253 bytes - in practice far less, since the owner name "
-        "`<selector>._domainkey.<domain>` must itself fit in 253 bytes - as one or more dot-separated labels "
-        "of at most 63 bytes each, written without the `_domainkey` suffix or the domain."
-    ),
-    "dmarc": (
-        "Printable ASCII of at most 4096 characters beginning with 'v=DMARC1' followed by a semicolon, a normal "
-        "space, or end of text."
-    ),
-    "dns_name": (
-        "A lowercase ASCII domain or subdomain spelling classified by the bundled ICANN PSL; at least two labels, "
-        "labels at most 63 bytes, total at most 253 bytes, and no trailing dot."
-    ),
-    "dns_or_explicit_empty": "dns_name or the explicit empty string for no SNI offer; IP literals are rejected.",
-    "email_address": (
-        "A lowercase ASCII mailbox of at most 254 characters: an RFC 5322 dot-atom local part of at most 64 "
-        "characters, one `@`, and a domain that satisfies dns_name. Quoted local parts, address literals and "
-        "display names are rejected. A local part is case-sensitive on the wire; this rule requires the "
-        "lowercase spelling anyway, so one mailbox is one node."
-    ),
-    "http_fingerprint_value": (
-        "Either a signed 32-bit decimal integer written in ASCII without a leading zero or a plus sign, for a "
-        "MurmurHash3 favicon hash, or exactly 64 lowercase hexadecimal characters for a response digest. The "
-        "declared kind fixes which one is accepted."
-    ),
-    "http_url": (
-        "Canonical absolute ASCII http/https URL with lowercase host, mandatory path, no userinfo, fragment, "
-        "whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase percent escape. "
-        "A submitted query string is validated and then removed before identity and storage, so one endpoint "
-        "holds one path; parameter names belong to parameter nodes."
-    ),
-    "ip": "Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.",
-    "ip_version": "A strict JSON integer equal to 4 or 6.",
-    "method": "One to 32 characters matching an uppercase HTTP method token.",
-    "mta_sts": (
-        "Printable ASCII of at most 4096 characters beginning with 'v=STSv1' followed by a semicolon, a normal "
-        "space, or end of text: the TXT record at `_mta-sts.<domain>`, not the policy file body."
-    ),
-    "parameter_name": (
-        "1 to 128 printable ASCII characters without space, `&`, `=`, or `#`; one single parameter name, "
-        "never a raw query string."
-    ),
-    "phone_e164": "An E.164 number: `+`, a leading digit from 1 through 9, and in total 2 to 15 digits.",
-    "printable_text_1024": "A string of 1-1024 printable Unicode characters.",
-    "printable_text_200": "A string of 1-200 printable Unicode characters.",
-    "redirect_status": "A strict JSON integer in 301, 302, 303, 307, or 308.",
-    "repo_name": (
-        "A 1-100 character lowercase ASCII repository name from letters, digits, dot, underscore and hyphen, "
-        "holding at least one alphanumeric character and never the reserved `.` or `..`. Hosting platforms "
-        "resolve names case-insensitively, so the lowercase spelling is required to keep one repository one node."
-    ),
-    "repo_owner": (
-        "A 1-255 character lowercase ASCII owner path of one or more `/`-separated segments, each 1-100 "
-        "characters from letters, digits, dot, underscore and hyphen and each starting and ending "
-        "alphanumeric. The separator exists for nested GitLab groups; the declared platform fixes whether "
-        "more than one segment is accepted."
-    ),
-    "rir_handle": (
-        "A regional-registry object handle of 2 to 64 ASCII characters, starting and ending alphanumeric and "
-        "continuing alphanumeric or hyphen. Handles are case-sensitive and stored exactly as the registry "
-        "publishes them: RIPE and AFRINIC derive them from the organisation name and preserve its case "
-        "(ORG-nG51-RIPE, ORG-Ab1-AFRINIC), so a writer must never uppercase one. Handles are unique within one "
-        "registry, never across registries."
-    ),
-    "service_name": "A member of the bundled versioned service name whitelist.",
-    "sha256": "Exactly 64 lowercase ASCII hexadecimal characters.",
-    "spf": "Printable ASCII beginning with `v=spf1` followed by a normal space or end of text.",
-    "srv_label": "A 2-63 byte lowercase ASCII SRV label beginning with underscore.",
-    "tech_token": (
-        "A 1-63 character lowercase ASCII technology slug that starts and ends alphanumeric and may contain "
-        "interior dot, underscore, plus, or hyphen."
-    ),
-    "tenant_id": (
-        "A 1-128 character lowercase ASCII identity-tenant identifier that starts and ends alphanumeric and "
-        "may contain interior dot, underscore or hyphen. The declared provider fixes the narrower spelling, "
-        "and every member of the provider enum has one: a canonical lowercase UUID for Entra ID, a bare "
-        "organization slug for Okta."
-    ),
-    "tls_cipher_name": (
-        "The spelling of an IANA TLS cipher suite name: 5 to 128 uppercase ASCII characters beginning 'TLS_', "
-        "with underscore-separated alphanumeric components. Shape only; membership in the IANA registry is not "
-        "checked, so a well-formed name that no suite bears is accepted."
-    ),
-    "tls_fingerprint_value": (
-        "Exactly 32 lowercase hexadecimal characters for a JA3S MD5 digest, or exactly 62 for a JARM "
-        "fingerprint. The declared kind fixes which length is accepted."
-    ),
-    "txt_value": (
-        "1 to 4096 printable ASCII characters, the concatenated and unquoted character-strings of one TXT RRset."
-    ),
-    "uint8": "A strict JSON integer from 0 through 255.",
-    "uint16": "A strict JSON integer from 0 through 65535.",
+# Every format id with its behavior version. The prose lives in `catalog_docs.DOCS`; the version
+# moves, and with it the fingerprint, whenever what the validator accepts changes.
+_FORMATS: dict[str, int] = {
+    "alpn_tokens": 1,
+    "asn": 1,
+    "boolean": 1,
+    "breach_token_or_empty": 1,
+    "bucket_name": 1,
+    "calendar_date": 1,
+    "caa_parameters": 1,
+    "cidr": 1,
+    "cloud_account_id": 1,
+    "cloud_region": 1,
+    "cpe23": 1,
+    "credential_key_id": 1,
+    "cve": 1,
+    "cvss_score": 1,
+    "cvss_vector": 1,
+    "cwe": 1,
+    "dkim_selector": 1,
+    "dmarc": 1,
+    "dns_name": 1,
+    "dns_or_explicit_empty": 1,
+    "email_address": 1,
+    "finding_matcher_or_empty": 1,
+    "finding_rule": 1,
+    "git_ref_name": 1,
+    "hex_serial": 1,
+    "html_token": 1,
+    "html_token_or_empty": 1,
+    "epp_status_list": 1,
+    "http_fingerprint_value": 1,
+    "http_status": 1,
+    "http_url": 1,
+    "ip": 1,
+    "ip_version": 1,
+    "iso3166_alpha2": 1,
+    "media_type": 1,
+    "method": 1,
+    "mta_sts": 1,
+    "multiline_text_4096": 1,
+    "mx_pattern_list": 1,
+    "parameter_name": 1,
+    "partial_date": 1,
+    "phone_e164": 1,
+    "printable_text_1024": 1,
+    "printable_text_200": 1,
+    "probability": 1,
+    "public_suffix": 1,
+    "redirect_status": 1,
+    "registry_domain_id": 1,
+    "repo_name": 1,
+    "repo_owner": 1,
+    "rir_handle": 1,
+    "service_name": 1,
+    "sha256": 1,
+    "spf": 1,
+    "srv_label": 1,
+    "tag_list": 1,
+    "tech_token": 1,
+    "tech_version": 1,
+    "tenant_id": 1,
+    "tls_cipher_name": 1,
+    "tls_fingerprint_value": 1,
+    "txt_value": 1,
+    "uint8": 1,
+    "uint16": 1,
+    "uint32": 1,
+    "uint63": 1,
+    "username_or_empty": 1,
+    "utc_timestamp": 1,
 }
 
 
@@ -169,15 +130,21 @@ def _relation(
     targets: list[str],
     *,
     required: dict[str, str | list[str]] | None = None,
+    optional: dict[str, str | list[str]] | None = None,
     identity: dict[str, object] | None = None,
     self_edge: bool = False,
+    checks: list[str] | None = None,
+    canonicalize: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "identity": identity if identity is not None else _identity([]),
         "required": required if required is not None else {},
+        "optional": optional if optional is not None else {},
         "self_edge": self_edge,
         "sources": sources,
         "targets": targets,
+        "checks": checks if checks is not None else [],
+        "canonicalize": canonicalize if canonicalize is not None else [],
     }
 
 
@@ -187,6 +154,8 @@ _SCOPE_FINDING = {"relation": "has_finding", "endpoint": "source"}
 _SCOPE_DKIM = {"relation": "has_dkim_selector", "endpoint": "source"}
 _SCOPE_PARAMETER = {"relation": "has_parameter", "endpoint": "source"}
 _SCOPE_MTA_STS = {"relation": "has_mta_sts_policy", "endpoint": "source"}
+_SCOPE_REGISTRATION = {"relation": "has_registration", "endpoint": "source"}
+_RIRS = ["arin", "ripe", "apnic", "lacnic", "afrinic"]
 _CAA_ORDER: dict[str, object] = {
     "property": "parameters",
     "algorithm": "sha256",
@@ -207,30 +176,106 @@ _ALPN_ORDER: dict[str, object] = {
     "preserve_duplicates": True,
 }
 
-_NODES = {
-    "asn": {"identity": _identity(["value"]), "required": {"value": "asn"}},
+_NODES: dict[str, dict[str, Any]] = {
+    "asn": {
+        "identity": _identity(["value"]),
+        "required": {"value": "asn"},
+        "checks": ["asn_assigned.1"],
+        "optional": {"name": "printable_text_200", "country": "iso3166_alpha2", "rir": _RIRS},
+    },
     "certificate": {
         "identity": _identity(["der_sha256"]),
         "required": {"der_sha256": "sha256"},
+        "optional": {
+            "self_signed": "boolean",
+            "subject_cn": "printable_text_1024",
+            "issuer_dn": "printable_text_1024",
+            "not_before": "utc_timestamp",
+            "not_after": "utc_timestamp",
+            "serial": "hex_serial",
+        },
     },
-    "cve": {"identity": _identity(["value"]), "required": {"value": "cve"}},
-    "cwe": {"identity": _identity(["value"]), "required": {"value": "cwe"}},
+    "cloud_account": {
+        "identity": _identity(["provider", "account_id"]),
+        "required": {"provider": ["aws", "gcp", "azure"], "account_id": "cloud_account_id"},
+        "checks": ["cloud_account_spelling.1"],
+    },
+    "cloud_resource": {
+        "identity": _identity(["hostname"]),
+        "required": {
+            "service": [
+                "aws_cloudfront",
+                "aws_api_gateway",
+                "aws_lambda_url",
+                "aws_elastic_beanstalk",
+                "aws_elb",
+                "azure_app_service",
+                "azure_cloud_service",
+                "azure_public_ip",
+                "azure_traffic_manager",
+                "azure_front_door",
+                "azure_api_management",
+                "gcp_app_engine",
+                "gcp_firebase_hosting",
+                "gcp_firebase_rtdb",
+            ],
+            "hostname": "dns_name",
+        },
+        "optional": {"region": "cloud_region"},
+        "checks": ["cloud_resource_hostname.1"],
+    },
+    "cve": {
+        "identity": _identity(["value"]),
+        "required": {"value": "cve"},
+        "optional": {
+            "cvss_score": "cvss_score",
+            "cvss_vector": "cvss_vector",
+            "epss_score": "probability",
+            "epss_percentile": "probability",
+            "kev_added": "calendar_date",
+            "published": "utc_timestamp",
+        },
+    },
+    "cwe": {"identity": _identity(["value"]), "required": {"value": "cwe"}, "optional": {"name": "printable_text_200"}},
     "dkim_record": {
         "identity": _identity(["selector"], scope=_SCOPE_DKIM),
         "required": {"selector": "dkim_selector", "value": "txt_value"},
     },
     "dmarc_record": {"identity": _identity(["value"]), "required": {"value": "dmarc"}},
-    "domain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}},
+    "domain": {
+        "identity": _identity(["value"]),
+        "required": {"value": "dns_name"},
+        "optional": {"wildcard": "boolean"},
+        "checks": ["dns_name_kind.1"],
+    },
     "email_address": {"identity": _identity(["value"]), "required": {"value": "email_address"}},
     "endpoint": {
         "identity": _identity(["url", "method"]),
         "required": {"url": "http_url", "method": "method"},
+        "optional": {
+            "status": "http_status",
+            "title": "printable_text_1024",
+            "content_length": "uint63",
+            "content_type": "media_type",
+            "webserver": "printable_text_200",
+        },
+        "canonicalize": ["endpoint_url_drop_query.1"],
     },
     "finding": {
-        "identity": _identity(["title"], scope=_SCOPE_FINDING),
+        "identity": _identity(["rule", "matcher"], scope=_SCOPE_FINDING),
         "required": {
+            "rule": "finding_rule",
+            "matcher": "finding_matcher_or_empty",
             "title": "printable_text_200",
-            "severity": ["info", "low", "medium", "high", "critical"],
+            "severity": ["info", "low", "medium", "high", "critical", "unknown"],
+        },
+        "optional": {
+            "scanner": "tech_token",
+            "cvss_score": "cvss_score",
+            "cvss_vector": "cvss_vector",
+            "confidence": ["unknown", "low", "medium", "high", "confirmed"],
+            "tags": "tag_list",
+            "description": "multiline_text_4096",
         },
     },
     "host_key": {
@@ -255,29 +300,34 @@ _NODES = {
             "kind": ["favicon_mmh3", "body_sha256", "header_sha256"],
             "value": "http_fingerprint_value",
         },
+        "checks": ["http_fingerprint_value_kind.1"],
     },
     "identity_tenant": {
         "identity": _identity(["provider", "tenant_id"]),
         "required": {"provider": ["entra_id", "okta"], "tenant_id": "tenant_id"},
+        "checks": ["tenant_id_spelling.1"],
     },
     "ip_address": {
         "identity": _identity(["value"]),
         "required": {"value": "ip", "version": "ip_version"},
+        "optional": {"cdn_provider": "tech_token", "waf_provider": "tech_token", "cloud_provider": "tech_token"},
+        "checks": ["ip_address_version.1"],
     },
     "ip_cidr": {
         "identity": _identity(["value"]),
         "required": {"value": "cidr", "version": "ip_version"},
+        "optional": {"netname": "printable_text_200", "country": "iso3166_alpha2", "rir": _RIRS},
+        "checks": ["ip_cidr_version.1"],
     },
     "mta_sts_policy": {
         "identity": _identity(["value"], scope=_SCOPE_MTA_STS),
         "required": {"value": "mta_sts"},
+        "optional": {"mode": ["enforce", "testing", "none"], "max_age": "uint32", "mx": "mx_pattern_list"},
     },
     "organization": {
         "identity": _identity(["registry", "handle"]),
-        "required": {
-            "registry": ["arin", "ripe", "apnic", "lacnic", "afrinic"],
-            "handle": "rir_handle",
-        },
+        "required": {"registry": _RIRS, "handle": "rir_handle"},
+        "optional": {"name": "printable_text_200"},
     },
     "parameter": {
         "identity": _identity(["name", "location"], scope=_SCOPE_PARAMETER),
@@ -290,10 +340,12 @@ _NODES = {
     "port": {
         "identity": _identity(["transport", "number"], scope=_SCOPE_OPEN_PORT),
         "required": {"number": "uint16", "transport": ["tcp", "udp", "sctp"]},
+        "checks": ["port_number_assigned.1"],
     },
     "registrar": {
         "identity": _identity(["iana_id"]),
         "required": {"iana_id": "uint16", "name": "printable_text_200"},
+        "checks": ["registrar_iana_assigned.1"],
     },
     "repository": {
         "identity": _identity(["host", "owner", "name"]),
@@ -303,24 +355,58 @@ _NODES = {
             "owner": "repo_owner",
             "name": "repo_name",
         },
+        "optional": {
+            "default_branch": "git_ref_name",
+            "visibility": ["public", "private", "internal"],
+            "archived": "boolean",
+            "fork": "boolean",
+        },
+        "checks": ["repository_owner_spelling.1"],
     },
     "secret": {
         "identity": _identity(["value_sha256"]),
         "required": {"value_sha256": "sha256"},
+        "optional": {
+            "kind": [
+                "password",
+                "password_hash",
+                "api_key",
+                "access_token",
+                "private_key",
+                "session_token",
+                "connection_string",
+                "webhook_url",
+                "other",
+            ],
+            "detector": "tech_token",
+            "verified": "boolean",
+            "key_id": "credential_key_id",
+        },
+        "checks": ["secret_plaintext_keys.1"],
     },
     "service": {
         "identity": _identity(["name"], scope=_SCOPE_SERVICE),
         "required": {"name": "service_name"},
+        "optional": {"product": "printable_text_200", "version": "tech_version", "secure": "boolean"},
+        "checks": ["service_secure_flag.1"],
     },
     "spf_record": {"identity": _identity(["value"]), "required": {"value": "spf"}},
     "storage_bucket": {
         "identity": _identity(["provider", "name"]),
         "required": {"provider": ["aws_s3", "gcp_gcs", "azure_blob"], "name": "bucket_name"},
+        "checks": ["bucket_name_spelling.1"],
     },
-    "subdomain": {"identity": _identity(["value"]), "required": {"value": "dns_name"}},
+    "subdomain": {
+        "identity": _identity(["value"]),
+        "required": {"value": "dns_name"},
+        "optional": {"wildcard": "boolean", "wildcard_answer": "boolean"},
+        "checks": ["dns_name_kind.1"],
+    },
     "technology": {
         "identity": _identity(["name"]),
         "required": {"name": "tech_token"},
+        "optional": {"cpe": "cpe23"},
+        "checks": ["cpe_product_level.1"],
     },
     "tls_cipher_suite": {
         "identity": _identity(["version", "name"]),
@@ -332,14 +418,49 @@ _NODES = {
     "tls_fingerprint": {
         "identity": _identity(["kind", "value"]),
         "required": {"kind": ["jarm", "ja3s"], "value": "tls_fingerprint_value"},
+        "checks": ["tls_fingerprint_length.1"],
     },
-    "txt_record": {"identity": _identity(["value"]), "required": {"value": "txt_value"}},
+    "whois_registration": {
+        "identity": _identity(["registry", "registry_domain_id"], scope=_SCOPE_REGISTRATION),
+        "required": {"registry": "public_suffix", "registry_domain_id": "registry_domain_id"},
+        "optional": {
+            "registration_created": "utc_timestamp",
+            "registration_updated": "utc_timestamp",
+            "registration_expires": "utc_timestamp",
+            "epp_status": "epp_status_list",
+            "dnssec_signed": "boolean",
+            "whois_server": "dns_name",
+        },
+        "checks": ["registry_domain_id_assigned.1"],
+    },
+    "txt_record": {
+        "identity": _identity(["value"]),
+        "required": {"value": "txt_value"},
+        "checks": ["txt_record_diversion.1"],
+    },
 }
 
 _D = ["domain", "subdomain"]
 _RELATIONS = {
     "affected_by": _relation(["service", "finding", "endpoint"], ["cve"]),
     "announced_by": _relation(["ip_cidr"], ["asn"]),
+    "authenticates": _relation(
+        ["secret"],
+        [
+            "email_address",
+            "cloud_account",
+            "identity_tenant",
+            "repository",
+            "service",
+            "endpoint",
+            "storage_bucket",
+            "cloud_resource",
+        ],
+        required={"username": "username_or_empty", "breach": "breach_token_or_empty"},
+        optional={"breach_title": "printable_text_200", "breach_date": "partial_date", "verified": "boolean"},
+        identity=_identity(["username", "breach"]),
+        checks=["secret_plaintext_keys.1"],
+    ),
     "backed_by_bucket": _relation(["domain", "subdomain", "endpoint"], ["storage_bucket"]),
     "caa_issue": _relation(
         _D,
@@ -347,6 +468,7 @@ _RELATIONS = {
         required={"flags": "uint8", "parameters": "caa_parameters"},
         identity=_identity(["flags", "parameters"], order_independent=_CAA_ORDER),
         self_edge=True,
+        canonicalize=["caa_parameter_name_fold.1"],
     ),
     "caa_issuewild": _relation(
         _D,
@@ -354,10 +476,11 @@ _RELATIONS = {
         required={"flags": "uint8", "parameters": "caa_parameters"},
         identity=_identity(["flags", "parameters"], order_independent=_CAA_ORDER),
         self_edge=True,
+        canonicalize=["caa_parameter_name_fold.1"],
     ),
     "cname_to": _relation(_D, _D, self_edge=True),
-    "contains_cidr": _relation(["ip_cidr"], ["ip_cidr"]),
-    "contains_ip": _relation(["ip_cidr"], ["ip_address"]),
+    "contains_cidr": _relation(["ip_cidr"], ["ip_cidr"], checks=["contains_cidr_proper_subnet.1"]),
+    "contains_ip": _relation(["ip_cidr"], ["ip_address"], checks=["contains_ip_member.1"]),
     "covers_name": _relation(
         ["certificate"],
         _D,
@@ -366,17 +489,19 @@ _RELATIONS = {
     ),
     "dname_to": _relation(_D, _D, self_edge=True),
     "exposes_secret": _relation(
-        ["repository", "endpoint", "storage_bucket"],
+        ["repository", "endpoint", "storage_bucket", "cloud_resource"],
         ["secret"],
         required={"location": "printable_text_1024"},
         identity=_identity(["location"]),
+        checks=["secret_plaintext_keys.1"],
     ),
-    "federates_with": _relation(_D, ["identity_tenant"]),
+    "federates_with": _relation(_D, ["identity_tenant"], optional={"namespace_type": ["managed", "federated"]}),
     "has_contact": _relation(
-        ["organization", "registrar", "domain", "subdomain", "repository"],
-        ["email_address", "phone"],
-        required={"role": ["abuse", "admin", "tech", "registrant", "billing", "noc", "security", "published"]},
+        ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration"],
+        ["email_address", "phone", "endpoint"],
+        required={"role": ["abuse", "admin", "tech", "registrant", "billing", "noc", "security", "published", "iodef"]},
         identity=_identity(["role"]),
+        checks=["has_contact_registration_roles.1", "has_contact_endpoint_role.1"],
     ),
     "has_dkim_selector": _relation(_D, ["dkim_record"]),
     "has_dmarc": _relation(_D, ["dmarc_record"]),
@@ -397,6 +522,9 @@ _RELATIONS = {
             "identity_tenant",
             "secret",
             "mta_sts_policy",
+            "whois_registration",
+            "cloud_account",
+            "cloud_resource",
         ],
         ["finding"],
     ),
@@ -412,6 +540,7 @@ _RELATIONS = {
     "has_nameserver": _relation(_D, _D, self_edge=True),
     "has_open_port": _relation(["ip_address"], ["port"]),
     "has_parameter": _relation(["endpoint"], ["parameter"]),
+    "has_registration": _relation(["domain"], ["whois_registration"], checks=["has_registration_suffix_match.1"]),
     "has_service": _relation(["port"], ["service"]),
     "has_soa_primary": _relation(_D, _D, self_edge=True),
     "has_spf": _relation(_D, ["spf_record"]),
@@ -428,7 +557,7 @@ _RELATIONS = {
         identity=_identity(["service", "protocol", "port", "priority", "weight"]),
         self_edge=True,
     ),
-    "has_subdomain": _relation(_D, ["subdomain"]),
+    "has_subdomain": _relation(_D, ["subdomain"], checks=["has_subdomain_suffix.1"]),
     "has_svcb_binding": _relation(
         _D,
         _D,
@@ -439,7 +568,19 @@ _RELATIONS = {
     "has_tls_fingerprint": _relation(["service"], ["tls_fingerprint"]),
     "has_txt_record": _relation(_D, ["txt_record"]),
     "has_weakness": _relation(["finding", "cve"], ["cwe"]),
+    "hosted_on": _relation(["domain", "subdomain", "endpoint"], ["cloud_resource"]),
+    "in_account": _relation(
+        ["cloud_resource", "storage_bucket"], ["cloud_account"], checks=["in_account_provider_match.1"]
+    ),
     "issued_by": _relation(["certificate"], ["certificate"], self_edge=True),
+    "links_to": _relation(
+        ["endpoint"],
+        ["endpoint"],
+        required={"element": "html_token_or_empty"},
+        optional={"attribute": "html_token"},
+        identity=_identity(["element"]),
+        self_edge=True,
+    ),
     "operated_by": _relation(["asn", "ip_cidr"], ["organization"]),
     "owns_repository": _relation(_D, ["repository"]),
     "presents_certificate": _relation(
@@ -451,6 +592,7 @@ _RELATIONS = {
             "alpn_offered": "alpn_tokens",
         },
         identity=_identity(["mode", "server_name", "alpn_offered"], order_independent=_ALPN_ORDER),
+        optional={"name_mismatch": "boolean"},
     ),
     "presents_host_key": _relation(["service"], ["host_key"]),
     "protected_by": _relation(
@@ -466,20 +608,16 @@ _RELATIONS = {
         identity=_identity(["status"]),
         self_edge=True,
     ),
-    "registered_through": _relation(["domain"], ["registrar"]),
+    "registered_through": _relation(["whois_registration"], ["registrar"]),
     "resolves_to": _relation(_D, ["ip_address"]),
     "reverse_resolves_to": _relation(["ip_address"], _D),
-    "runs_technology": _relation(["service", "endpoint", "domain", "subdomain"], ["technology"]),
+    "runs_technology": _relation(
+        ["service", "endpoint", "domain", "subdomain"],
+        ["technology"],
+        optional={"version": "tech_version", "cpe": "cpe23"},
+    ),
     "serves_endpoint": _relation(["service"], ["endpoint"]),
     "supports_tls_cipher": _relation(["service"], ["tls_cipher_suite"]),
-}
-
-_CATALOG = {
-    "common": _COMMON,
-    "formats": _FORMATS,
-    "nodes": _NODES,
-    "relations": _RELATIONS,
-    "version": CATALOG_VERSION,
 }
 
 
@@ -529,70 +667,31 @@ def _ensure_scope_contract() -> None:
 
 _ensure_scope_contract()
 
-# The canonical serialized contract is immutable; callers receive a fresh tree.
-CATALOG_JSON = json.dumps(_CATALOG, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+# Declared rewrites of a non-canonical spelling, applied before validation, identity and storage.
+# Each is value canonicalization, not the JSON type coercion `_COMMON["coercion"]` refuses.
 
 
-def _ensure_data_loaded() -> None:
-    """Load and verify bundled registries while the catalog module imports."""
-    classify_dns_name("example.com")
-    if not is_service_name("unknown"):
-        raise RuntimeError("bundled service name registry is missing required sentinel")
+def _canonicalize_endpoint_url(properties: dict[str, Any]) -> None:
+    """Drop a query only from a URL that is valid with it, so a malformed query is still rejected.
 
-
-def _catalog_fingerprint() -> str:
-    _ensure_data_loaded()
-    return hashlib.sha256(CATALOG_JSON.encode("utf-8")).hexdigest()
-
-
-CATALOG_FINGERPRINT = _catalog_fingerprint()
-
-
-def catalog_manifest() -> dict[str, Any]:
-    """Return an isolated copy of the fixed executable catalog contract."""
-    return cast("dict[str, Any]", json.loads(CATALOG_JSON))
-
-
-def _read_only(value: object) -> object:
-    """Rebuild one parsed catalog subtree out of containers that refuse in-place mutation."""
-    if isinstance(value, dict):
-        return MappingProxyType({key: _read_only(item) for key, item in cast("dict[str, object]", value).items()})
-    if isinstance(value, list):
-        return tuple(_read_only(item) for item in cast("list[object]", value))
-    return value
-
-
-# `catalog_manifest()` re-parses `CATALOG_JSON` on every call, and the write path reaches it several
-# times per record inside `BEGIN IMMEDIATE`. This is the same parse performed once at import, for
-# callers that only read. The wrapping goes all the way down rather than proxying the top mapping
-# alone: a shallow proxy would still let a reader mutate one type definition in place and corrupt
-# the catalog for the rest of the process, which is the exact failure this handle must not enable.
-_CATALOG_VIEW: Mapping[str, Any] = cast("Mapping[str, Any]", _read_only(json.loads(CATALOG_JSON)))
-
-
-def catalog_view() -> Mapping[str, Any]:
-    """Return the shared read-only catalog; callers that mutate use `catalog_manifest()` instead.
-
-    Mappings are `MappingProxyType` and JSON arrays are tuples, at every depth, so the structure
-    cannot be edited by accident and cannot be handed onward into a response that edits it.
+    Stripping first would let `?a b<>` through: validation would see only the clean path. An empty
+    query (`/search?`) is valid and dropped too.
     """
-    return _CATALOG_VIEW
-
-
-# Both CAA relation types carry the same parameter list, and `_CAA_ORDER` makes it identity-bearing.
-# RFC 8659 parameter tags are case-insensitive, so `accounturi` and `accountURI` described one fact
-# and forked it into two edges. The fold belongs here rather than in `identity.py`: canonicalizing
-# the property keeps the stored spelling and the identity derived from it in agreement, exactly as
-# `endpoint.url` already does, whereas folding only the digest would leave one edge holding whichever
-# spelling was written last. Declaring the rule in the catalog is not available - it changes
-# `CATALOG_JSON` and with it the fingerprint `SchemaGuard.check` compares for exact equality, which
-# no existing workspace can be upgraded past.
-_CAA_PARAMETER_TYPES = ("caa_issue", "caa_issuewild")
+    url = properties.get("url")
+    if type(url) is not str or "?" not in url:
+        return
+    base, _separator, query = url.partition("?")
+    if _valid_url(url) or (query == "" and _valid_url(base)):
+        properties["url"] = base
 
 
 def _canonicalize_caa_parameters(properties: dict[str, Any]) -> None:
     """Fold ASCII parameter tags only; a tag this leaves alone is one validation refuses anyway.
 
+    RFC 8659 parameter tags are case-insensitive, while `_CAA_ORDER` makes the list identity-bearing,
+    so `accounturi` and `accountURI` would otherwise fork one fact into two edges. Canonicalizing
+    the property keeps the stored spelling and the identity derived from it in agreement.
     `"\u212a".lower()` is `"k"`, so folding a non-ASCII name would admit a spelling
     `_valid_caa_parameters` rejects today. Canonicalization runs before validation and must not
     widen it.
@@ -605,47 +704,6 @@ def _canonicalize_caa_parameters(properties: dict[str, Any]) -> None:
         return
     folded = [(cast("dict[str, Any]", item), cast("str", item["name"])) for item in items]
     properties["parameters"] = [{**item, "name": name.lower() if name.isascii() else name} for item, name in folded]
-
-
-def canonicalize_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
-    """Rewrite the declared non-canonical spellings in place before identity and storage.
-
-    Two rewrites exist. `endpoint.url` drops its query string, so one path is one node rather than
-    one node per observed parameter value; parameter names live on `parameter` nodes. A CAA
-    parameter name is case-folded, because the tag is case-insensitive on the wire while the
-    parameter list is identity-bearing. Both are value canonicalization, not the JSON type coercion
-    `_COMMON["coercion"]` refuses.
-    """
-    if kind == "nodes" and type_name == "endpoint":
-        url = properties.get("url")
-        if type(url) is str and "?" in url:
-            properties["url"] = url.split("?", 1)[0]
-    elif kind == "relations" and type_name in _CAA_PARAMETER_TYPES:
-        _canonicalize_caa_parameters(properties)
-
-
-def _published_rule(rule: str | list[str] | tuple[str, ...]) -> str | list[str]:
-    """Spell one required rule the way clients already receive it, whatever container holds it."""
-    return list(rule) if isinstance(rule, tuple) else rule
-
-
-def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
-    """Canonicalize declared spellings, then enforce required properties and cross-field rules."""
-    canonicalize_record(kind, type_name, properties)
-    validate_properties(properties)
-    manifest = catalog_view()
-    if kind not in ("nodes", "relations"):
-        raise ExpectedValidationError("unknown catalog type")
-    definitions = cast("Mapping[str, Mapping[str, Any]]", manifest[kind])
-    if type_name not in definitions:
-        raise ExpectedValidationError("unknown catalog type")
-    required = cast("Mapping[str, str | list[str] | tuple[str, ...]]", definitions[type_name]["required"])
-    for field, rule in required.items():
-        if field not in properties or not _valid_field(properties[field], rule):
-            # The shared view spells a JSON array as a tuple; the published message keeps the list
-            # spelling clients already receive, so routing this read changes no client-visible text.
-            raise ExpectedValidationError(f"/properties/{field}: expected {_published_rule(rule)}")
-    _validate_cross_fields(kind, type_name, properties)
 
 
 def _cross_field_dns_name(type_name: str, properties: dict[str, Any]) -> None:
@@ -757,16 +815,49 @@ def _cross_field_repository(_type_name: str, properties: dict[str, Any]) -> None
 
 
 # A secret node holds a digest so that occurrences join; the secret itself must never reach storage,
-# where an additional property would also be property-indexed and full-text searchable.
+# where an additional property would also be property-indexed and full-text searchable. The names
+# include the fields scanners use for the secret: trufflehog `Raw`, `RawV2` and `Redacted`, gitleaks
+# `Secret`, `Match` and `Line`.
 _SECRET_PLAINTEXT_KEYS = frozenset(
-    {"value", "secret", "plaintext", "password", "token", "key", "credential", "match", "raw"}
+    {
+        "value",
+        "secret",
+        "plaintext",
+        "password",
+        "token",
+        "key",
+        "credential",
+        "match",
+        "raw",
+        "rawv2",
+        "redacted",
+        "line",
+    }
 )
 
 
+def _plaintext_pointer(value: object, pointer: str) -> str | None:
+    """Return the JSON pointer of the first plaintext-bearing key at any depth, in any case."""
+    if isinstance(value, dict):
+        for key, item in sorted(cast("dict[str, object]", value).items()):
+            escaped = key.replace("~", "~0").replace("/", "~1")
+            if key.casefold() in _SECRET_PLAINTEXT_KEYS:
+                return f"{pointer}/{escaped}"
+            found = _plaintext_pointer(item, f"{pointer}/{escaped}")
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for index, item in enumerate(cast("list[object]", value)):
+            found = _plaintext_pointer(item, f"{pointer}/{index}")
+            if found is not None:
+                return found
+    return None
+
+
 def _cross_field_secret(_type_name: str, properties: dict[str, Any]) -> None:
-    carried = sorted(_SECRET_PLAINTEXT_KEYS.intersection(properties))
-    if carried:
-        raise ExpectedValidationError(f"/properties/{carried[0]}: a secret node never carries the secret itself")
+    carried = _plaintext_pointer(properties, "/properties")
+    if carried is not None:
+        raise ExpectedValidationError(f"{carried}: a secret record never carries the secret itself")
 
 
 _BUCKET_RULES: dict[str, tuple[int, int, str]] = {
@@ -789,22 +880,600 @@ def _cross_field_storage_bucket(_type_name: str, properties: dict[str, Any]) -> 
         raise ExpectedValidationError("/properties/name: gcp_gcs dotted components hold at most 63 characters")
 
 
-# Every entry runs after the required map validated the properties it reads.
-_CROSS_FIELDS: dict[str, Callable[[str, dict[str, Any]], None]] = {
-    "domain": _cross_field_dns_name,
-    "subdomain": _cross_field_dns_name,
-    "http_fingerprint": _cross_field_http_fingerprint,
-    "identity_tenant": _cross_field_identity_tenant,
-    "ip_address": _cross_field_ip_address,
-    "ip_cidr": _cross_field_ip_cidr,
-    "repository": _cross_field_repository,
-    "secret": _cross_field_secret,
-    "service": _cross_field_service,
-    "storage_bucket": _cross_field_storage_bucket,
-    "tls_fingerprint": _cross_field_tls_fingerprint,
-    "registrar": _cross_field_registrar,
-    "txt_record": _cross_field_txt_record,
+@dataclass(frozen=True)
+class EndpointView:
+    """One relation endpoint as a value check sees it: its node type and stored properties."""
+
+    type: str
+    properties: Mapping[str, Any]
+
+
+_ENDPOINT_FAILED = "relation endpoint constraint failed"
+
+
+def _endpoint_subdomain_suffix(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    if not cast("str", target.properties["value"]).endswith("." + cast("str", source.properties["value"])):
+        raise ExpectedValidationError(_ENDPOINT_FAILED)
+
+
+def _endpoint_registration_suffix(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    suffix = cast("str", source.properties["value"]).partition(".")[2]
+    if target.properties["registry"] != suffix:
+        raise ExpectedValidationError(_ENDPOINT_FAILED)
+
+
+# Roles that belong to one registration episode, not to the name that outlives it.
+_REGISTRATION_ROLES = frozenset({"registrant", "admin", "tech", "billing"})
+
+
+def _endpoint_contact_registration_roles(
+    relation: Mapping[str, Any], source: EndpointView, _target: EndpointView
+) -> None:
+    # An organization, registrar or repository keeps every role: RIR entities carry admin and tech
+    # contacts of their own. Only a name and its registration split the roles between them.
+    if source.type not in ("whois_registration", "domain", "subdomain"):
+        return
+    if (source.type == "whois_registration") != (relation["role"] in _REGISTRATION_ROLES):
+        raise ExpectedValidationError(
+            "/properties/role: registrant, admin, tech and billing contacts attach to a whois_registration, "
+            "and only those"
+        )
+
+
+def _endpoint_contact_iodef(relation: Mapping[str, Any], _source: EndpointView, target: EndpointView) -> None:
+    """RFC 8659 `iodef` names a mailto or an https URL, and RFC 6546 delivers reports by HTTPS POST."""
+    iodef = relation["role"] == "iodef"
+    if (target.type == "endpoint" and not iodef) or (iodef and target.type == "phone"):
+        raise ExpectedValidationError(
+            "/properties/role: an endpoint contact is an iodef report URL, and iodef names an email or an endpoint"
+        )
+    if target.type == "endpoint" and target.properties["method"] != "POST":
+        raise ExpectedValidationError("relation endpoint constraint failed: an iodef endpoint receives POST")
+
+
+def _endpoint_contains_ip(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    network = _parse_cidr(cast("str", source.properties["value"]))
+    address = _parse_ip(cast("str", target.properties["value"]))
+    if (
+        network is None
+        or address is None
+        or source.properties["version"] != target.properties["version"]
+        or network.version != address.version
+        or address not in network
+    ):
+        raise ExpectedValidationError(_ENDPOINT_FAILED)
+
+
+def _endpoint_contains_cidr(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    outer = _parse_cidr(cast("str", source.properties["value"]))
+    inner = _parse_cidr(cast("str", target.properties["value"]))
+    if (
+        outer is None
+        or inner is None
+        or source.properties["version"] != target.properties["version"]
+        or not _proper_subnet(outer, inner)
+    ):
+        raise ExpectedValidationError(_ENDPOINT_FAILED)
+
+
+def _proper_subnet(
+    source: ipaddress.IPv4Network | ipaddress.IPv6Network,
+    target: ipaddress.IPv4Network | ipaddress.IPv6Network,
+) -> bool:
+    if isinstance(source, ipaddress.IPv4Network):
+        return isinstance(target, ipaddress.IPv4Network) and target != source and target.subnet_of(source)
+    return isinstance(target, ipaddress.IPv6Network) and target != source and target.subnet_of(source)
+
+
+# The repository-object part of a ROID that means "not published" rather than naming an object.
+_PLACEHOLDER_ROID_PARTS = frozenset({"redacted", "none", "na", "unknown", "private", "withheld", "notdisclosed"})
+
+
+def _cross_field_whois_registration(_type_name: str, properties: dict[str, Any]) -> None:
+    local = cast("str", properties["registry_domain_id"]).rpartition("-")[0]
+    if local.strip("0") == "" or local.casefold() in _PLACEHOLDER_ROID_PARTS:
+        raise ExpectedValidationError("/properties/registry_domain_id: a placeholder is not a registry object id")
+
+
+def _cross_field_asn(_type_name: str, properties: dict[str, Any]) -> None:
+    if properties["value"] == 0:
+        raise ExpectedValidationError("/properties/value: AS0 is reserved and never originates routes (RFC 7607)")
+
+
+def _cross_field_port(_type_name: str, properties: dict[str, Any]) -> None:
+    if properties["number"] == 0:
+        raise ExpectedValidationError("/properties/number: port 0 is a placeholder, not an open port")
+
+
+def _cross_field_technology(_type_name: str, properties: dict[str, Any]) -> None:
+    cpe = properties.get("cpe")
+    if type(cpe) is str and _cpe_version(cpe) not in ("*", "-"):
+        raise ExpectedValidationError("/properties/cpe: a technology cpe is product-level; put the version on the edge")
+
+
+# One entry per cloud_account provider; `_ensure_cross_field_contract` refuses a missing one.
+_CLOUD_ACCOUNT_RULES: dict[str, str] = {
+    "aws": r"[0-9]{12}",
+    "gcp": r"[a-z][a-z0-9-]{4,28}[a-z0-9]",
+    "azure": r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}",
 }
+
+
+def _cross_field_cloud_account(_type_name: str, properties: dict[str, Any]) -> None:
+    provider = cast("str", properties["provider"])
+    if re.fullmatch(_CLOUD_ACCOUNT_RULES[provider], cast("str", properties["account_id"])) is None:
+        raise ExpectedValidationError(f"/properties/account_id: not a {provider} account spelling")
+
+
+# Label grammars of provider-assigned default hostnames. A named `region` group, where present, is
+# the region the hostname encodes. The id grammars are the shapes the providers' own examples show;
+# none of them publishes a formal grammar.
+_HOST_LABELS: dict[str, str] = {
+    "cloudfront_id": r"d[a-z0-9]{13}",
+    "apigw_id": r"[a-z0-9]{10}",
+    "lambda_url_id": r"[a-z0-9]{32}",
+    "aws_region": r"(?P<region>[a-z]{2,4}(?:-gov|-iso[a-z]?)?-[a-z]+-[0-9]{1,2})",
+    "beanstalk_cname": r"[a-z0-9][a-z0-9-]{2,61}[a-z0-9]",
+    "elb_name_id": r"(?=[a-z0-9-]{3,63}$)[a-z0-9][a-z0-9-]*-[a-z0-9]+",
+    "azure_name": r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
+    "azure_hashed_name": r"[a-z0-9](?:[a-z0-9-]{0,44})-[a-z0-9]{16}",
+    "azure_hash": r"[a-z0-9]{16}",
+    "azure_region": r"(?P<region>[a-z]+[0-9]*)",
+    "azure_region_numbered": r"(?P<region>[a-z]+[0-9]*)-[0-9]{2}",
+    "front_door_zone": r"[a-z][0-9]{2}",
+    "gcp_project": r"(?!.*-dot-)[a-z][a-z0-9-]{4,28}[a-z0-9]",
+    "appspot_dot_chain": r"[a-z0-9-]*-dot-[a-z0-9-]*",
+    "appengine_region_code": r"[a-z]{2,3}",
+    "firebase_site": r"[a-z0-9](?:[a-z0-9-]{0,28}[a-z0-9])?",
+    "firebase_database": r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
+    "gcp_region": r"(?P<region>[a-z]+-[a-z]+[0-9]+)",
+}
+# Grammar pairs that exclude each other by construction, the one structural fact the label-count
+# and literal comparison cannot see: a GCP project id never contains `-dot-`, a routing chain must.
+_EXCLUSIVE_HOST_LABELS = frozenset({frozenset({"gcp_project", "appspot_dot_chain"})})
+
+
+@dataclass(frozen=True)
+class _HostPattern:
+    """One hostname shape: `<grammar>` names a label grammar, anything else is a literal label."""
+
+    service: str
+    labels: tuple[str, ...]
+    canonical: bool = True
+
+
+def _host(service: str, *labels: str, canonical: bool = True) -> _HostPattern:
+    return _HostPattern(service, labels, canonical)
+
+
+# Each accepted pattern is a hostname the provider assigns to exactly one resource. Each alias names
+# the same resource by another host; it is refused with a pointer to the canonical form, and the
+# alias itself belongs on a `subdomain` reached through `hosted_on`.
+_CLOUD_HOST_PATTERNS: dict[str, _HostPattern] = {
+    "aws_cloudfront": _host("aws_cloudfront", "<cloudfront_id>", "cloudfront", "net"),
+    "aws_api_gateway": _host("aws_api_gateway", "<apigw_id>", "execute-api", "<aws_region>", "amazonaws", "com"),
+    "aws_lambda_url": _host("aws_lambda_url", "<lambda_url_id>", "lambda-url", "<aws_region>", "on", "aws"),
+    "aws_elastic_beanstalk": _host(
+        "aws_elastic_beanstalk", "<beanstalk_cname>", "<aws_region>", "elasticbeanstalk", "com"
+    ),
+    "aws_elastic_beanstalk_legacy": _host("aws_elastic_beanstalk", "<beanstalk_cname>", "elasticbeanstalk", "com"),
+    "aws_elb_region_first": _host("aws_elb", "<elb_name_id>", "<aws_region>", "elb", "amazonaws", "com"),
+    "aws_elb_elb_first": _host("aws_elb", "<elb_name_id>", "elb", "<aws_region>", "amazonaws", "com"),
+    "aws_elb_dualstack_region_first": _host(
+        "aws_elb", "dualstack", "<elb_name_id>", "<aws_region>", "elb", "amazonaws", "com", canonical=False
+    ),
+    "aws_elb_dualstack_elb_first": _host(
+        "aws_elb", "dualstack", "<elb_name_id>", "elb", "<aws_region>", "amazonaws", "com", canonical=False
+    ),
+    "azure_app_service": _host("azure_app_service", "<azure_name>", "azurewebsites", "net"),
+    "azure_app_service_unique": _host(
+        "azure_app_service", "<azure_hashed_name>", "<azure_region_numbered>", "azurewebsites", "net"
+    ),
+    "azure_app_service_scm": _host("azure_app_service", "<azure_name>", "scm", "azurewebsites", "net", canonical=False),
+    "azure_app_service_unique_scm": _host(
+        "azure_app_service",
+        "<azure_hashed_name>",
+        "scm",
+        "<azure_region_numbered>",
+        "azurewebsites",
+        "net",
+        canonical=False,
+    ),
+    "azure_cloud_service": _host("azure_cloud_service", "<azure_name>", "cloudapp", "net"),
+    "azure_public_ip": _host("azure_public_ip", "<azure_name>", "<azure_region>", "cloudapp", "azure", "com"),
+    "azure_public_ip_scoped": _host(
+        "azure_public_ip", "<azure_name>", "<azure_hash>", "<azure_region>", "cloudapp", "azure", "com"
+    ),
+    "azure_traffic_manager": _host("azure_traffic_manager", "<azure_name>", "trafficmanager", "net"),
+    "azure_front_door": _host("azure_front_door", "<azure_name>", "azurefd", "net"),
+    "azure_front_door_standard": _host(
+        "azure_front_door", "<azure_hashed_name>", "<front_door_zone>", "azurefd", "net"
+    ),
+    "azure_api_management": _host("azure_api_management", "<azure_name>", "azure-api", "net"),
+    "azure_api_management_developer": _host(
+        "azure_api_management", "<azure_name>", "developer", "azure-api", "net", canonical=False
+    ),
+    "azure_api_management_management": _host(
+        "azure_api_management", "<azure_name>", "management", "azure-api", "net", canonical=False
+    ),
+    "azure_api_management_scm": _host(
+        "azure_api_management", "<azure_name>", "scm", "azure-api", "net", canonical=False
+    ),
+    "gcp_app_engine": _host("gcp_app_engine", "<gcp_project>", "appspot", "com"),
+    "gcp_app_engine_regional": _host(
+        "gcp_app_engine", "<gcp_project>", "<appengine_region_code>", "r", "appspot", "com", canonical=False
+    ),
+    "gcp_app_engine_dot_route": _host("gcp_app_engine", "<appspot_dot_chain>", "appspot", "com", canonical=False),
+    "gcp_firebase_hosting": _host("gcp_firebase_hosting", "<firebase_site>", "web", "app"),
+    "gcp_firebase_hosting_legacy": _host(
+        "gcp_firebase_hosting", "<firebase_site>", "firebaseapp", "com", canonical=False
+    ),
+    "gcp_firebase_rtdb": _host("gcp_firebase_rtdb", "<firebase_database>", "firebaseio", "com"),
+    "gcp_firebase_rtdb_regional": _host(
+        "gcp_firebase_rtdb", "<firebase_database>", "<gcp_region>", "firebasedatabase", "app"
+    ),
+}
+# The provider each cloud_resource service and each storage_bucket provider belongs to.
+_SERVICE_PROVIDERS = ("aws", "azure", "gcp")
+_BUCKET_ACCOUNT_PROVIDER: dict[str, str] = {"aws_s3": "aws", "gcp_gcs": "gcp", "azure_blob": "azure"}
+
+
+def _label_grammar(label: str) -> str | None:
+    return label[1:-1] if label.startswith("<") and label.endswith(">") else None
+
+
+def _match_host(hostname: str, pattern: _HostPattern) -> tuple[bool, str | None]:
+    """Return whether the hostname has this shape, and the region its labels encode, if any."""
+    labels = hostname.split(".")
+    if len(labels) != len(pattern.labels):
+        return False, None
+    region: str | None = None
+    for label, spec in zip(labels, pattern.labels, strict=True):
+        grammar = _label_grammar(spec)
+        if grammar is None:
+            if label != spec:
+                return False, None
+            continue
+        match = re.fullmatch(_HOST_LABELS[grammar], label)
+        if match is None:
+            return False, None
+        region = match.groupdict().get("region") or region
+    return True, region
+
+
+def _cross_field_cloud_resource(_type_name: str, properties: dict[str, Any]) -> None:
+    hostname, service = cast("str", properties["hostname"]), cast("str", properties["service"])
+    matches = [
+        (pattern, region)
+        for pattern in _CLOUD_HOST_PATTERNS.values()
+        for matched, region in [_match_host(hostname, pattern)]
+        if matched
+    ]
+    if not matches:
+        raise ExpectedValidationError("/properties/hostname: not a provider-assigned default hostname")
+    pattern, region = matches[0]
+    if not pattern.canonical:
+        raise ExpectedValidationError(
+            f"/properties/hostname: an alias of a {pattern.service} default hostname; write the canonical "
+            "hostname here and this name as a subdomain reached through hosted_on"
+        )
+    if pattern.service != service:
+        raise ExpectedValidationError(f"/properties/service: this hostname is a {pattern.service} default hostname")
+    if "region" in properties and properties["region"] != region:
+        raise ExpectedValidationError("/properties/region: does not match the region the hostname encodes")
+
+
+def _account_provider(view: EndpointView) -> str:
+    if view.type == "storage_bucket":
+        return _BUCKET_ACCOUNT_PROVIDER[cast("str", view.properties["provider"])]
+    return cast("str", view.properties["service"]).split("_", 1)[0]
+
+
+def _endpoint_account_provider(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    if _account_provider(source) != target.properties["provider"]:
+        raise ExpectedValidationError("relation endpoint constraint failed: the account belongs to another provider")
+
+
+def _ensure_cloud_patterns_disjoint() -> None:
+    """Fail at import unless every two hostname patterns provably accept no common hostname.
+
+    `service` is read off the one matching pattern, so an overlap would give one hostname two
+    services. Two patterns are disjoint when their label counts differ, or at some position two
+    literals differ, a literal fails the other pattern's grammar, or the two grammars exclude each
+    other by construction.
+    """
+    items = list(_CLOUD_HOST_PATTERNS.items())
+    for index, (first_name, first) in enumerate(items):
+        for second_name, second in items[index + 1 :]:
+            if len(first.labels) != len(second.labels):
+                continue
+            if not any(_labels_disjoint(a, b) for a, b in zip(first.labels, second.labels, strict=True)):
+                raise RuntimeError(f"cloud hostname patterns {first_name} and {second_name} may overlap")
+    for name, pattern in _CLOUD_HOST_PATTERNS.items():
+        if pattern.service.split("_", 1)[0] not in _SERVICE_PROVIDERS:
+            raise RuntimeError(f"cloud hostname pattern {name} names a service of no known provider")
+
+
+def _labels_disjoint(first: str, second: str) -> bool:
+    first_grammar, second_grammar = _label_grammar(first), _label_grammar(second)
+    if first_grammar is None and second_grammar is None:
+        return first != second
+    if first_grammar is None or second_grammar is None:
+        literal, grammar = (first, second_grammar) if first_grammar is None else (second, first_grammar)
+        return re.fullmatch(_HOST_LABELS[cast("str", grammar)], literal) is None
+    return frozenset({first_grammar, second_grammar}) in _EXCLUSIVE_HOST_LABELS
+
+
+_ensure_cloud_patterns_disjoint()
+
+
+# Every check runs after the required map validated the properties it reads. An id names one
+# behavior: changing what a callable accepts means a new version suffix, which changes the
+# fingerprint, so a workspace written under the old behavior is refused rather than reinterpreted.
+_CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
+    "asn_assigned.1": _cross_field_asn,
+    "bucket_name_spelling.1": _cross_field_storage_bucket,
+    "cloud_account_spelling.1": _cross_field_cloud_account,
+    "cloud_resource_hostname.1": _cross_field_cloud_resource,
+    "cpe_product_level.1": _cross_field_technology,
+    "dns_name_kind.1": _cross_field_dns_name,
+    "http_fingerprint_value_kind.1": _cross_field_http_fingerprint,
+    "ip_address_version.1": _cross_field_ip_address,
+    "ip_cidr_version.1": _cross_field_ip_cidr,
+    "port_number_assigned.1": _cross_field_port,
+    "registrar_iana_assigned.1": _cross_field_registrar,
+    "registry_domain_id_assigned.1": _cross_field_whois_registration,
+    "repository_owner_spelling.1": _cross_field_repository,
+    "secret_plaintext_keys.1": _cross_field_secret,
+    "service_secure_flag.1": _cross_field_service,
+    "tenant_id_spelling.1": _cross_field_identity_tenant,
+    "tls_fingerprint_length.1": _cross_field_tls_fingerprint,
+    "txt_record_diversion.1": _cross_field_txt_record,
+}
+
+# Checks that read both endpoints' stored properties as well as the relation's own. They run after
+# the relation's properties are merged and deduplicated, so they see what will be stored.
+_ENDPOINT_CHECKS: dict[str, Callable[[Mapping[str, Any], EndpointView, EndpointView], None]] = {
+    "contains_cidr_proper_subnet.1": _endpoint_contains_cidr,
+    "contains_ip_member.1": _endpoint_contains_ip,
+    "has_contact_endpoint_role.1": _endpoint_contact_iodef,
+    "has_contact_registration_roles.1": _endpoint_contact_registration_roles,
+    "has_registration_suffix_match.1": _endpoint_registration_suffix,
+    "has_subdomain_suffix.1": _endpoint_subdomain_suffix,
+    "in_account_provider_match.1": _endpoint_account_provider,
+}
+
+_CANONICALIZATIONS: dict[str, Callable[[dict[str, Any]], None]] = {
+    "caa_parameter_name_fold.1": _canonicalize_caa_parameters,
+    "endpoint_url_drop_query.1": _canonicalize_endpoint_url,
+}
+
+_RULE_ID = re.compile(r"[a-z][a-z0-9_]*\.[1-9][0-9]*")
+
+
+def _build_catalog(
+    nodes: Mapping[str, Mapping[str, Any]],
+    relations: Mapping[str, Mapping[str, Any]],
+    formats: Mapping[str, int],
+    checks: Mapping[str, object],
+    endpoint_checks: Mapping[str, object],
+    canonicalizations: Mapping[str, object],
+    registries: Mapping[str, str],
+) -> dict[str, Any]:
+    """Assemble the fingerprinted contract from the type tables and the rule tables.
+
+    Every type publishes its `checks` and `canonicalize` id lists, in the order they run, so the
+    fingerprint moves when a rule is added, removed, renamed or versioned. An id no table
+    implements, an endpoint check on a node type, and a table entry no type uses are refused here
+    rather than surfacing as a KeyError on the first write.
+    """
+    unused = {*checks, *endpoint_checks, *canonicalizations}
+    if any(type(version) is not int or version < 1 for version in formats.values()):
+        raise RuntimeError("every format carries a positive integer behavior version")
+    built: dict[str, Any] = {
+        "common": _COMMON,
+        "formats": dict(formats),
+        "registries": dict(registries),
+        "version": CATALOG_VERSION,
+    }
+    for kind, definitions in (("nodes", nodes), ("relations", relations)):
+        built[kind] = {}
+        for name, definition in definitions.items():
+            entry = {**definition}
+            entry["optional"] = dict(definition.get("optional", {}))
+            entry["checks"] = list(definition.get("checks", ()))
+            entry["canonicalize"] = list(definition.get("canonicalize", ()))
+            allowed = {*checks, *endpoint_checks} if kind == "relations" else set(checks)
+            for rule_id, table in [(rule_id, allowed) for rule_id in entry["checks"]] + [
+                (rule_id, set(canonicalizations)) for rule_id in entry["canonicalize"]
+            ]:
+                if _RULE_ID.fullmatch(rule_id) is None or rule_id not in table:
+                    raise RuntimeError(f"{kind}.{name} names rule {rule_id}, which no table implements")
+                unused.discard(rule_id)
+            built[kind][name] = entry
+    if unused:
+        raise RuntimeError(f"rule table entries no type uses: {sorted(unused)}")
+    return built
+
+
+# The bundled registries decide what `dns_name` and `service_name` accept, so their parsed content is
+# part of the contract: refreshing the PSL or the service whitelist refuses workspaces written under
+# the old one instead of silently reclassifying their names.
+_REGISTRIES = {"public_suffix_list": rules_digest(), "service_names": registry_digest()}
+
+_CATALOG = _build_catalog(_NODES, _RELATIONS, _FORMATS, _CHECKS, _ENDPOINT_CHECKS, _CANONICALIZATIONS, _REGISTRIES)
+
+# The canonical serialized contract is immutable; callers receive a fresh tree.
+CATALOG_JSON = json.dumps(_CATALOG, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _ensure_data_loaded() -> None:
+    """Load and verify bundled registries while the catalog module imports."""
+    classify_dns_name("example.com")
+    if not is_service_name("unknown"):
+        raise RuntimeError("bundled service name registry is missing required sentinel")
+
+
+def _catalog_fingerprint() -> str:
+    _ensure_data_loaded()
+    return hashlib.sha256(CATALOG_JSON.encode("utf-8")).hexdigest()
+
+
+CATALOG_FINGERPRINT = _catalog_fingerprint()
+
+
+def catalog_manifest() -> dict[str, Any]:
+    """Return an isolated copy of the fixed executable catalog contract."""
+    return cast("dict[str, Any]", json.loads(CATALOG_JSON))
+
+
+def _read_only(value: object) -> object:
+    """Rebuild one parsed catalog subtree out of containers that refuse in-place mutation."""
+    if isinstance(value, dict):
+        return MappingProxyType({key: _read_only(item) for key, item in cast("dict[str, object]", value).items()})
+    if isinstance(value, list):
+        return tuple(_read_only(item) for item in cast("list[object]", value))
+    return value
+
+
+# `catalog_manifest()` re-parses `CATALOG_JSON` on every call, and the write path reaches it several
+# times per record inside `BEGIN IMMEDIATE`. This is the same parse performed once at import, for
+# callers that only read. The wrapping goes all the way down rather than proxying the top mapping
+# alone: a shallow proxy would still let a reader mutate one type definition in place and corrupt
+# the catalog for the rest of the process, which is the exact failure this handle must not enable.
+_CATALOG_VIEW: Mapping[str, Any] = cast("Mapping[str, Any]", _read_only(json.loads(CATALOG_JSON)))
+
+
+def catalog_view() -> Mapping[str, Any]:
+    """Return the shared read-only catalog; callers that mutate use `catalog_manifest()` instead.
+
+    Mappings are `MappingProxyType` and JSON arrays are tuples, at every depth, so the structure
+    cannot be edited by accident and cannot be handed onward into a response that edits it.
+    """
+    return _CATALOG_VIEW
+
+
+def rule_descriptions() -> dict[str, str]:
+    """Describe every check and canonicalization id the manifest publishes."""
+    return {**_DOCS["checks"], **_DOCS["canonicalizations"]}
+
+
+def format_descriptions() -> dict[str, dict[str, Any]]:
+    """Pair every format id with its behavior version and its accepted spelling."""
+    return {name: {"version": version, "description": _DOCS["formats"][name]} for name, version in _FORMATS.items()}
+
+
+def common_descriptions() -> dict[str, str]:
+    """Explain each shared limit in the manifest's `common` block."""
+    return dict(_DOCS["common"])
+
+
+def type_description(kind: str, type_name: str) -> dict[str, Any]:
+    """Say what one type models and excludes, why it is shaped so, and what each property means."""
+    return copy.deepcopy(cast("dict[str, Any]", _DOCS[kind][type_name]))
+
+
+def _declared_properties(definition: Mapping[str, Any]) -> set[str]:
+    return {*definition["required"], *definition["optional"]}
+
+
+def _ensure_docs_contract() -> None:
+    """Fail at import if the prose and the contract disagree, or a text outgrows its cap.
+
+    The prose is outside the fingerprint, so nothing else would notice a type, property, format or
+    rule that `kb_types` publishes without a description, or a description left behind by a rename.
+    """
+    pairs = [
+        ("formats", set(_FORMATS), set(_DOCS["formats"])),
+        ("checks", {*_CHECKS, *_ENDPOINT_CHECKS}, set(_DOCS["checks"])),
+        ("canonicalizations", set(_CANONICALIZATIONS), set(_DOCS["canonicalizations"])),
+        ("common", set(_COMMON), set(_DOCS["common"])),
+        ("nodes", set(_CATALOG["nodes"]), set(_DOCS["nodes"])),
+        ("relations", set(_CATALOG["relations"]), set(_DOCS["relations"])),
+    ]
+    for section, declared, described in pairs:
+        if declared != described:
+            raise RuntimeError(f"catalog docs for {section} disagree with the contract: {sorted(declared ^ described)}")
+    texts: list[tuple[str, str, str]] = [
+        *(("format", name, text) for name, text in _DOCS["formats"].items()),
+        *(("rule", name, text) for name, text in rule_descriptions().items()),
+        *(("common", name, text) for name, text in _DOCS["common"].items()),
+    ]
+    for kind in ("nodes", "relations"):
+        for type_name, definition in cast("dict[str, dict[str, Any]]", _CATALOG[kind]).items():
+            docs = cast("dict[str, Any]", _DOCS[kind][type_name])
+            if set(docs) - {"summary", "excludes", "notes", "properties"} or not {"summary", "excludes"} <= set(docs):
+                raise RuntimeError(f"catalog docs for {type_name} need summary and excludes, and nothing else")
+            if set(docs["properties"]) != _declared_properties(definition):
+                raise RuntimeError(f"catalog docs for {type_name} do not describe exactly its declared properties")
+            texts.extend((key, type_name, docs[key]) for key in ("summary", "excludes", "notes") if key in docs)
+            texts.extend(("property", f"{type_name}.{name}", text) for name, text in docs["properties"].items())
+    for cap, name, text in texts:
+        if type(text) is not str or not 1 <= len(text) <= _DOC_CAPS[cap]:
+            raise RuntimeError(f"catalog {cap} text for {name} is empty or longer than {_DOC_CAPS[cap]} characters")
+
+
+_ensure_docs_contract()
+
+
+def _definition(kind: str, type_name: str) -> Mapping[str, Any] | None:
+    if kind not in ("nodes", "relations"):
+        return None
+    return cast("Mapping[str, Mapping[str, Any]]", catalog_view()[kind]).get(type_name)
+
+
+def canonicalize_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
+    """Apply the type's declared canonicalizations in place, in their published order."""
+    definition = _definition(kind, type_name)
+    for rule_id in definition["canonicalize"] if definition is not None else ():
+        _CANONICALIZATIONS[rule_id](properties)
+
+
+def _published_rule(rule: str | list[str] | tuple[str, ...]) -> str | list[str]:
+    """Spell one required rule the way clients already receive it, whatever container holds it."""
+    return list(rule) if isinstance(rule, tuple) else rule
+
+
+def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> None:
+    """Canonicalize declared spellings, then enforce required properties and the type's checks."""
+    canonicalize_record(kind, type_name, properties)
+    validate_properties(properties)
+    definition = _definition(kind, type_name)
+    if definition is None:
+        raise ExpectedValidationError("unknown catalog type")
+    required = cast("Mapping[str, str | list[str] | tuple[str, ...]]", definition["required"])
+    for field, rule in required.items():
+        if field not in properties or not _valid_field(properties[field], rule):
+            # The shared view spells a JSON array as a tuple; the published message keeps the list
+            # spelling clients already receive, so routing this read changes no client-visible text.
+            raise ExpectedValidationError(f"/properties/{field}: expected {_published_rule(rule)}")
+    optional = cast("Mapping[str, str | list[str] | tuple[str, ...]]", definition["optional"])
+    for field, rule in optional.items():
+        # A declared attribute is validated whenever it is present, and null is not a value of any
+        # rule; clearing one is `remove_properties`, not a write of null.
+        if field in properties and not _valid_field(properties[field], rule):
+            raise ExpectedValidationError(f"/properties/{field}: expected {_published_rule(rule)}")
+    for rule_id in definition["checks"]:
+        check = _CHECKS.get(rule_id)
+        if check is not None:
+            check(type_name, properties)
+
+
+def check_endpoint_values(
+    type_name: str, relation_props: Mapping[str, Any], source: EndpointView, target: EndpointView
+) -> None:
+    """Run a relation's endpoint value checks against its final properties and both endpoints.
+
+    The endpoint types are already gated by the relation's `sources` and `targets`, so every check
+    reads properties the endpoint's own required map guarantees.
+    """
+    definition = _definition("relations", type_name)
+    if definition is None:
+        raise ExpectedValidationError("unknown catalog type")
+    for rule_id in definition["checks"]:
+        check = _ENDPOINT_CHECKS.get(rule_id)
+        if check is not None:
+            check(relation_props, source, target)
 
 
 def _enum(kind: str, type_name: str, field: str) -> set[str]:
@@ -813,7 +1482,7 @@ def _enum(kind: str, type_name: str, field: str) -> set[str]:
 
 
 def _ensure_cross_field_contract() -> None:
-    """Fail at import if a per-member cross-field table stops covering its own enum.
+    """Fail at import if a per-member check table stops covering its own enum.
 
     Each table below is indexed by an enum member, so a member added without its entry would raise
     KeyError as INTERNAL instead of rejecting the value, and a member silently inheriting another
@@ -823,12 +1492,20 @@ def _ensure_cross_field_contract() -> None:
         ("nodes", "identity_tenant", "provider"): set(_TENANT_RULES),
         ("nodes", "repository", "platform"): set(_REPO_OWNER_RULES),
         ("nodes", "storage_bucket", "provider"): set(_BUCKET_RULES),
+        ("nodes", "cloud_account", "provider"): set(_CLOUD_ACCOUNT_RULES),
         ("nodes", "http_fingerprint", "kind"): {"favicon_mmh3", *_FINGERPRINT_DIGEST_KINDS},
     }
     for (kind, type_name, field), covered in tables.items():
         declared = _enum(kind, type_name, field)
         if declared != covered:
-            raise RuntimeError(f"cross-field table for {type_name}.{field} does not cover {declared ^ covered}")
+            raise RuntimeError(f"check table for {type_name}.{field} does not cover {declared ^ covered}")
+    if set(_BUCKET_ACCOUNT_PROVIDER) != _enum("nodes", "storage_bucket", "provider") or not set(
+        _BUCKET_ACCOUNT_PROVIDER.values()
+    ) <= _enum("nodes", "cloud_account", "provider"):
+        raise RuntimeError("every storage_bucket provider must map to one cloud_account provider")
+    services = {pattern.service for pattern in _CLOUD_HOST_PATTERNS.values() if pattern.canonical}
+    if services != _enum("nodes", "cloud_resource", "service"):
+        raise RuntimeError("every cloud_resource service needs a canonical hostname pattern, and only those")
     nodes = cast("dict[str, dict[str, Any]]", _CATALOG["nodes"])
     for tag, type_name in _TXT_RECORD_DIVERSIONS:
         if "value" not in nodes.get(type_name, {}).get("required", {}):
@@ -837,21 +1514,51 @@ def _ensure_cross_field_contract() -> None:
 
 _ensure_cross_field_contract()
 
-
-def cross_field_types() -> tuple[str, ...]:
-    """Return the node types carrying a cross-field rule, which the manifest does not publish."""
-    return tuple(sorted(_CROSS_FIELDS))
+# Types that carry or point at a secret; no declared attribute there may share a plaintext-bearing name.
+_SECRET_FAMILY = ("secret", "exposes_secret", "authenticates")
 
 
-def _validate_cross_fields(kind: str, type_name: str, properties: dict[str, Any]) -> None:
-    check = _CROSS_FIELDS.get(type_name) if kind == "nodes" else None
-    if check is not None:
-        check(type_name, properties)
+def _ensure_property_contract() -> None:
+    """Fail at import if a required or optional map contradicts the identity or another type.
+
+    Identity hashes `properties[field]`, so an identity property outside the required map would
+    raise KeyError on a write that omits it. An optional name reused with a different rule would
+    give one attribute two meanings across the catalog. Required maps legitimately reuse `name`,
+    `value` and `kind` with different rules, so that uniqueness is scoped to optional names.
+    """
+    optional_rules: dict[str, tuple[str, object]] = {}
+    for kind in ("nodes", "relations"):
+        for type_name, definition in cast("dict[str, dict[str, Any]]", _CATALOG[kind]).items():
+            required, optional = definition["required"], definition["optional"]
+            if set(required) & set(optional):
+                raise RuntimeError(f"{type_name} declares {sorted(set(required) & set(optional))} twice")
+            if not set(definition["identity"]["properties"]) <= set(required):
+                raise RuntimeError(f"{type_name} identity names a property outside its required map")
+            for name, rule in optional.items():
+                first = optional_rules.setdefault(name, (type_name, rule))
+                if first[1] != rule:
+                    raise RuntimeError(f"optional {name} has one rule on {first[0]} and another on {type_name}")
+                if type_name in _SECRET_FAMILY and name.casefold() in _SECRET_PLAINTEXT_KEYS:
+                    raise RuntimeError(f"{type_name} declares {name}, a plaintext-bearing name")
+
+
+_ensure_property_contract()
 
 
 # NIST IR 7695 formatted-string binding: `part` plus ten colon-separated attribute components.
 _CPE_COMPONENT = r"(?:[*\-]|\?*\*?(?:[a-z0-9._\-~]|\\[!-~])+\*?\?*)"
 _CPE23 = re.compile(r"cpe:2\.3:[aho*\-]:" + ":".join([_CPE_COMPONENT] * 10))
+
+
+# The same binding with each attribute captured, so a component is read the way the rule parsed it:
+# an escaped colon stays inside its component rather than splitting it.
+_CPE23_PARTS = re.compile(r"cpe:2\.3:([aho*\-]):" + ":".join([f"({_CPE_COMPONENT})"] * 10))
+
+
+def _cpe_version(cpe: str) -> str | None:
+    """Return the version attribute of a formatted string, or None when the binding is invalid."""
+    match = _CPE23_PARTS.fullmatch(cpe)
+    return match.group(4) if match is not None else None
 
 
 def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool:
@@ -863,41 +1570,64 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "asn": lambda item: 0 <= item <= 4294967295,
         "ip_version": lambda item: item in (4, 6),
         "redirect_status": lambda item: item in (301, 302, 303, 307, 308),
+        "http_status": lambda item: 100 <= item <= 599,
         "uint8": lambda item: 0 <= item <= 255,
         "uint16": lambda item: 0 <= item <= 65535,
+        "uint32": lambda item: 0 <= item <= 4294967295,
+        "uint63": lambda item: 0 <= item <= 2**63 - 1,
     }
+    # `bool` is a subclass of `int`, so every numeric branch compares the exact type.
     if rule in integer_validators:
         return type(value) is int and integer_validators[rule](value)
-    if rule == "alpn_tokens":
-        return _valid_alpn_tokens(value)
-    if rule == "caa_parameters":
-        return _valid_caa_parameters(value)
+    structured = _STRUCTURED_VALIDATORS.get(rule)
+    if structured is not None:
+        return structured(value)
     if type(value) is not str:
         return False
     validators: dict[str, Callable[[str], bool]] = {
+        "breach_token_or_empty": lambda text: text == "" or _BREACH_TOKEN.fullmatch(text) is not None,
         "bucket_name": _valid_bucket_name,
         "cidr": lambda text: _parse_cidr(text) is not None,
-        "cpe23_or_empty": lambda text: text == "" or (len(text) <= 512 and _CPE23.fullmatch(text) is not None),
+        "cloud_account_id": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?", text) is not None,
+        "cloud_region": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?", text) is not None,
+        "calendar_date": _valid_calendar_date,
+        "cpe23": lambda text: len(text) <= 512 and _CPE23.fullmatch(text) is not None,
+        "credential_key_id": lambda text: re.fullmatch(r"[A-Za-z0-9._:/+=-]{1,128}", text) is not None,
         "cve": lambda text: re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", text) is not None,
+        "cvss_vector": _valid_cvss_vector,
         "cwe": lambda text: re.fullmatch(r"CWE-[0-9]{1,6}", text) is not None,
         "dkim_selector": _valid_dkim_selector,
         "dmarc": _valid_dmarc,
         "dns_name": lambda text: _dns_kind(text) is not None,
         "dns_or_explicit_empty": lambda text: text == "" or _dns_kind(text) is not None,
         "email_address": _valid_email_address,
+        "finding_matcher_or_empty": lambda text: text == "" or _FINDING_MATCHER.fullmatch(text) is not None,
+        "finding_rule": lambda text: _FINDING_RULE.fullmatch(text) is not None,
+        "git_ref_name": _valid_git_ref_name,
+        "hex_serial": lambda text: re.fullmatch(r"0|[1-9a-f][0-9a-f]{0,39}", text) is not None,
+        "html_token": lambda text: _HTML_TOKEN.fullmatch(text) is not None,
+        "html_token_or_empty": lambda text: text == "" or _HTML_TOKEN.fullmatch(text) is not None,
         "http_fingerprint_value": lambda text: (
             re.fullmatch(r"[0-9a-f]{64}", text) is not None or _valid_signed_int32_text(text)
         ),
         "http_url": _valid_url,
         "ip": lambda text: _parse_ip(text) is not None,
+        "iso3166_alpha2": lambda text: re.fullmatch(r"[A-Z]{2}", text) is not None,
+        "media_type": lambda text: _MEDIA_TYPE.fullmatch(text) is not None,
         "method": lambda text: re.fullmatch(r"[A-Z][A-Z0-9!#$%&'*+.^_`|~-]{0,31}", text) is not None,
         "mta_sts": _valid_mta_sts,
+        "multiline_text_4096": lambda text: (
+            1 <= len(text) <= 4096 and all(char in "\n\t" or char.isprintable() for char in text)
+        ),
         "parameter_name": lambda text: (
             1 <= len(text) <= 128 and all(0x21 <= ord(char) <= 0x7E and char not in "&=#" for char in text)
         ),
+        "partial_date": _valid_partial_date,
         "phone_e164": lambda text: re.fullmatch(r"\+[1-9][0-9]{1,14}", text) is not None,
         "printable_text_200": lambda text: 1 <= len(text) <= 200 and text.isprintable(),
         "printable_text_1024": lambda text: 1 <= len(text) <= 1024 and text.isprintable(),
+        "public_suffix": _valid_public_suffix,
+        "registry_domain_id": lambda text: _ROID.fullmatch(text) is not None,
         "repo_name": _valid_repo_name,
         "repo_owner": _valid_repo_owner,
         "rir_handle": lambda text: re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]", text) is not None,
@@ -905,16 +1635,160 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "sha256": lambda text: re.fullmatch(r"[0-9a-f]{64}", text) is not None,
         "spf": _valid_spf,
         "srv_label": lambda text: re.fullmatch(r"_[a-z0-9](?:[a-z0-9-]{0,60}[a-z0-9])?", text) is not None,
-        "tech_token": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9._+-]{0,61}[a-z0-9])?", text) is not None,
+        "tech_token": lambda text: re.fullmatch(_TECH_SLUG, text) is not None,
+        "tech_version": lambda text: 1 <= len(text) <= 64 and all(0x21 <= ord(char) <= 0x7E for char in text),
         "tenant_id": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?", text) is not None,
         "tls_fingerprint_value": lambda text: re.fullmatch(r"[0-9a-f]{32}|[0-9a-f]{62}", text) is not None,
         "tls_cipher_name": lambda text: (
             5 <= len(text) <= 128 and re.fullmatch(r"TLS_[A-Z0-9]+(?:_[A-Z0-9]+)*", text) is not None
         ),
         "txt_value": lambda text: 1 <= len(text) <= 4096 and all(0x20 <= ord(char) <= 0x7E for char in text),
+        "username_or_empty": lambda text: len(text) <= 256 and all(0x21 <= ord(char) <= 0x7E for char in text),
+        "utc_timestamp": _valid_utc_timestamp,
     }
     validator = validators.get(rule)
     return validator is not None and validator(value)
+
+
+# RFC 6838 restricted names, lowercase, without parameters: `text/html`, never `text/html; charset=x`.
+_MEDIA_NAME = r"[a-z0-9][a-z0-9!#$&^_.+-]{0,126}"
+_MEDIA_TYPE = re.compile(f"{_MEDIA_NAME}/{_MEDIA_NAME}")
+
+
+def _valid_sorted_set(value: object, member: Callable[[str], bool]) -> bool:
+    """A set-like array has one spelling: strings sorted ascending with no duplicate."""
+    if type(value) is not list:
+        return False
+    items = cast("list[object]", value)
+    if any(type(item) is not str or not member(item) for item in items):
+        return False
+    texts = cast("list[str]", items)
+    return all(first < second for first, second in pairwise(texts))
+
+
+def _valid_mx_pattern(value: str) -> bool:
+    """An RFC 8461 `mx` pattern: a host name, or `*.` followed by one, matched a label at a time."""
+    name = value.removeprefix("*.")
+    return _dns_kind(name) is not None
+
+
+# RFC 5731 domain statuses and the RFC 3915 grace-period statuses, in their EPP camelCase spelling.
+_EPP_STATUSES = frozenset(
+    {
+        "addPeriod",
+        "autoRenewPeriod",
+        "clientDeleteProhibited",
+        "clientHold",
+        "clientRenewProhibited",
+        "clientTransferProhibited",
+        "clientUpdateProhibited",
+        "inactive",
+        "ok",
+        "pendingCreate",
+        "pendingDelete",
+        "pendingRenew",
+        "pendingRestore",
+        "pendingTransfer",
+        "pendingUpdate",
+        "redemptionPeriod",
+        "renewPeriod",
+        "serverDeleteProhibited",
+        "serverHold",
+        "serverRenewProhibited",
+        "serverTransferProhibited",
+        "serverUpdateProhibited",
+        "transferPeriod",
+    }
+)
+# `<tool>:<id>`: the reporting tool's token, then its own rule id exactly as it spells it.
+_TECH_SLUG = r"[a-z0-9](?:[a-z0-9._+-]{0,61}[a-z0-9])?"
+_TECH_SLUG_RE = re.compile(_TECH_SLUG)
+_FINDING_RULE = re.compile(_TECH_SLUG + r":[A-Za-z0-9._/-]{1,200}")
+# `<corpus>:<breach id>`, lowercase, so case and spacing variants of one corpus's breach name join.
+_BREACH_TOKEN = re.compile(_TECH_SLUG + r":[a-z0-9._/-]{1,200}")
+# An HTML element or attribute name as a crawler reports it: `a`, `script`, `href`, `data-src`.
+_HTML_TOKEN = re.compile(r"[a-z][a-z0-9-]{0,31}")
+# Long enough for an SNI host prefix (253 bytes) before a matcher name.
+_FINDING_MATCHER = re.compile(r"[A-Za-z0-9._:/-]{1,400}")
+# RFC 5730 repository object id, ASCII only: `2138514_DOMAIN_COM-VRSN`, `DOM000000113746-FRNIC`.
+_ROID = re.compile(r"[A-Za-z0-9_]{1,80}-[A-Za-z0-9]{1,8}")
+_UTC_TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z")
+
+
+# The base metrics each CVSS version requires; a vector missing one does not describe a score.
+_CVSS_BASE_METRICS = {
+    "3.0": {"AV", "AC", "PR", "UI", "S", "C", "I", "A"},
+    "3.1": {"AV", "AC", "PR", "UI", "S", "C", "I", "A"},
+    "4.0": {"AV", "AC", "AT", "PR", "UI", "VC", "VI", "VA", "SC", "SI", "SA"},
+}
+
+
+def _valid_number(value: object, low: float, high: float) -> bool:
+    """A finite JSON number in range; a boolean is not a number here even though Python says it is."""
+    return type(value) in (int, float) and math.isfinite(cast("float", value)) and low <= cast("float", value) <= high
+
+
+def _at_most_one_decimal(value: float) -> bool:
+    """`repr` is the shortest spelling that round-trips, so `9.8` reads as one decimal, not 9.800000000000000710."""
+    exponent = Decimal(repr(value)).as_tuple().exponent
+    return type(exponent) is int and exponent >= -1
+
+
+def _valid_cvss_vector(value: str) -> bool:
+    """`CVSS:3.0/`, `CVSS:3.1/` or `CVSS:4.0/` and metric pairs, each metric once, every base metric present."""
+    match = re.fullmatch(r"CVSS:(3\.0|3\.1|4\.0)((?:/[A-Z]{1,3}:[A-Za-z]{1,5}){1,40})", value)
+    if match is None:
+        return False
+    metrics = [pair.split(":", 1)[0] for pair in match.group(2)[1:].split("/")]
+    return len(metrics) == len(set(metrics)) and _CVSS_BASE_METRICS[match.group(1)] <= set(metrics)
+
+
+def _valid_partial_date(value: str) -> bool:
+    """A year, a year and month, or a full date, as breach corpora publish them."""
+    if re.fullmatch(r"[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?", value) is None:
+        return False
+    padded = value + "-01" * (2 - value.count("-"))
+    return _valid_calendar_date(padded)
+
+
+def _valid_calendar_date(value: str) -> bool:
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _valid_git_ref_name(value: str) -> bool:
+    """A branch name `git check-ref-format --branch` accepts, one level allowed, at most 255 bytes."""
+    if not value.isascii() or not 1 <= len(value) <= 255 or value in ("@", "HEAD") or value.startswith("-"):
+        return False
+    if any(ord(char) < 0x20 or ord(char) == 0x7F or char in " ~^:?*[\\" for char in value):
+        return False
+    if ".." in value or "@{" in value or "//" in value or value.startswith("/") or value.endswith((".", "/")):
+        return False
+    return all(not part.startswith(".") and not part.endswith(".lock") for part in value.split("/"))
+
+
+def _valid_public_suffix(value: str) -> bool:
+    """A zone names are registered under: one more label makes a registrable domain."""
+    labels = value.split(".")
+    if not value.isascii() or not all(_valid_normal_dns_label(label) for label in labels):
+        return False
+    return _dns_kind(f"a.{value}") == "domain"
+
+
+def _valid_utc_timestamp(value: str) -> bool:
+    """One spelling per instant: UTC with `Z`, no offset, and a date and time that exist."""
+    if _UTC_TIMESTAMP.fullmatch(value) is None:
+        return False
+    try:
+        datetime.strptime(value[:19] + "+0000", "%Y-%m-%dT%H:%M:%S%z")
+    except ValueError:
+        return False
+    return True
 
 
 def _valid_dkim_selector(value: str) -> bool:
@@ -971,6 +1845,8 @@ def _valid_mta_sts(value: str) -> bool:
 
 
 def _valid_spf(value: str) -> bool:
+    if len(value) > 4096:
+        return False
     return (value == "v=spf1" or value.startswith("v=spf1 ")) and all(0x20 <= ord(char) <= 0x7E for char in value)
 
 
@@ -988,6 +1864,10 @@ def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | Non
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
+        return None
+    # `::ffff:192.0.2.1` is the IPv4 host 192.0.2.1 in IPv6 clothing, and its compressed spelling
+    # differs between interpreters, so accepting it would give one host two nodes on some of them.
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         return None
     return address if address.compressed == value else None
 
@@ -1055,10 +1935,17 @@ def _dns_kind(value: str) -> str | None:
 
 
 def _valid_hostname(value: str) -> bool:
+    """Accept any name `subdomain` accepts, or a name of plain LDH labels such as `localhost`.
+
+    Underscore labels left of the registrable domain, such as `my_service.example.com`, are hosts
+    that crawlers report, so a URL host accepts them exactly where a subdomain does.
+    """
     if not value.isascii() or not 1 <= len(value) <= 253 or value.endswith("."):
         return False
     if "." in value and re.fullmatch(r"[0-9.]+", value) is not None:
         return False
+    if _dns_kind(value) is not None:
+        return True
     labels = value.split(".")
     return all(_valid_normal_dns_label(label) for label in labels)
 
@@ -1082,7 +1969,8 @@ def _valid_url(value: str) -> bool:
         return False
     if any(segment in (".", "..") for segment in path.split("/")):
         return False
-    pchar = r"(?:[A-Za-z0-9._~!$&'()*+,;=:@/]|%[0-9A-F]{2})*"
+    # RFC 3986 pchar: unreserved (`-` included), sub-delims, `:`, `@`, and upper-case percent escapes.
+    pchar = r"(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-F]{2})*"
     return re.fullmatch(pchar, path) is not None and (
         query is None or re.fullmatch(pchar.replace("@/", "@/?"), query) is not None
     )
@@ -1113,6 +2001,21 @@ def _valid_caa_parameters(value: object) -> bool:
     return True
 
 
+# Rules whose JSON value is not a string: booleans, numbers and arrays, each checked in full.
+_STRUCTURED_VALIDATORS: dict[str, Callable[[object], bool]] = {
+    "alpn_tokens": _valid_alpn_tokens,
+    "boolean": lambda value: type(value) is bool,
+    "caa_parameters": _valid_caa_parameters,
+    "cvss_score": lambda value: _valid_number(value, 0, 10) and _at_most_one_decimal(cast("float", value)),
+    "epp_status_list": lambda value: value != [] and _valid_sorted_set(value, _EPP_STATUSES.__contains__),
+    "mx_pattern_list": lambda value: _valid_sorted_set(value, _valid_mx_pattern),
+    "probability": lambda value: _valid_number(value, 0, 1),
+    "tag_list": lambda value: (
+        value != [] and _valid_sorted_set(value, lambda text: _TECH_SLUG_RE.fullmatch(text) is not None)
+    ),
+}
+
+
 def _schema_for_rule(rule: str | list[str]) -> dict[str, Any]:
     if isinstance(rule, list):
         return {"type": "string", "enum": rule}
@@ -1120,11 +2023,22 @@ def _schema_for_rule(rule: str | list[str]) -> dict[str, Any]:
         "asn": {"type": "integer", "minimum": 0, "maximum": 4294967295, "format": rule},
         "ip_version": {"type": "integer", "enum": [4, 6], "format": rule},
         "redirect_status": {"type": "integer", "enum": [301, 302, 303, 307, 308], "format": rule},
+        "http_status": {"type": "integer", "minimum": 100, "maximum": 599, "format": rule},
         "uint8": {"type": "integer", "minimum": 0, "maximum": 255, "format": rule},
         "uint16": {"type": "integer", "minimum": 0, "maximum": 65535, "format": rule},
+        "uint32": {"type": "integer", "minimum": 0, "maximum": 4294967295, "format": rule},
+        "uint63": {"type": "integer", "minimum": 0, "maximum": 2**63 - 1, "format": rule},
     }
     if rule in integer_rules:
         return integer_rules[rule]
+    if rule == "boolean":
+        return {"type": "boolean", "format": rule}
+    if rule == "cvss_score":
+        return {"type": "number", "minimum": 0, "maximum": 10, "multipleOf": 0.1, "format": rule}
+    if rule == "probability":
+        return {"type": "number", "minimum": 0, "maximum": 1, "format": rule}
+    if rule in ("mx_pattern_list", "epp_status_list", "tag_list"):
+        return {"type": "array", "items": {"type": "string"}, "uniqueItems": True, "format": rule}
     if rule == "alpn_tokens":
         return {"type": "array", "items": {"type": "string"}, "format": rule}
     if rule == "caa_parameters":
@@ -1148,10 +2062,11 @@ def catalog_schema(kind: str, type_name: str) -> dict[str, Any]:
         raise ExpectedValidationError("unknown catalog type")
     definition = cast("dict[str, Any]", manifest[kind][type_name])
     required = cast("dict[str, str | list[str]]", definition["required"])
+    optional = cast("dict[str, str | list[str]]", definition["optional"])
     return {
         "type": "object",
         "required": list(required),
-        "properties": {name: _schema_for_rule(rule) for name, rule in required.items()},
+        "properties": {name: _schema_for_rule(rule) for name, rule in {**required, **optional}.items()},
         "additionalProperties": True,
         "x-identity": definition["identity"],
         "x-maxUtf8Bytes": manifest["common"]["properties_bytes"],

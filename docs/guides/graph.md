@@ -115,15 +115,15 @@ the parameter, the finding and all three relations together.
 Delete a scoped child with `cascade: true` before deleting its scope relation or
 parent node. The cascade removes the child's incident scope relation. The server
 rejects deletion of that relation or parent while the child exists, preventing
-orphan ports, services, findings, DKIM records, parameters, and MTA-STS
-policies. A chain deletes innermost first: an endpoint with a parameter that
+orphan ports, services, findings, DKIM records, parameters, MTA-STS policies,
+and domain registrations. A chain deletes innermost first: an endpoint with a parameter that
 carries a finding takes three deletes, finding, parameter, endpoint, and the two
 outer ones are refused until the level below them is gone.
 
-## Catalog v1 workspaces
+## Catalog v1 and v2 workspaces
 
-Catalog v2 is a clean cut. A workspace created with catalog v1 is rejected at
-startup; it is not migrated or opened read-only. Create a new workspace for this
+Catalog v3 is a clean cut. A workspace created with catalog v1 or v2 is
+rejected at startup; it is not migrated or opened read-only. Create a new workspace for this
 version. A workspace created before schema version 3 is likewise rejected, so a
 workspace written by v0.2.0 does not open either.
 
@@ -150,10 +150,11 @@ Remove children explicitly with RFC 6901 JSON Pointers:
 
 Required identity fields and relation endpoints are immutable. Omitted label or
 source values are preserved; explicit `null` clears those optional metadata
-fields. Property `null` remains literal JSON data. `observed_at` uses the last
+fields. Property `null` remains literal JSON data, except that a property the
+catalog declares rejects it; remove that property with `remove_properties`. `observed_at` uses the last
 writer's supplied timestamp even when it is chronologically older; it is not a
 maximum-time merge.
 
-All writes validate the merged full record and every cross-field relation rule
-before one transaction commits. One invalid record or missing evidence link
+All writes validate the merged full record and every check its type declares,
+including a relation's endpoint value checks, before one transaction commits. One invalid record or missing evidence link
 rejects the entire batch.

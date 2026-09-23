@@ -1,0 +1,78 @@
+[
+  {
+    "file": "as64496.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "asn",
+          "properties": {
+            "value": 64496,
+            "name": "EXAMPLE-AS",
+            "country": "NL",
+            "rir": "ripe"
+          },
+          "source": "rdap_autnum"
+        },
+        {
+          "type": "organization",
+          "properties": {
+            "registry": "ripe",
+            "handle": "ORG-EA1-RIPE",
+            "name": "Example Networks B.V."
+          },
+          "source": "rdap_autnum"
+        },
+        {
+          "type": "email_address",
+          "properties": {
+            "value": "abuse@example.net"
+          },
+          "source": "rdap_autnum"
+        },
+        {
+          "type": "phone",
+          "properties": {
+            "value": "+17035550102"
+          },
+          "source": "rdap_autnum"
+        }
+      ],
+      "relations": [
+        {
+          "type": "operated_by",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {
+            "role": "abuse"
+          }
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {
+            "role": "abuse"
+          }
+        }
+      ]
+    }
+  }
+]

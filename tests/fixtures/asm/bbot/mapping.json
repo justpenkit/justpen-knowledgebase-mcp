@@ -1,0 +1,612 @@
+{
+  "source": "bbot",
+  "files": {
+    "output.jsonl": "bbot_jsonl"
+  },
+  "rows": [
+    {
+      "path": "type",
+      "sink": "non_storable",
+      "reason": "selects the mapping rows through the event qualifier"
+    },
+    {
+      "path": "id",
+      "sink": "non_storable",
+      "reason": "BBOT's event id; the writer resolves `parent` against it"
+    },
+    {
+      "path": "uuid",
+      "sink": "non_storable",
+      "reason": "a per-run event uuid"
+    },
+    {
+      "path": "scope_description",
+      "sink": "evidence"
+    },
+    {
+      "path": "netloc",
+      "sink": "evidence"
+    },
+    {
+      "path": "host",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ],
+      "when": "host_is_subdomain"
+    },
+    {
+      "path": "host",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ],
+      "when": "host_is_domain"
+    },
+    {
+      "path": "{type=DNS_NAME}.host",
+      "sink": "evidence"
+    },
+    {
+      "path": "resolved_hosts",
+      "sink": "evidence"
+    },
+    {
+      "path": "{type=OPEN_TCP_PORT}.resolved_hosts",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      },
+      "each": true
+    },
+    {
+      "path": "{type=OPEN_TCP_PORT}.resolved_hosts",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "each": true,
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "dns_children",
+      "sink": "evidence"
+    },
+    {
+      "path": "dns_children.*",
+      "sink": "evidence"
+    },
+    {
+      "path": "{type=DNS_NAME}.dns_children.A",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      },
+      "each": true,
+      "when": "bbot_not_wildcard_placeholder"
+    },
+    {
+      "path": "{type=DNS_NAME}.dns_children.A",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "each": true,
+      "transform": [
+        "ip_version"
+      ],
+      "when": "bbot_not_wildcard_placeholder"
+    },
+    {
+      "path": "port",
+      "sink": "evidence"
+    },
+    {
+      "path": "{type=OPEN_TCP_PORT}.port",
+      "sink": {
+        "node": "port",
+        "property": "number"
+      }
+    },
+    {
+      "path": "web_spider_distance",
+      "sink": "non_storable",
+      "reason": "crawl bookkeeping of this scan"
+    },
+    {
+      "path": "scope_distance",
+      "sink": "non_storable",
+      "reason": "relative to this scan's targets"
+    },
+    {
+      "path": "scan",
+      "sink": "non_storable",
+      "reason": "the scan id"
+    },
+    {
+      "path": "timestamp",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "epoch_utc"
+      ]
+    },
+    {
+      "path": "parent",
+      "sink": "non_storable",
+      "reason": "the parent event id; a URL whose parent is a URL gives the source of a links_to edge"
+    },
+    {
+      "path": "parent_uuid",
+      "sink": "non_storable",
+      "reason": "the parent event uuid"
+    },
+    {
+      "path": "tags",
+      "sink": "evidence"
+    },
+    {
+      "path": "{type=DNS_NAME}.tags",
+      "sink": {
+        "node": "domain",
+        "property": "wildcard"
+      },
+      "transform": [
+        "bbot_wildcard_zone"
+      ],
+      "when": "bbot_names_domain"
+    },
+    {
+      "path": "{type=DNS_NAME}.tags",
+      "sink": {
+        "node": "subdomain",
+        "property": "wildcard"
+      },
+      "transform": [
+        "bbot_wildcard_zone"
+      ],
+      "when": "bbot_names_subdomain"
+    },
+    {
+      "path": "{type=DNS_NAME}.tags",
+      "sink": {
+        "node": "subdomain",
+        "property": "wildcard_answer"
+      },
+      "transform": [
+        "bbot_wildcard_answer"
+      ],
+      "when": "bbot_names_subdomain"
+    },
+    {
+      "path": "{type=URL}.tags",
+      "sink": {
+        "node": "endpoint",
+        "property": "status"
+      },
+      "transform": [
+        "bbot_status_tag"
+      ]
+    },
+    {
+      "path": "module",
+      "sink": "evidence"
+    },
+    {
+      "path": "{type=FINDING,module=badsecrets}.module",
+      "sink": {
+        "node": "finding",
+        "property": "rule"
+      },
+      "transform": [
+        "bbot_rule"
+      ]
+    },
+    {
+      "path": "{type=FINDING}.module",
+      "sink": {
+        "node": "finding",
+        "property": "rule"
+      },
+      "transform": [
+        "bbot_rule"
+      ],
+      "documented_only": true
+    },
+    {
+      "path": "module_sequence",
+      "sink": "evidence"
+    },
+    {
+      "path": "discovery_context",
+      "sink": "non_storable",
+      "redact": true,
+      "reason": "a trufflehog or badsecrets context quotes the secret it found, and every context is repeated in its descendants' discovery_path"
+    },
+    {
+      "path": "discovery_path",
+      "sink": "non_storable",
+      "redact": true,
+      "reason": "joins the discovery context of every ancestor, so it repeats any context that quotes a secret"
+    },
+    {
+      "path": "parent_chain",
+      "sink": "non_storable",
+      "reason": "event uuids of this scan"
+    },
+    {
+      "path": "host_metadata.*.cloud_providers.*.types",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "host_metadata.*.cloud_providers.*.match",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "{type=DNS_NAME}.data",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "bbot_dns_name"
+      ],
+      "when": "bbot_names_domain"
+    },
+    {
+      "path": "{type=DNS_NAME}.data",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "bbot_dns_name"
+      ],
+      "when": "bbot_names_subdomain"
+    },
+    {
+      "path": "{type=OPEN_TCP_PORT}.data",
+      "sink": "non_storable",
+      "reason": "host:port; both are mapped from host and port"
+    },
+    {
+      "path": "{type=URL}.data_json.url",
+      "sink": {
+        "node": "endpoint",
+        "property": "url"
+      },
+      "transform": [
+        "url_without_query"
+      ]
+    },
+    {
+      "path": "{type=URL}.data_json.http_title",
+      "sink": {
+        "node": "endpoint",
+        "property": "title"
+      }
+    },
+    {
+      "path": "{type=URL}.data_json.redirect_location",
+      "sink": {
+        "node": "endpoint",
+        "property": "url"
+      },
+      "transform": [
+        "url_without_query"
+      ],
+      "documented_only": true
+    },
+    {
+      "path": "{type=URL}.data_json.hash.body_sha256",
+      "sink": {
+        "node": "http_fingerprint",
+        "property": "value"
+      }
+    },
+    {
+      "path": "{type=URL}.data_json.hash.header_sha256",
+      "sink": {
+        "node": "http_fingerprint",
+        "property": "value"
+      }
+    },
+    {
+      "path": "{type=URL}.data_json.hash.body_md5",
+      "sink": "non_storable",
+      "reason": "the sha256 digests are the keyed fingerprints"
+    },
+    {
+      "path": "{type=URL}.data_json.hash.header_md5",
+      "sink": "non_storable",
+      "reason": "the sha256 digests are the keyed fingerprints"
+    },
+    {
+      "path": "{type=URL}.data_json.hash.body_mmh3",
+      "sink": "non_storable",
+      "reason": "a body hash, not a favicon hash; the sha256 digests are the keyed fingerprints"
+    },
+    {
+      "path": "{type=URL}.data_json.hash.header_mmh3",
+      "sink": "non_storable",
+      "reason": "the sha256 digests are the keyed fingerprints"
+    },
+    {
+      "path": "{type=FINDING}.data_json.host",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ],
+      "when": "host_is_subdomain"
+    },
+    {
+      "path": "{type=FINDING}.data_json.host",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ],
+      "when": "host_is_domain"
+    },
+    {
+      "path": "{type=FINDING}.data_json.url",
+      "sink": {
+        "node": "endpoint",
+        "property": "url"
+      },
+      "transform": [
+        "url_without_query"
+      ]
+    },
+    {
+      "path": "{type=FINDING}.data_json.name",
+      "sink": {
+        "node": "finding",
+        "property": "title"
+      },
+      "documented_only": true
+    },
+    {
+      "path": "{type=FINDING,module=nuclei}.data_json.name",
+      "sink": "evidence"
+    },
+    {
+      "path": "{type=FINDING}.data_json.severity",
+      "sink": {
+        "node": "finding",
+        "property": "severity"
+      },
+      "transform": [
+        "lower"
+      ]
+    },
+    {
+      "path": "{type=FINDING}.data_json.confidence",
+      "sink": {
+        "node": "finding",
+        "property": "confidence"
+      },
+      "transform": [
+        "lower"
+      ]
+    },
+    {
+      "path": "{type=FINDING}.data_json.description",
+      "sink": {
+        "node": "finding",
+        "property": "description"
+      },
+      "documented_only": true
+    },
+    {
+      "path": "{type=FINDING}.data_json.description",
+      "sink": {
+        "node": "finding",
+        "property": "matcher"
+      },
+      "transform": [
+        "digest16"
+      ],
+      "documented_only": true
+    },
+    {
+      "path": "{type=FINDING}.data_json.path",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "{type=FINDING}.data_json.full_url",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "{type=FINDING}.data_json.cves",
+      "sink": {
+        "node": "cve",
+        "property": "value"
+      },
+      "each": true,
+      "documented_only": true
+    },
+    {
+      "path": "{type=FINDING}.data_json.archive_url",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "{type=FINDING,module=nuclei}.data_json.description",
+      "sink": {
+        "node": "finding",
+        "property": "rule"
+      },
+      "transform": [
+        "bbot_nuclei_template"
+      ],
+      "redact": true
+    },
+    {
+      "path": "{type=FINDING,module=nuclei}.data_json.description",
+      "sink": {
+        "node": "finding",
+        "property": "matcher"
+      },
+      "transform": [
+        "bbot_nuclei_matcher"
+      ],
+      "redact": true
+    },
+    {
+      "path": "{type=FINDING,module=nuclei}.data_json.description",
+      "sink": {
+        "node": "finding",
+        "property": "title"
+      },
+      "redact": true,
+      "transform": [
+        "bbot_nuclei_template_id"
+      ]
+    },
+    {
+      "path": "{type=FINDING,module=nuclei}.data_json.description",
+      "sink": {
+        "node": "finding",
+        "property": "description"
+      },
+      "redact": true,
+      "transform": [
+        "bbot_without_extracted_data"
+      ]
+    },
+    {
+      "path": "{type=FINDING,module=trufflehog}.data_json.name",
+      "sink": {
+        "node": "finding",
+        "property": "rule"
+      },
+      "transform": [
+        "bbot_trufflehog_detector"
+      ]
+    },
+    {
+      "path": "{type=FINDING,module=trufflehog}.data_json.name",
+      "sink": {
+        "node": "finding",
+        "property": "title"
+      }
+    },
+    {
+      "path": "{type=FINDING,module=trufflehog}.data_json.description",
+      "sink": {
+        "node": "finding",
+        "property": "matcher"
+      },
+      "redact": true,
+      "transform": [
+        "bbot_trufflehog_secret_part",
+        "sha256_hex",
+        "hex_prefix16"
+      ]
+    },
+    {
+      "path": "{type=FINDING,module=badsecrets}.data_json.name",
+      "sink": {
+        "node": "finding",
+        "property": "title"
+      }
+    },
+    {
+      "path": "{type=FINDING,module=badsecrets}.data_json.name",
+      "sink": {
+        "node": "finding",
+        "property": "matcher"
+      },
+      "transform": [
+        "detector_token"
+      ]
+    },
+    {
+      "path": "{type=FINDING,module=badsecrets}.data_json.description",
+      "sink": "non_storable",
+      "redact": true,
+      "reason": "the description quotes the known secret and the product that carries it"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "endpoint",
+        "property": "method"
+      },
+      "values": [
+        "GET"
+      ],
+      "reason": "BBOT's http module fetches every URL with GET, and a FINDING's url is one such URL"
+    },
+    {
+      "sink": {
+        "relation": "links_to",
+        "property": "element"
+      },
+      "values": [
+        ""
+      ],
+      "reason": "a spidered URL's parent URL is the page it was excavated from; BBOT reports no element"
+    },
+    {
+      "sink": {
+        "node": "port",
+        "property": "transport"
+      },
+      "values": [
+        "tcp"
+      ],
+      "reason": "the event type is OPEN_TCP_PORT"
+    },
+    {
+      "sink": {
+        "node": "http_fingerprint",
+        "property": "kind"
+      },
+      "values": [
+        "body_sha256",
+        "header_sha256"
+      ],
+      "reason": "the hash field name fixes the fingerprint kind"
+    },
+    {
+      "sink": {
+        "node": "finding",
+        "property": "scanner"
+      },
+      "values": [
+        "bbot"
+      ],
+      "reason": "the tool that reported the finding"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "bbot"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

@@ -1,0 +1,150 @@
+[
+  {
+    "file": "git.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "repository",
+          "properties": {
+            "platform": "github",
+            "host": "github.com",
+            "owner": "example-org",
+            "name": "web-app"
+          },
+          "source": "trufflehog"
+        },
+        {
+          "type": "secret",
+          "properties": {
+            "value_sha256": "78314b11be2e581549ac1c4f616563fad3fdf0c3b71678f6e2299182080e0598",
+            "detector": "aws",
+            "verified": true,
+            "kind": "api_key",
+            "key_id": "AKIAIOSFODNN7EXAMPLE"
+          },
+          "source": "trufflehog"
+        },
+        {
+          "type": "cloud_account",
+          "properties": {
+            "provider": "aws",
+            "account_id": "123456789012"
+          },
+          "source": "trufflehog"
+        }
+      ],
+      "relations": [
+        {
+          "type": "exposes_secret",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {
+            "location": "config/settings.py:12"
+          }
+        },
+        {
+          "type": "exposes_secret",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {
+            "location": "deploy/.env:3"
+          }
+        },
+        {
+          "type": "authenticates",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {
+            "username": "",
+            "breach": "",
+            "verified": true
+          }
+        }
+      ]
+    }
+  },
+  {
+    "file": "s3.jsonl",
+    "request": {
+      "nodes": [
+        {
+          "type": "storage_bucket",
+          "properties": {
+            "provider": "aws_s3",
+            "name": "example-deploy-artifacts"
+          },
+          "source": "trufflehog"
+        },
+        {
+          "type": "secret",
+          "properties": {
+            "value_sha256": "78314b11be2e581549ac1c4f616563fad3fdf0c3b71678f6e2299182080e0598",
+            "detector": "aws",
+            "verified": true,
+            "kind": "api_key",
+            "key_id": "AKIAIOSFODNN7EXAMPLE"
+          },
+          "source": "trufflehog"
+        },
+        {
+          "type": "cloud_account",
+          "properties": {
+            "provider": "aws",
+            "account_id": "123456789012"
+          },
+          "source": "trufflehog"
+        }
+      ],
+      "relations": [
+        {
+          "type": "exposes_secret",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {
+            "location": "config/prod.env"
+          }
+        },
+        {
+          "type": "authenticates",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {
+            "username": "",
+            "breach": "",
+            "verified": true
+          }
+        },
+        {
+          "type": "in_account",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

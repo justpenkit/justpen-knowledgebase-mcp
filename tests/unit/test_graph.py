@@ -8,12 +8,15 @@ import pytest
 from justpen_knowledgebase_mcp.catalog import catalog_manifest
 from justpen_knowledgebase_mcp.errors import (
     ConflictError,
+    ExpectedValidationError,
     InvalidParamsError,
     LimitError,
     NotFoundError,
     RecordConflictError,
 )
 from justpen_knowledgebase_mcp.models import GetRequest, NodeRef, NodeWrite, RelationWrite, TypesRequest, WriteRequest
+from justpen_knowledgebase_mcp.mutations import canonical_json
+from justpen_knowledgebase_mcp.responses import TypesResult, success_response
 from justpen_knowledgebase_mcp.storage import graph
 
 from .helpers import EVIDENCE, NODE, OTHER, cursor, database, owner
@@ -120,11 +123,16 @@ def test_pending_relation_precedence_and_missing_endpoint(monkeypatch):
 def test_endpoint_constraints(relation, source_type, source, target_type, target, valid):
     first = owner(type=source_type, properties=json.dumps(source))
     second = owner(id=2, type=target_type, properties=json.dumps(target))
-    if valid:
+
+    def check():
         graph._validate_endpoints(relation, first, second)
+        graph._validate_endpoint_values(relation, {}, first, second)
+
+    if valid:
+        check()
     else:
-        with pytest.raises(InvalidParamsError):
-            graph._validate_endpoints(relation, first, second)
+        with pytest.raises((InvalidParamsError, ExpectedValidationError)):
+            check()
 
 
 def test_node_preparation_merge_identity_and_duplicate_boundaries(monkeypatch):
@@ -425,3 +433,29 @@ def test_evidence_link_page_refuses_rather_than_encoding_a_kindless_cursor(monke
     db = database(cursor(value=(NODE, 1)), cursor(rows=[(1, NODE)]), cursor(rows=[]))
     with pytest.raises(LimitError, match="budget"):
         graph.Graph.get(db, Mock(), GetRequest(kind="evidence", ids=[EVIDENCE], view="links"))
+
+
+@pytest.mark.parametrize("kind", ["nodes", "relations"])
+def test_a_full_types_page_keeps_a_quarter_of_the_response_budget(kind):
+    """Every page carries each type's descriptions and every format's, so one page of
+    the whole catalog must stay at most three quarters of the 256 KiB success envelope."""
+    db = database(cursor(value=(NODE, 1)))
+    result = graph.graph_types(db, Mock(deadline=0), TypesRequest(kind=kind, limit=100))
+    for item in result["types"]:
+        item["count"] = 2**63 - 1
+    envelope = success_response(TypesResult.model_validate(result).model_dump())
+
+    assert len(result["types"]) == len(catalog_manifest()[kind])
+    assert len(canonical_json(envelope).encode("utf-8")) <= 0.75 * 256 * 1024
+
+
+def test_types_publish_what_each_type_models_and_the_rules_it_runs():
+    db = database(cursor(value=(NODE, 1)))
+    result = graph.graph_types(db, Mock(deadline=0), TypesRequest(kind="nodes", type="endpoint"))
+    endpoint = result["types"][0]
+
+    assert set(endpoint["description"]) >= {"summary", "excludes", "properties"}
+    assert set(endpoint["description"]["properties"]) == {*endpoint["required"], *endpoint["optional"]}
+    assert set(endpoint["check_descriptions"]) == {*endpoint["checks"], *endpoint["canonicalize"]}
+    assert result["formats"]["http_url"]["version"] == 1
+    assert result["formats"]["http_url"]["description"]

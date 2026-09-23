@@ -1,21 +1,29 @@
-"""Parse the published catalog reference back into data and hold it to the manifest.
+"""Hold the published catalog reference to the generator and to the manifest.
 
-Comparing rendered bytes would break every time the Markdown formatter adjusts a cell width, so
-these tests read the page the website serves and reconstruct the contract from it. A type, an
-endpoint, an identity or a format rule that changed in the catalog without the page being
-regenerated fails here.
+The committed page must equal the generator's output after the repository's Markdown formatting,
+byte for byte, so any stale sentence fails. The remaining tests parse the page back into data and
+compare it with the manifest, so a generator that drops a type, an endpoint, an identity, a rule or
+a property description fails too, not only a page that was not regenerated.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import re
+import tomllib
+from importlib.metadata import entry_points
 from pathlib import Path
 
+import mdformat
 import pytest
 
-import justpen_knowledgebase_mcp.catalog as catalog_module
-from justpen_knowledgebase_mcp.catalog import catalog_manifest, scope_relations
+from justpen_knowledgebase_mcp.catalog import (
+    catalog_manifest,
+    format_descriptions,
+    rule_descriptions,
+    scope_relations,
+    type_description,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 # Loaded by path, as tests/test_release.py loads its script: `scripts` is not an installed package.
@@ -47,9 +55,17 @@ def _section(page: str, heading: str) -> str:
 
 def _rows(page: str, heading: str) -> list[list[str]]:
     """Markdown escapes outside code spans are formatting, so a cell is compared unescaped."""
-    lines = [line for line in _section(page, heading).splitlines() if line.startswith("|")]
+    return _table_rows(_section(page, heading))
+
+
+def _table_rows(text: str) -> list[list[str]]:
+    lines = [line for line in text.splitlines() if line.startswith("|")]
     cells = [[cell.strip().replace("\\", "") for cell in line.strip("|").split("|")] for line in lines]
     return [row for row in cells[2:] if row]
+
+
+def _code(values: list[str]) -> str:
+    return ", ".join(f"`{value}`" for value in values) or EMPTY
 
 
 def _names(cell: str) -> list[str]:
@@ -67,11 +83,35 @@ def _required(cell: str) -> dict[str, str | list[str]]:
     return required
 
 
+def _formatted(markdown: str) -> str:
+    """Format the way `make format-md` does: the repository options and every installed extension.
+
+    The CLI enables each installed parser extension by default, so the test asks the same entry
+    point group rather than naming extensions a plugin upgrade could add to.
+    """
+    options = tomllib.loads((ROOT / ".mdformat.toml").read_text(encoding="utf-8"))
+    extensions = {entry.name for entry in entry_points(group="mdformat.parser_extension")}
+    return mdformat.text(markdown, options=options, extensions=extensions)
+
+
 def test_the_committed_page_is_what_the_generator_produces(page: str) -> None:
-    """Formatting may differ, but no table cell may. Regenerate with `make docs-catalog`."""
-    generated = render()
-    for heading in ("Node types", "Relation types", "Which relations a node can carry", "Format rules"):
-        assert _rows(page, heading) == _rows(generated, heading), heading
+    """Byte for byte after formatting. Regenerate with `make docs-catalog`."""
+    assert page == _formatted(render())
+
+
+def test_the_committed_coverage_page_is_what_the_generator_produces() -> None:
+    """The coverage page is generated from the fixtures, so a changed mapping fails until regenerated."""
+    committed = (ROOT / catalog_reference.COVERAGE_PAGE).read_text(encoding="utf-8")
+    assert committed == _formatted(catalog_reference.render_coverage())
+
+
+def test_the_coverage_page_lists_every_source_and_transform() -> None:
+    page = (ROOT / catalog_reference.COVERAGE_PAGE).read_text(encoding="utf-8")
+    sources = sorted(path.name for path in (ROOT / catalog_reference.FIXTURES).iterdir() if path.is_dir())
+    for name in sources:
+        assert f"### `{name}`" in page, name
+    for name in catalog_reference.asm_transforms.TRANSFORMS:
+        assert f"`{name}`" in page, name
 
 
 def test_every_node_type_is_listed_with_its_identity_scope_and_required_map(page: str) -> None:
@@ -115,28 +155,68 @@ def test_the_node_matrix_agrees_with_the_relation_endpoints(page: str) -> None:
         assert _names(incoming) == expected_in, node
 
 
-def test_every_published_format_rule_appears_with_its_description(page: str) -> None:
-    formats = catalog_manifest()["formats"]
-    rows = {row[0].strip("`"): row[1] for row in _rows(page, "Format rules")}
+def test_every_published_format_rule_appears_with_its_version_and_description(page: str) -> None:
+    formats = format_descriptions()
+    rows = {row[0].strip("`"): row[1:] for row in _rows(page, "Format rules")}
 
-    assert set(rows) == set(formats)
-    for name, description in formats.items():
-        assert rows[name] == description
-
-
-def test_the_page_documents_exactly_the_cross_field_validators_that_run(page: str) -> None:
-    rows = {row[0].strip("`") for row in _rows(page, "Cross-field rules")}
-
-    assert rows == set(catalog_module._CROSS_FIELDS)
+    assert set(rows) == set(catalog_manifest()["formats"])
+    for name, item in formats.items():
+        assert rows[name] == [str(item["version"]), item["description"].replace("\\", "")]
 
 
-def test_rendering_refuses_a_cross_field_description_that_has_drifted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The descriptions are hand-written because the manifest does not publish them, so the
-    generator is the thing that has to notice when a validator is added without one."""
-    monkeypatch.setitem(catalog_module._CROSS_FIELDS, "asn", catalog_module._cross_field_registrar)
+def _type_sections(page: str, heading: str) -> dict[str, str]:
+    section = _section(page, heading)
+    parts = section.split("\n### `")[1:]
+    return {part.split("`", 1)[0]: part for part in parts}
 
-    with pytest.raises(RuntimeError, match="cross-field descriptions"):
-        render()
+
+@pytest.mark.parametrize(("kind", "heading"), [("nodes", "Node type details"), ("relations", "Relation type details")])
+def test_every_type_section_shows_props_identity_and_checks(page: str, kind: str, heading: str) -> None:
+    """Each type's section states what it models and excludes, its identity and scope, the
+    checks and canonicalizations that run on it, and every property with its rule and meaning."""
+    definitions = catalog_manifest()[kind]
+    sections = _type_sections(page, heading)
+
+    assert set(sections) == set(definitions)
+    for name, definition in definitions.items():
+        text = " ".join(sections[name].split())
+        docs = type_description(kind, name)
+        for key in ("summary", "excludes", "notes"):
+            if key in docs:
+                assert " ".join(docs[key].split()) in text, (name, key)
+        assert f"**Identity:** {_code(definition['identity']['properties'])}" in text, name
+        assert f"**Checks:** {_code(definition['checks'])}" in text, name
+        assert f"**Canonicalizations:** {_code(definition['canonicalize'])}" in text, name
+        scope = definition["identity"].get("scope")
+        if kind == "nodes":
+            expected_scope = EMPTY if scope is None else f"`{scope['relation']}` (source)"
+            assert f"**Parent scope:** {expected_scope}" in text, name
+        else:
+            assert f"**Sources:** {_code(definition['sources'])}" in text, name
+            assert f"**Targets:** {_code(definition['targets'])}" in text, name
+        rows = {row[0].strip("`"): row for row in _table_rows(sections[name])}
+        assert set(rows) == {*definition["required"], *definition["optional"]}, name
+        for prop, (_prop, required, _rule, meaning) in rows.items():
+            assert required == ("yes" if prop in definition["required"] else "no"), (name, prop)
+            assert meaning == docs["properties"][prop].replace("\\", ""), (name, prop)
+
+
+@pytest.mark.parametrize(("heading", "key"), [("Checks", "checks"), ("Canonicalizations", "canonicalize")])
+def test_the_page_documents_every_published_rule_with_its_types(page: str, heading: str, key: str) -> None:
+    """The rule prose lives beside the callable in the catalog, so the page can only drift by not
+    being regenerated; the ids and the types that run them are read back from the manifest."""
+    manifest = catalog_manifest()
+    expected: dict[str, list[str]] = {}
+    for kind in ("nodes", "relations"):
+        for name, definition in sorted(manifest[kind].items()):
+            for rule_id in definition[key]:
+                expected.setdefault(rule_id, []).append(name)
+    rows = {row[0].strip("`"): row for row in _rows(page, heading)}
+
+    assert set(rows) == set(expected)
+    for rule_id, (_id, types, description) in rows.items():
+        assert _names(types) == expected[rule_id], rule_id
+        assert description == rule_descriptions()[rule_id].replace("\\", ""), rule_id
 
 
 @pytest.fixture(scope="module")
@@ -161,3 +241,34 @@ def test_the_parent_scope_prose_enumerates_exactly_the_scoped_types(graph_page: 
 
     assert _listed(graph_page, "Creating a new ", " without exactly") == sorted(scoped)
     assert _listed(graph_page, "Deleting `has_", ", or deleting its parent node") == sorted(scoped.values())
+
+
+def test_the_page_lists_the_registry_digests_the_fingerprint_binds(page: str) -> None:
+    rows = {row[0].strip("`"): row[1].strip("`") for row in _rows(page, "Bundled registries")}
+    assert rows == catalog_manifest()["registries"]
+
+
+REVIEW_PAGE = "docs/reference/catalog-review.md"
+V3_NODES = {"whois_registration", "cloud_account", "cloud_resource"}
+V3_RELATIONS = {"has_registration", "hosted_on", "in_account", "authenticates", "links_to"}
+
+
+def test_the_review_ledger_covers_every_type_and_defect() -> None:
+    """Every type has a verdict, exactly the v3 additions are marked new, and every defect row names
+    a regression test that exists."""
+    ledger = (ROOT / REVIEW_PAGE).read_text(encoding="utf-8")
+    manifest = catalog_manifest()
+    for heading, kind, added, v2_count in (
+        ("Node types", "nodes", V3_NODES, 31),
+        ("Relation types", "relations", V3_RELATIONS, 44),
+    ):
+        rows = {row[0].strip("`"): row[1] for row in _rows(ledger, heading)}
+        assert set(rows) == set(manifest[kind]), heading
+        assert {name for name, verdict in rows.items() if verdict == "new in v3"} == added, heading
+        assert len(rows) - len(added) == v2_count, heading
+    defects = _rows(ledger, "Defects")
+    assert {row[0] for row in defects} >= {"B1", "B2", *(f"D-{number:02d}" for number in range(1, 21))}
+    for row in defects:
+        path, _separator, test_name = row[-1].strip("`").partition("::")
+        source = (ROOT / path).read_text(encoding="utf-8")
+        assert re.search(rf"^(async )?def {re.escape(test_name)}\(", source, re.MULTILINE), row[0]

@@ -1,0 +1,79 @@
+[
+  {
+    "file": "leakcheck.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "secret",
+          "properties": {
+            "value_sha256": "c4bbcb1fbec99d65bf59d85c8cb62ee2db963f0fe106f483d9afa73bd4e39a8a",
+            "kind": "password"
+          },
+          "source": "leakcheck"
+        },
+        {
+          "type": "secret",
+          "properties": {
+            "value_sha256": "b7d519bd0009945511c08b810df4a824b1ce21161ba17674c61e59bede89c5fe",
+            "kind": "password_hash"
+          },
+          "source": "leakcheck"
+        },
+        {
+          "type": "email_address",
+          "properties": {
+            "value": "alice@example.com"
+          },
+          "source": "leakcheck"
+        }
+      ],
+      "relations": [
+        {
+          "type": "authenticates",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {
+            "username": "alice",
+            "breach": "leakcheck:breachedwebsite.net",
+            "breach_title": "BreachedWebsite.net",
+            "breach_date": "2019-07"
+          }
+        },
+        {
+          "type": "authenticates",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {
+            "username": "alice",
+            "breach": "leakcheck:example-forum",
+            "breach_title": "Example Forum",
+            "breach_date": "2021-03"
+          }
+        },
+        {
+          "type": "authenticates",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {
+            "username": "alice",
+            "breach": "leakcheck:collection-1",
+            "breach_title": "Collection #1",
+            "breach_date": "2019-01"
+          }
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,376 @@
+{
+  "source": "rdap_domain",
+  "files": {
+    "example.com.json": "json",
+    "example-nohandle.json": "json",
+    "example-placeholder.json": "json"
+  },
+  "rows": [
+    {
+      "path": "objectClassName",
+      "sink": "evidence"
+    },
+    {
+      "path": "handle",
+      "sink": {
+        "node": "whois_registration",
+        "property": "registry_domain_id"
+      },
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "ldhName",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ]
+    },
+    {
+      "path": "ldhName",
+      "sink": {
+        "node": "whois_registration",
+        "property": "registry"
+      },
+      "transform": [
+        "public_suffix_of"
+      ],
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "unicodeName",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "variants",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "publicIds[].type",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "publicIds[].identifier",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "remarks[].title",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "remarks[].description",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "links[].value",
+      "sink": "evidence"
+    },
+    {
+      "path": "links[].rel",
+      "sink": "evidence"
+    },
+    {
+      "path": "links[].href",
+      "sink": "evidence"
+    },
+    {
+      "path": "links[].type",
+      "sink": "evidence"
+    },
+    {
+      "path": "status",
+      "sink": {
+        "node": "whois_registration",
+        "property": "epp_status"
+      },
+      "transform": [
+        "rdap_status_to_epp",
+        "sorted_set"
+      ],
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "entities[].objectClassName",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].handle",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].roles",
+      "sink": {
+        "relation": "has_contact",
+        "property": "role"
+      },
+      "transform": [
+        "rdap_registration_role"
+      ],
+      "each": true,
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "entities[].publicIds[].type",
+      "sink": "non_storable",
+      "reason": "names the identifier scheme; the gTLD profile's registrar publicId is always the IANA Registrar ID"
+    },
+    {
+      "path": "entities[].publicIds[].identifier",
+      "sink": {
+        "node": "registrar",
+        "property": "iana_id"
+      },
+      "transform": [
+        "int_value"
+      ],
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "entities[].vcardArray",
+      "sink": {
+        "node": "registrar",
+        "property": "name"
+      },
+      "transform": [
+        "rdap_registrar_name"
+      ],
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "entities[].vcardArray",
+      "sink": {
+        "node": "email_address",
+        "property": "value"
+      },
+      "transform": [
+        "rdap_registration_contact_email"
+      ],
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "entities[].vcardArray",
+      "sink": "non_storable",
+      "reason": "registration contact person names (fn), the registrant org, postal address and phone are personal data; person and company types are out of scope, so they stay in evidence"
+    },
+    {
+      "path": "entities[].entities[].objectClassName",
+      "sink": "evidence"
+    },
+    {
+      "path": "entities[].entities[].roles",
+      "sink": {
+        "relation": "has_contact",
+        "property": "role"
+      },
+      "transform": [
+        "rdap_abuse_role"
+      ],
+      "each": true,
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "entities[].entities[].vcardArray",
+      "sink": {
+        "node": "email_address",
+        "property": "value"
+      },
+      "transform": [
+        "rdap_abuse_email"
+      ],
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "entities[].entities[].vcardArray",
+      "sink": {
+        "node": "phone",
+        "property": "value"
+      },
+      "transform": [
+        "rdap_abuse_phone"
+      ],
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "events[].eventAction",
+      "sink": "non_storable",
+      "reason": "selects which property the eventDate of the same event feeds"
+    },
+    {
+      "path": "events[].eventDate",
+      "sink": {
+        "node": "whois_registration",
+        "property": "registration_created"
+      },
+      "transform": [
+        "rdap_event_registration"
+      ],
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "events[].eventDate",
+      "sink": {
+        "node": "whois_registration",
+        "property": "registration_updated"
+      },
+      "transform": [
+        "rdap_event_last_changed"
+      ],
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "events[].eventDate",
+      "sink": {
+        "node": "whois_registration",
+        "property": "registration_expires"
+      },
+      "transform": [
+        "rdap_event_expiration"
+      ],
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "events[].eventDate",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "rdap_event_database_update"
+      ]
+    },
+    {
+      "path": "secureDNS.delegationSigned",
+      "sink": {
+        "node": "whois_registration",
+        "property": "dnssec_signed"
+      },
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "secureDNS.zoneSigned",
+      "sink": "non_storable",
+      "reason": "whether the registry's own zone is signed: a fact of the zone, not of this registration"
+    },
+    {
+      "path": "secureDNS.maxSigLife",
+      "sink": "non_storable",
+      "reason": "a signature lifetime a client may request, not a registration fact"
+    },
+    {
+      "path": "secureDNS.dsData[].keyTag",
+      "sink": "evidence"
+    },
+    {
+      "path": "secureDNS.dsData[].algorithm",
+      "sink": "evidence"
+    },
+    {
+      "path": "secureDNS.dsData[].digestType",
+      "sink": "evidence"
+    },
+    {
+      "path": "secureDNS.dsData[].digest",
+      "sink": "evidence"
+    },
+    {
+      "path": "secureDNS.keyData[].flags",
+      "sink": "evidence",
+      "documented_only": true
+    },
+    {
+      "path": "nameservers[].objectClassName",
+      "sink": "evidence"
+    },
+    {
+      "path": "nameservers[].ldhName",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ]
+    },
+    {
+      "path": "port43",
+      "sink": {
+        "node": "whois_registration",
+        "property": "whois_server"
+      },
+      "transform": [
+        "strip_trailing_dot"
+      ],
+      "when": "rdap_registration_accepted"
+    },
+    {
+      "path": "rdapConformance",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].title",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].description",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].value",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].rel",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].href",
+      "sink": "evidence"
+    },
+    {
+      "path": "notices[].links[].type",
+      "sink": "evidence"
+    },
+    {
+      "path": "redacted[].name.type",
+      "sink": "evidence"
+    },
+    {
+      "path": "redacted[].prePath",
+      "sink": "evidence"
+    },
+    {
+      "path": "redacted[].postPath",
+      "sink": "evidence"
+    },
+    {
+      "path": "redacted[].pathLang",
+      "sink": "evidence"
+    },
+    {
+      "path": "redacted[].method",
+      "sink": "evidence"
+    },
+    {
+      "path": "redacted[].reason.description",
+      "sink": "evidence"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "rdap_domain"
+      ],
+      "reason": "the source that produced the output"
+    }
+  ]
+}

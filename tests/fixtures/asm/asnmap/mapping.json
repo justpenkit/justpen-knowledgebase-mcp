@@ -1,0 +1,76 @@
+{
+  "source": "asnmap",
+  "files": {
+    "output.jsonl": "jsonl"
+  },
+  "rows": [
+    {
+      "path": "timestamp",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "go_time_string_utc"
+      ]
+    },
+    {
+      "path": "input",
+      "sink": "evidence",
+      "reason": "the query the operator gave (an ASN, an IP or a name); the result fields carry what was learned"
+    },
+    {
+      "path": "as_number",
+      "sink": {
+        "node": "asn",
+        "property": "value"
+      },
+      "transform": [
+        "asn_number"
+      ]
+    },
+    {
+      "path": "as_name",
+      "sink": {
+        "node": "asn",
+        "property": "name"
+      }
+    },
+    {
+      "path": "as_country",
+      "sink": {
+        "node": "asn",
+        "property": "country"
+      }
+    },
+    {
+      "path": "as_range",
+      "sink": {
+        "node": "ip_cidr",
+        "property": "value"
+      },
+      "each": true
+    },
+    {
+      "path": "as_range",
+      "sink": {
+        "node": "ip_cidr",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ],
+      "each": true
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "asnmap"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+[
+  {
+    "file": "gitleaks.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "repository",
+          "properties": {
+            "platform": "github",
+            "host": "github.com",
+            "owner": "example-org",
+            "name": "web-app"
+          },
+          "source": "gitleaks"
+        },
+        {
+          "type": "secret",
+          "properties": {
+            "value_sha256": "78314b11be2e581549ac1c4f616563fad3fdf0c3b71678f6e2299182080e0598",
+            "detector": "generic-api-key",
+            "kind": "api_key"
+          },
+          "source": "gitleaks"
+        }
+      ],
+      "relations": [
+        {
+          "type": "exposes_secret",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {
+            "location": "config/settings.py:12"
+          }
+        },
+        {
+          "type": "exposes_secret",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {
+            "location": "deploy/settings.yaml:7"
+          }
+        }
+      ]
+    }
+  }
+]

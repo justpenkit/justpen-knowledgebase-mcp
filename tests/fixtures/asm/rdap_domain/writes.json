@@ -1,0 +1,309 @@
+[
+  {
+    "file": "example.com.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.com"
+          },
+          "observed_at": "2026-09-23T03:15:05Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "whois_registration",
+          "properties": {
+            "registry": "com",
+            "registry_domain_id": "2336799_DOMAIN_COM-VRSN",
+            "registration_created": "1995-08-14T04:00:00Z",
+            "registration_updated": "2026-08-14T08:01:43Z",
+            "registration_expires": "2027-08-13T04:00:00Z",
+            "epp_status": [
+              "clientDeleteProhibited",
+              "clientTransferProhibited",
+              "clientUpdateProhibited"
+            ],
+            "dnssec_signed": true,
+            "whois_server": "whois.verisign-grs.com"
+          },
+          "observed_at": "2026-09-23T03:15:05Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "registrar",
+          "properties": {
+            "iana_id": 376,
+            "name": "RESERVED-Internet Assigned Numbers Authority"
+          },
+          "observed_at": "2026-09-23T03:15:05Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "email_address",
+          "properties": {
+            "value": "registrant@example.com"
+          },
+          "observed_at": "2026-09-23T03:15:05Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "email_address",
+          "properties": {
+            "value": "admin@example.com"
+          },
+          "observed_at": "2026-09-23T03:15:05Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "email_address",
+          "properties": {
+            "value": "tech@example.com"
+          },
+          "observed_at": "2026-09-23T03:15:05Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "email_address",
+          "properties": {
+            "value": "abuse@example.net"
+          },
+          "observed_at": "2026-09-23T03:15:05Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "phone",
+          "properties": {
+            "value": "+13105550100"
+          },
+          "observed_at": "2026-09-23T03:15:05Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "ns1.example.net"
+          },
+          "observed_at": "2026-09-23T03:15:05Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "ns2.example.net"
+          },
+          "observed_at": "2026-09-23T03:15:05Z",
+          "source": "rdap_domain"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_registration",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "registered_through",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {
+            "role": "registrant"
+          }
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {
+            "role": "admin"
+          }
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 5
+          },
+          "properties": {
+            "role": "tech"
+          }
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {
+            "role": "abuse"
+          }
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 7
+          },
+          "properties": {
+            "role": "abuse"
+          }
+        },
+        {
+          "type": "has_nameserver",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_nameserver",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 9
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "example-nohandle.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.io"
+          },
+          "observed_at": "2026-09-23T03:20:11Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "ns1.example.net"
+          },
+          "observed_at": "2026-09-23T03:20:11Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "ns2.example.net"
+          },
+          "observed_at": "2026-09-23T03:20:11Z",
+          "source": "rdap_domain"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_nameserver",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_nameserver",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "example-placeholder.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.org"
+          },
+          "observed_at": "2026-09-23T03:25:44Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "ns1.example.net"
+          },
+          "observed_at": "2026-09-23T03:25:44Z",
+          "source": "rdap_domain"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "ns2.example.net"
+          },
+          "observed_at": "2026-09-23T03:25:44Z",
+          "source": "rdap_domain"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_nameserver",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_nameserver",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

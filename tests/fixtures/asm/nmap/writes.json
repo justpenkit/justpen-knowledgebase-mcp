@@ -1,0 +1,198 @@
+[
+  {
+    "file": "scan.xml",
+    "request": {
+      "nodes": [
+        {
+          "type": "ip_address",
+          "properties": {
+            "value": "192.0.2.10",
+            "version": 4
+          },
+          "observed_at": "2026-09-23T10:00:12Z",
+          "source": "nmap"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "www.example.com"
+          },
+          "observed_at": "2026-09-23T10:00:12Z",
+          "source": "nmap"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "host-192-0-2-10.example.net"
+          },
+          "observed_at": "2026-09-23T10:00:12Z",
+          "source": "nmap"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 22,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-23T10:00:12Z",
+          "source": "nmap"
+        },
+        {
+          "type": "service",
+          "properties": {
+            "name": "ssh",
+            "product": "OpenSSH",
+            "version": "9.8"
+          },
+          "observed_at": "2026-09-23T10:00:12Z",
+          "source": "nmap"
+        },
+        {
+          "type": "technology",
+          "properties": {
+            "name": "openssh",
+            "cpe": "cpe:2.3:a:openbsd:openssh:*:*:*:*:*:*:*:*"
+          },
+          "observed_at": "2026-09-23T10:00:12Z",
+          "source": "nmap"
+        },
+        {
+          "type": "host_key",
+          "properties": {
+            "algorithm": "ssh-ed25519",
+            "fingerprint_sha256": "bdb9abac78aaf569e42537846dd63bcf586bc2f5f8df9ad6e782875edfd8960c"
+          },
+          "observed_at": "2026-09-23T10:00:12Z",
+          "source": "nmap"
+        },
+        {
+          "type": "port",
+          "properties": {
+            "number": 443,
+            "transport": "tcp"
+          },
+          "observed_at": "2026-09-23T10:00:12Z",
+          "source": "nmap"
+        },
+        {
+          "type": "service",
+          "properties": {
+            "name": "http",
+            "secure": true,
+            "product": "nginx",
+            "version": "1.24.0"
+          },
+          "observed_at": "2026-09-23T10:00:12Z",
+          "source": "nmap"
+        },
+        {
+          "type": "technology",
+          "properties": {
+            "name": "nginx",
+            "cpe": "cpe:2.3:a:igor_sysoev:nginx:*:*:*:*:*:*:*:*"
+          },
+          "observed_at": "2026-09-23T10:00:12Z",
+          "source": "nmap"
+        }
+      ],
+      "relations": [
+        {
+          "type": "resolves_to",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 0
+          },
+          "properties": {}
+        },
+        {
+          "type": "reverse_resolves_to",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_service",
+          "source_ref": {
+            "node_index": 3
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {}
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 5
+          },
+          "properties": {
+            "version": "9.8",
+            "cpe": "cpe:2.3:a:openbsd:openssh:9.8:*:*:*:*:*:*:*"
+          }
+        },
+        {
+          "type": "presents_host_key",
+          "source_ref": {
+            "node_index": 4
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_open_port",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 7
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_service",
+          "source_ref": {
+            "node_index": 7
+          },
+          "target_ref": {
+            "node_index": 8
+          },
+          "properties": {}
+        },
+        {
+          "type": "runs_technology",
+          "source_ref": {
+            "node_index": 8
+          },
+          "target_ref": {
+            "node_index": 9
+          },
+          "properties": {
+            "version": "1.24.0",
+            "cpe": "cpe:2.3:a:igor_sysoev:nginx:1.24.0:*:*:*:*:*:*:*"
+          }
+        }
+      ]
+    }
+  }
+]

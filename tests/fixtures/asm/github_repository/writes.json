@@ -1,0 +1,23 @@
+[
+  {
+    "file": "repository.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "repository",
+          "properties": {
+            "platform": "github",
+            "host": "github.com",
+            "owner": "example-org",
+            "name": "web-app",
+            "default_branch": "main",
+            "visibility": "public",
+            "archived": false,
+            "fork": false
+          },
+          "source": "github"
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,135 @@
+[
+  {
+    "file": "example.com.txt",
+    "request": {
+      "nodes": [
+        {
+          "type": "domain",
+          "properties": {
+            "value": "example.com"
+          },
+          "source": "whois_gtld"
+        },
+        {
+          "type": "whois_registration",
+          "properties": {
+            "registry": "com",
+            "registry_domain_id": "2336799_DOMAIN_COM-VRSN",
+            "registration_created": "1995-08-14T04:00:00Z",
+            "registration_updated": "2026-08-14T08:01:43Z",
+            "registration_expires": "2027-08-13T04:00:00Z",
+            "epp_status": [
+              "clientDeleteProhibited",
+              "clientTransferProhibited",
+              "clientUpdateProhibited"
+            ],
+            "dnssec_signed": true
+          },
+          "source": "whois_gtld"
+        },
+        {
+          "type": "registrar",
+          "properties": {
+            "iana_id": 376,
+            "name": "RESERVED-Internet Assigned Numbers Authority"
+          },
+          "source": "whois_gtld"
+        },
+        {
+          "type": "email_address",
+          "properties": {
+            "value": "abuse@example.net"
+          },
+          "source": "whois_gtld"
+        },
+        {
+          "type": "phone",
+          "properties": {
+            "value": "+13105550100"
+          },
+          "source": "whois_gtld"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "ns1.example.net"
+          },
+          "source": "whois_gtld"
+        },
+        {
+          "type": "subdomain",
+          "properties": {
+            "value": "ns2.example.net"
+          },
+          "source": "whois_gtld"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_registration",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "registered_through",
+          "source_ref": {
+            "node_index": 1
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {
+            "role": "abuse"
+          }
+        },
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 2
+          },
+          "target_ref": {
+            "node_index": 4
+          },
+          "properties": {
+            "role": "abuse"
+          }
+        },
+        {
+          "type": "has_nameserver",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 5
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_nameserver",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 6
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

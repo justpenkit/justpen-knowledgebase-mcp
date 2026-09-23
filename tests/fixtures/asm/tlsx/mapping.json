@@ -1,0 +1,411 @@
+{
+  "source": "tlsx",
+  "files": {
+    "output.jsonl": "jsonl"
+  },
+  "rows": [
+    {
+      "path": "timestamp",
+      "sink": {
+        "meta": "observed_at"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "host",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_subdomain"
+      ]
+    },
+    {
+      "path": "host",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "strip_trailing_dot",
+        "if_domain"
+      ]
+    },
+    {
+      "path": "ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "value"
+      }
+    },
+    {
+      "path": "ip",
+      "sink": {
+        "node": "ip_address",
+        "property": "version"
+      },
+      "transform": [
+        "ip_version"
+      ]
+    },
+    {
+      "path": "port",
+      "sink": {
+        "node": "port",
+        "property": "number"
+      },
+      "transform": [
+        "int_value"
+      ]
+    },
+    {
+      "path": "probe_status",
+      "sink": "non_storable",
+      "reason": "only successful probes are written"
+    },
+    {
+      "path": "tls_version",
+      "sink": {
+        "node": "tls_cipher_suite",
+        "property": "version"
+      }
+    },
+    {
+      "path": "cipher",
+      "sink": {
+        "node": "tls_cipher_suite",
+        "property": "name"
+      }
+    },
+    {
+      "path": "tls_connection",
+      "sink": "non_storable",
+      "reason": "the TLS library tlsx used (ctls, ztls, openssl), not a target fact"
+    },
+    {
+      "path": "key_exchange",
+      "sink": "evidence",
+      "documented_only": true,
+      "reason": "set in ctls mode only; the command uses -sm ztls"
+    },
+    {
+      "path": "jarm_hash",
+      "sink": {
+        "node": "tls_fingerprint",
+        "property": "value"
+      }
+    },
+    {
+      "path": "ja3s_hash",
+      "sink": {
+        "node": "tls_fingerprint",
+        "property": "value"
+      }
+    },
+    {
+      "path": "ja3_hash",
+      "sink": "non_storable",
+      "reason": "the JA3 of tlsx's own ClientHello: it fingerprints the scanner, not the target"
+    },
+    {
+      "path": "sni",
+      "sink": {
+        "relation": "presents_certificate",
+        "property": "server_name"
+      }
+    },
+    {
+      "path": "version_enum",
+      "sink": "evidence",
+      "reason": "restates the versions that cipher_enum lists"
+    },
+    {
+      "path": "cipher_enum[].version",
+      "sink": {
+        "node": "tls_cipher_suite",
+        "property": "version"
+      }
+    },
+    {
+      "path": "cipher_enum[].ciphers.secure",
+      "sink": {
+        "node": "tls_cipher_suite",
+        "property": "name"
+      },
+      "each": true
+    },
+    {
+      "path": "cipher_enum[].ciphers.weak",
+      "sink": {
+        "node": "tls_cipher_suite",
+        "property": "name"
+      },
+      "each": true
+    },
+    {
+      "path": "cipher_enum[].ciphers.insecure",
+      "sink": {
+        "node": "tls_cipher_suite",
+        "property": "name"
+      },
+      "each": true
+    },
+    {
+      "path": "cipher_enum[].ciphers.unknown",
+      "sink": {
+        "node": "tls_cipher_suite",
+        "property": "name"
+      },
+      "each": true,
+      "documented_only": true
+    },
+    {
+      "path": "client_cert_required",
+      "sink": "evidence",
+      "reason": "whether the handshake asked for a client certificate; no catalog property holds it"
+    },
+    {
+      "path": "expired",
+      "sink": "non_storable",
+      "reason": "derivable from not_after at read time"
+    },
+    {
+      "path": "self_signed",
+      "sink": {
+        "node": "certificate",
+        "property": "self_signed"
+      }
+    },
+    {
+      "path": "mismatched",
+      "sink": {
+        "relation": "presents_certificate",
+        "property": "name_mismatch"
+      }
+    },
+    {
+      "path": "revoked",
+      "sink": "non_storable",
+      "documented_only": true,
+      "reason": "depends on the observer's CRL and OCSP state at scan time; emitted only when true"
+    },
+    {
+      "path": "untrusted",
+      "sink": "non_storable",
+      "reason": "depends on the observer's trust store at scan time"
+    },
+    {
+      "path": "not_before",
+      "sink": {
+        "node": "certificate",
+        "property": "not_before"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "not_after",
+      "sink": {
+        "node": "certificate",
+        "property": "not_after"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "subject_dn",
+      "sink": "non_storable",
+      "reason": "carries the subject organization, a company name kept out by the company exclusion; subject_cn holds the name"
+    },
+    {
+      "path": "subject_cn",
+      "sink": {
+        "node": "certificate",
+        "property": "subject_cn"
+      }
+    },
+    {
+      "path": "subject_org",
+      "sink": "non_storable",
+      "reason": "company names, against the spirit of the company exclusion"
+    },
+    {
+      "path": "subject_an",
+      "sink": {
+        "relation": "covers_name",
+        "property": "coverage"
+      },
+      "transform": [
+        "san_coverage"
+      ],
+      "each": true
+    },
+    {
+      "path": "subject_an",
+      "sink": {
+        "node": "subdomain",
+        "property": "value"
+      },
+      "transform": [
+        "san_base_name",
+        "if_subdomain"
+      ],
+      "each": true
+    },
+    {
+      "path": "subject_an",
+      "sink": {
+        "node": "domain",
+        "property": "value"
+      },
+      "transform": [
+        "san_base_name",
+        "if_domain"
+      ],
+      "each": true
+    },
+    {
+      "path": "serial",
+      "sink": {
+        "node": "certificate",
+        "property": "serial"
+      },
+      "transform": [
+        "colon_hex_serial_to_lower_hex"
+      ]
+    },
+    {
+      "path": "issuer_dn",
+      "sink": {
+        "node": "certificate",
+        "property": "issuer_dn"
+      }
+    },
+    {
+      "path": "issuer_cn",
+      "sink": "non_storable",
+      "reason": "derivable from issuer_dn"
+    },
+    {
+      "path": "issuer_org",
+      "sink": "non_storable",
+      "reason": "company names, against the spirit of the company exclusion"
+    },
+    {
+      "path": "emails",
+      "sink": "evidence",
+      "documented_only": true,
+      "reason": "email SANs; no certificate relation targets a mailbox"
+    },
+    {
+      "path": "fingerprint_hash.sha256",
+      "sink": {
+        "node": "certificate",
+        "property": "der_sha256"
+      }
+    },
+    {
+      "path": "fingerprint_hash.md5",
+      "sink": "non_storable",
+      "reason": "der_sha256 is the identity; a weaker digest of the same bytes"
+    },
+    {
+      "path": "fingerprint_hash.sha1",
+      "sink": "non_storable",
+      "reason": "der_sha256 is the identity; a weaker digest of the same bytes"
+    },
+    {
+      "path": "wildcard_certificate",
+      "sink": "non_storable",
+      "reason": "implied by a `*.` SAN, which covers_name records with coverage wildcard"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "port",
+        "property": "transport"
+      },
+      "values": [
+        "tcp"
+      ],
+      "reason": "tlsx connects over TCP"
+    },
+    {
+      "sink": {
+        "node": "service",
+        "property": "name"
+      },
+      "values": [
+        "unknown"
+      ],
+      "reason": "tlsx completes a TLS handshake but identifies no application protocol; `unknown` is the registry's sentinel"
+    },
+    {
+      "sink": {
+        "node": "service",
+        "property": "secure"
+      },
+      "values": [
+        true
+      ],
+      "reason": "tlsx completed a TLS handshake on the port"
+    },
+    {
+      "sink": {
+        "node": "tls_fingerprint",
+        "property": "kind"
+      },
+      "values": [
+        "jarm",
+        "ja3s"
+      ],
+      "reason": "the field name, jarm_hash or ja3s_hash, fixes the fingerprint kind"
+    },
+    {
+      "sink": {
+        "relation": "presents_certificate",
+        "property": "mode"
+      },
+      "values": [
+        "tls"
+      ],
+      "reason": "tlsx speaks TLS directly"
+    },
+    {
+      "sink": {
+        "relation": "presents_certificate",
+        "property": "server_name"
+      },
+      "values": [
+        ""
+      ],
+      "reason": "an IP target sends no SNI, so tlsx omits `sni`; the explicit empty name records that"
+    },
+    {
+      "sink": {
+        "relation": "presents_certificate",
+        "property": "alpn_offered"
+      },
+      "values": [
+        []
+      ],
+      "reason": "the ztls client config sets no NextProtos, so tlsx's ClientHello offers no ALPN"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "tlsx"
+      ],
+      "reason": "the tool that produced the output"
+    }
+  ]
+}

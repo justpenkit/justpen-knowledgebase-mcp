@@ -1,0 +1,13 @@
+{
+  "State": 3,
+  "UserState": 2,
+  "Login": "user@example.com",
+  "NameSpaceType": "Federated",
+  "DomainName": "example.com",
+  "FederationGlobalVersion": -1,
+  "AuthURL": "https://sts.example.com/adfs/ls/?username=user%40example.com&wa=wsignin1.0&wtrealm=urn%3afederation%3aMicrosoftOnline&wctx=",
+  "FederationBrandName": "Example",
+  "AuthNForwardType": 1,
+  "CloudInstanceName": "microsoftonline.com",
+  "CloudInstanceIssuerUri": "urn:federation:MicrosoftOnline"
+}

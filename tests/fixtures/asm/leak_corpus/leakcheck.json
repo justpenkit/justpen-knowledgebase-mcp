@@ -1,0 +1,72 @@
+{
+  "success": true,
+  "found": 3,
+  "quota": 397,
+  "result": [
+    {
+      "email": "alice@example.com",
+      "source": {
+        "name": "BreachedWebsite.net",
+        "breach_date": "2019-07",
+        "unverified": 0,
+        "passwordless": 0,
+        "compilation": 0
+      },
+      "first_name": "Alice",
+      "last_name": "Example",
+      "username": "alice",
+      "password": "correct horse battery staple",
+      "fields": [
+        "email",
+        "first_name",
+        "last_name",
+        "password",
+        "username"
+      ]
+    },
+    {
+      "email": "alice@example.com",
+      "source": {
+        "name": "Example Forum",
+        "breach_date": "2021-03",
+        "unverified": 1,
+        "passwordless": 0,
+        "compilation": 0
+      },
+      "name": "Alice Example",
+      "dob": "1990-01-01",
+      "address": "100 Example Street",
+      "zip": "00000",
+      "phone": "+1 555 0100",
+      "username": "alice",
+      "password": "correct horse battery staple",
+      "fields": [
+        "address",
+        "dob",
+        "email",
+        "name",
+        "password",
+        "phone",
+        "username",
+        "zip"
+      ]
+    },
+    {
+      "email": "alice@example.com",
+      "source": {
+        "name": "Collection #1",
+        "breach_date": "2019-01",
+        "unverified": 0,
+        "passwordless": 0,
+        "compilation": 1
+      },
+      "username": "alice",
+      "hashed_password": "abf7aad6438836dbe526aa231abde2d0eef74d42",
+      "fields": [
+        "email",
+        "hashed_password",
+        "username"
+      ]
+    }
+  ]
+}
