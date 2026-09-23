@@ -87,7 +87,10 @@ DOCS: dict[str, Any] = {
             "percent escape. A submitted query string is validated with the rest of the URL and then removed "
             "before identity and storage, so one endpoint holds one path; parameter names belong to parameter nodes."
         ),
-        "ip": "Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.",
+        "ip": (
+            "Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or "
+            "prefix. An IPv4-mapped IPv6 address (`::ffff:192.0.2.1`) is rejected: write the IPv4 address."
+        ),
         "ip_version": "A strict JSON integer equal to 4 or 6.",
         "iso3166_alpha2": (
             "Two uppercase ASCII letters in the ISO 3166-1 alpha-2 shape, as registries publish a country: "
@@ -176,6 +179,7 @@ DOCS: dict[str, Any] = {
         ),
     },
     "checks": {
+        "asn_assigned.1": "`value` 0 is rejected: AS0 is reserved and never originates routes (RFC 7607).",
         "bucket_name_spelling.1": (
             "`name` is checked against the declared `provider`: length, grammar, and the prefixes, suffixes and "
             "substrings that provider reserves."
@@ -207,6 +211,10 @@ DOCS: dict[str, Any] = {
         ),
         "ip_address_version.1": "`version` must equal the version of the address in `value`.",
         "ip_cidr_version.1": "`version` must equal the version of the network in `value`.",
+        "port_number_assigned.1": (
+            "`number` 0 is rejected: it is what a tool emits for a missing port, and no service listens there. "
+            "The `uint16` format keeps 0 because SRV and MX values may legitimately be 0."
+        ),
         "registry_domain_id_assigned.1": (
             "`registry_domain_id` is rejected when its part before the last hyphen is all zeros or a redaction "
             "word such as `REDACTED`, `NONE`, `NA`, `UNKNOWN`, `PRIVATE`, `WITHHELD` or `NOTDISCLOSED`, in any case."

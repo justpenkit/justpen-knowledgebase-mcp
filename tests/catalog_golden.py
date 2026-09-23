@@ -84,8 +84,8 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ),
     ),
     "ip": (
-        ("192.0.2.1", "2001:db8::1"),
-        ("2001:DB8::1", "2001:0db8::1", "192.168.001.1", "fe80::1%en0", "192.0.2.1/32"),
+        ("192.0.2.1", "2001:db8::1", "::1", "64:ff9b::c000:201"),
+        ("2001:DB8::1", "2001:0db8::1", "192.168.001.1", "fe80::1%en0", "192.0.2.1/32", "::ffff:192.0.2.1"),
     ),
     "ip_version": ((4, 6), (5, "4", True)),
     "iso3166_alpha2": (("US", "DE", "EU"), ("us", "USA", "U", "", "U1")),
@@ -158,6 +158,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
 # Check id -> (records the whole validation accepts, records the check itself rejects). Every
 # rejected record satisfies its type's required map, so the rejection is the check's alone.
 CHECKS: dict[str, tuple[tuple[Record, ...], tuple[Record, ...]]] = {
+    "asn_assigned.1": ((("asn", {"value": 1}), ("asn", {"value": 4294967295})), (("asn", {"value": 0}),)),
     "bucket_name_spelling.1": (
         (
             ("storage_bucket", {"provider": "aws_s3", "name": "example-assets"}),
@@ -202,6 +203,10 @@ CHECKS: dict[str, tuple[tuple[Record, ...], tuple[Record, ...]]] = {
     "registrar_iana_assigned.1": (
         (("registrar", {"iana_id": 292, "name": "MarkMonitor Inc."}),),
         (("registrar", {"iana_id": 0, "name": "unset"}),),
+    ),
+    "port_number_assigned.1": (
+        (("port", {"number": 1, "transport": "tcp"}), ("port", {"number": 65535, "transport": "udp"})),
+        (("port", {"number": 0, "transport": "tcp"}),),
     ),
     "registry_domain_id_assigned.1": (
         (

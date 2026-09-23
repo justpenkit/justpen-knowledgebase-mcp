@@ -160,6 +160,7 @@ _NODES: dict[str, dict[str, Any]] = {
     "asn": {
         "identity": _identity(["value"]),
         "required": {"value": "asn"},
+        "checks": ["asn_assigned.1"],
         "optional": {"name": "printable_text_200", "country": "iso3166_alpha2", "rir": _RIRS},
     },
     "certificate": {
@@ -256,6 +257,7 @@ _NODES: dict[str, dict[str, Any]] = {
     "port": {
         "identity": _identity(["transport", "number"], scope=_SCOPE_OPEN_PORT),
         "required": {"number": "uint16", "transport": ["tcp", "udp", "sctp"]},
+        "checks": ["port_number_assigned.1"],
     },
     "registrar": {
         "identity": _identity(["iana_id"]),
@@ -785,6 +787,16 @@ def _cross_field_whois_registration(_type_name: str, properties: dict[str, Any])
         raise ExpectedValidationError("/properties/registry_domain_id: a placeholder is not a registry object id")
 
 
+def _cross_field_asn(_type_name: str, properties: dict[str, Any]) -> None:
+    if properties["value"] == 0:
+        raise ExpectedValidationError("/properties/value: AS0 is reserved and never originates routes (RFC 7607)")
+
+
+def _cross_field_port(_type_name: str, properties: dict[str, Any]) -> None:
+    if properties["number"] == 0:
+        raise ExpectedValidationError("/properties/number: port 0 is a placeholder, not an open port")
+
+
 def _cross_field_technology(_type_name: str, properties: dict[str, Any]) -> None:
     cpe = properties.get("cpe")
     if type(cpe) is str and _cpe_version(cpe) not in ("*", "-"):
@@ -795,12 +807,14 @@ def _cross_field_technology(_type_name: str, properties: dict[str, Any]) -> None
 # behavior: changing what a callable accepts means a new version suffix, which changes the
 # fingerprint, so a workspace written under the old behavior is refused rather than reinterpreted.
 _CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
+    "asn_assigned.1": _cross_field_asn,
     "bucket_name_spelling.1": _cross_field_storage_bucket,
     "cpe_product_level.1": _cross_field_technology,
     "dns_name_kind.1": _cross_field_dns_name,
     "http_fingerprint_value_kind.1": _cross_field_http_fingerprint,
     "ip_address_version.1": _cross_field_ip_address,
     "ip_cidr_version.1": _cross_field_ip_cidr,
+    "port_number_assigned.1": _cross_field_port,
     "registrar_iana_assigned.1": _cross_field_registrar,
     "registry_domain_id_assigned.1": _cross_field_whois_registration,
     "repository_owner_spelling.1": _cross_field_repository,
@@ -1344,6 +1358,10 @@ def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | Non
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
+        return None
+    # `::ffff:192.0.2.1` is the IPv4 host 192.0.2.1 in IPv6 clothing, and its compressed spelling
+    # differs between interpreters, so accepting it would give one host two nodes on some of them.
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         return None
     return address if address.compressed == value else None
 
