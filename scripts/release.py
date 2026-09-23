@@ -13,9 +13,12 @@ from pathlib import Path
 def _run(repo: Path, *arguments: str) -> str:
     """Stop on the first failed command and keep its diagnostics visible."""
     excluded = {"VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "UV_PROJECT", "UV_WORKING_DIR", "PYTHONPATH"}
+    # Output is parsed, so forced terminal colour must not add escape codes to it.
+    excluded |= {"FORCE_COLOR", "CLICOLOR_FORCE"}
     environment = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_") and key not in excluded
     }
+    environment["NO_COLOR"] = "1"
     result = subprocess.run(arguments, cwd=repo, env=environment, text=True, capture_output=True, check=False)
     if result.returncode:
         print(result.stdout, end="")

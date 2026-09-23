@@ -84,6 +84,18 @@ def test_bump_uses_uv_changelog_and_defers_tag_until_review(project):
     assert git(project, "remote") == ""
 
 
+@pytest.mark.parametrize("variable", ["FORCE_COLOR", "CLICOLOR_FORCE"])
+def test_forced_terminal_colour_does_not_reach_release_metadata(project, monkeypatch, variable):
+    for forced in ("FORCE_COLOR", "CLICOLOR_FORCE", "NO_COLOR"):
+        monkeypatch.delenv(forced, raising=False)
+    monkeypatch.setenv(variable, "3" if variable == "FORCE_COLOR" else "1")
+    release.bump(project, "patch")
+    changelog = (project / "CHANGELOG.md").read_text()
+    assert "\x1b" not in changelog
+    assert "## v0.0.1" in changelog
+    assert git(project, "log", "-1", "--format=%s") == "chore: bump version to v0.0.1"
+
+
 @pytest.mark.parametrize("state", ["main", "master", "detached", "tracked", "untracked", "staged"])
 def test_bump_requires_clean_feature_branch(project, state):
     if state in {"main", "master"}:
