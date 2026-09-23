@@ -43,6 +43,7 @@ _FORMATS: dict[str, int] = {
     "alpn_tokens": 1,
     "asn": 1,
     "boolean": 1,
+    "breach_token_or_empty": 1,
     "bucket_name": 1,
     "calendar_date": 1,
     "caa_parameters": 1,
@@ -64,6 +65,8 @@ _FORMATS: dict[str, int] = {
     "finding_rule": 1,
     "git_ref_name": 1,
     "hex_serial": 1,
+    "html_token": 1,
+    "html_token_or_empty": 1,
     "epp_status_list": 1,
     "http_fingerprint_value": 1,
     "http_status": 1,
@@ -77,6 +80,7 @@ _FORMATS: dict[str, int] = {
     "multiline_text_4096": 1,
     "mx_pattern_list": 1,
     "parameter_name": 1,
+    "partial_date": 1,
     "phone_e164": 1,
     "printable_text_1024": 1,
     "printable_text_200": 1,
@@ -102,6 +106,7 @@ _FORMATS: dict[str, int] = {
     "uint16": 1,
     "uint32": 1,
     "uint63": 1,
+    "username_or_empty": 1,
     "utc_timestamp": 1,
 }
 
@@ -439,6 +444,23 @@ _D = ["domain", "subdomain"]
 _RELATIONS = {
     "affected_by": _relation(["service", "finding", "endpoint"], ["cve"]),
     "announced_by": _relation(["ip_cidr"], ["asn"]),
+    "authenticates": _relation(
+        ["secret"],
+        [
+            "email_address",
+            "cloud_account",
+            "identity_tenant",
+            "repository",
+            "service",
+            "endpoint",
+            "storage_bucket",
+            "cloud_resource",
+        ],
+        required={"username": "username_or_empty", "breach": "breach_token_or_empty"},
+        optional={"breach_title": "printable_text_200", "breach_date": "partial_date", "verified": "boolean"},
+        identity=_identity(["username", "breach"]),
+        checks=["secret_plaintext_keys.1"],
+    ),
     "backed_by_bucket": _relation(["domain", "subdomain", "endpoint"], ["storage_bucket"]),
     "caa_issue": _relation(
         _D,
@@ -476,10 +498,10 @@ _RELATIONS = {
     "federates_with": _relation(_D, ["identity_tenant"], optional={"namespace_type": ["managed", "federated"]}),
     "has_contact": _relation(
         ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration"],
-        ["email_address", "phone"],
-        required={"role": ["abuse", "admin", "tech", "registrant", "billing", "noc", "security", "published"]},
+        ["email_address", "phone", "endpoint"],
+        required={"role": ["abuse", "admin", "tech", "registrant", "billing", "noc", "security", "published", "iodef"]},
         identity=_identity(["role"]),
-        checks=["has_contact_registration_roles.1"],
+        checks=["has_contact_registration_roles.1", "has_contact_endpoint_role.1"],
     ),
     "has_dkim_selector": _relation(_D, ["dkim_record"]),
     "has_dmarc": _relation(_D, ["dmarc_record"]),
@@ -551,6 +573,14 @@ _RELATIONS = {
         ["cloud_resource", "storage_bucket"], ["cloud_account"], checks=["in_account_provider_match.1"]
     ),
     "issued_by": _relation(["certificate"], ["certificate"], self_edge=True),
+    "links_to": _relation(
+        ["endpoint"],
+        ["endpoint"],
+        required={"element": "html_token_or_empty"},
+        optional={"attribute": "html_token"},
+        identity=_identity(["element"]),
+        self_edge=True,
+    ),
     "operated_by": _relation(["asn", "ip_cidr"], ["organization"]),
     "owns_repository": _relation(_D, ["repository"]),
     "presents_certificate": _relation(
@@ -890,6 +920,17 @@ def _endpoint_contact_registration_roles(
         )
 
 
+def _endpoint_contact_iodef(relation: Mapping[str, Any], _source: EndpointView, target: EndpointView) -> None:
+    """RFC 8659 `iodef` names a mailto or an https URL, and RFC 6546 delivers reports by HTTPS POST."""
+    iodef = relation["role"] == "iodef"
+    if (target.type == "endpoint" and not iodef) or (iodef and target.type == "phone"):
+        raise ExpectedValidationError(
+            "/properties/role: an endpoint contact is an iodef report URL, and iodef names an email or an endpoint"
+        )
+    if target.type == "endpoint" and target.properties["method"] != "POST":
+        raise ExpectedValidationError("relation endpoint constraint failed: an iodef endpoint receives POST")
+
+
 def _endpoint_contains_ip(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
     network = _parse_cidr(cast("str", source.properties["value"]))
     address = _parse_ip(cast("str", target.properties["value"]))
@@ -1195,6 +1236,7 @@ _CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
 _ENDPOINT_CHECKS: dict[str, Callable[[Mapping[str, Any], EndpointView, EndpointView], None]] = {
     "contains_cidr_proper_subnet.1": _endpoint_contains_cidr,
     "contains_ip_member.1": _endpoint_contains_ip,
+    "has_contact_endpoint_role.1": _endpoint_contact_iodef,
     "has_contact_registration_roles.1": _endpoint_contact_registration_roles,
     "has_registration_suffix_match.1": _endpoint_registration_suffix,
     "has_subdomain_suffix.1": _endpoint_subdomain_suffix,
@@ -1532,6 +1574,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
     if type(value) is not str:
         return False
     validators: dict[str, Callable[[str], bool]] = {
+        "breach_token_or_empty": lambda text: text == "" or _BREACH_TOKEN.fullmatch(text) is not None,
         "bucket_name": _valid_bucket_name,
         "cidr": lambda text: _parse_cidr(text) is not None,
         "cloud_account_id": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?", text) is not None,
@@ -1551,6 +1594,8 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "finding_rule": lambda text: _FINDING_RULE.fullmatch(text) is not None,
         "git_ref_name": _valid_git_ref_name,
         "hex_serial": lambda text: re.fullmatch(r"0|[1-9a-f][0-9a-f]{0,39}", text) is not None,
+        "html_token": lambda text: _HTML_TOKEN.fullmatch(text) is not None,
+        "html_token_or_empty": lambda text: text == "" or _HTML_TOKEN.fullmatch(text) is not None,
         "http_fingerprint_value": lambda text: (
             re.fullmatch(r"[0-9a-f]{64}", text) is not None or _valid_signed_int32_text(text)
         ),
@@ -1566,6 +1611,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "parameter_name": lambda text: (
             1 <= len(text) <= 128 and all(0x21 <= ord(char) <= 0x7E and char not in "&=#" for char in text)
         ),
+        "partial_date": _valid_partial_date,
         "phone_e164": lambda text: re.fullmatch(r"\+[1-9][0-9]{1,14}", text) is not None,
         "printable_text_200": lambda text: 1 <= len(text) <= 200 and text.isprintable(),
         "printable_text_1024": lambda text: 1 <= len(text) <= 1024 and text.isprintable(),
@@ -1586,6 +1632,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
             5 <= len(text) <= 128 and re.fullmatch(r"TLS_[A-Z0-9]+(?:_[A-Z0-9]+)*", text) is not None
         ),
         "txt_value": lambda text: 1 <= len(text) <= 4096 and all(0x20 <= ord(char) <= 0x7E for char in text),
+        "username_or_empty": lambda text: len(text) <= 256 and all(0x21 <= ord(char) <= 0x7E for char in text),
         "utc_timestamp": _valid_utc_timestamp,
     }
     validator = validators.get(rule)
@@ -1646,6 +1693,10 @@ _EPP_STATUSES = frozenset(
 _TECH_SLUG = r"[a-z0-9](?:[a-z0-9._+-]{0,61}[a-z0-9])?"
 _TECH_SLUG_RE = re.compile(_TECH_SLUG)
 _FINDING_RULE = re.compile(_TECH_SLUG + r":[A-Za-z0-9._/-]{1,200}")
+# `<corpus>:<breach id>`, lowercase, so case and spacing variants of one corpus's breach name join.
+_BREACH_TOKEN = re.compile(_TECH_SLUG + r":[a-z0-9._/-]{1,200}")
+# An HTML element or attribute name as a crawler reports it: `a`, `script`, `href`, `data-src`.
+_HTML_TOKEN = re.compile(r"[a-z][a-z0-9-]{0,31}")
 # Long enough for an SNI host prefix (253 bytes) before a matcher name.
 _FINDING_MATCHER = re.compile(r"[A-Za-z0-9._:/-]{1,400}")
 # RFC 5730 repository object id, ASCII only: `2138514_DOMAIN_COM-VRSN`, `DOM000000113746-FRNIC`.
@@ -1679,6 +1730,14 @@ def _valid_cvss_vector(value: str) -> bool:
         return False
     metrics = [pair.split(":", 1)[0] for pair in match.group(2)[1:].split("/")]
     return len(metrics) == len(set(metrics)) and _CVSS_BASE_METRICS[match.group(1)] <= set(metrics)
+
+
+def _valid_partial_date(value: str) -> bool:
+    """A year, a year and month, or a full date, as breach corpora publish them."""
+    if re.fullmatch(r"[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?", value) is None:
+        return False
+    padded = value + "-01" * (2 - value.count("-"))
+    return _valid_calendar_date(padded)
 
 
 def _valid_calendar_date(value: str) -> bool:

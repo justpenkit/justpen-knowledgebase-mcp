@@ -854,6 +854,14 @@ async def test_endpoint_values_are_checked_on_the_properties_that_will_be_stored
             {"type": "contains_cidr", "target_ref": {"node_index": 0}, "properties": {}},
             "self edge is not allowed",
         ),
+        (
+            [
+                {"type": "domain", "properties": {"value": "example.com"}},
+                {"type": "endpoint", "properties": {"url": "https://iodef.example.com/r", "method": "GET"}},
+            ],
+            {"type": "has_contact", "target_ref": {"node_index": 1}, "properties": {"role": "Abuse"}},
+            "/properties/role: expected",
+        ),
     ],
 )
 async def test_endpoint_value_errors_come_after_the_type_and_property_gates(tmp_path, nodes, relation, message):
@@ -968,6 +976,25 @@ async def test_a_contact_role_is_checked_on_the_merged_edge(tmp_path):
         contact = created["relations"][1]["id"]
         patched = await kb.write(write({"relations": [{"id": contact, "properties": {"seen_by": "rdap"}}]}))
         assert patched["relations"][0]["updated"] is True
+
+        iodef = await kb.write(
+            write(
+                {
+                    "nodes": [
+                        {"type": "endpoint", "properties": {"url": "https://iodef.example.com/r", "method": "POST"}}
+                    ],
+                    "relations": [
+                        {
+                            "type": "has_contact",
+                            "source_ref": {"id": created["nodes"][0]["id"]},
+                            "target_ref": {"node_index": 0},
+                            "properties": {"role": "iodef"},
+                        }
+                    ],
+                }
+            )
+        )
+        await kb.write(write({"relations": [{"id": iodef["relations"][0]["id"], "properties": {"seen_by": "dnsx"}}]}))
 
         with pytest.raises(InvalidParamsError, match="attach to a whois_registration"):
             await kb.write(

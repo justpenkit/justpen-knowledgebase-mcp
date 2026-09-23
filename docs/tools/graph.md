@@ -389,6 +389,27 @@ to stay one node. `has_contact` replaces the `abuse_contact` attribute the
 `organization` node used to carry; the registries' own warning still applies, so
 treat an `abuse` role as low-confidence.
 
+A CAA `iodef` property names where certificate authorities report policy
+violations. Record it as `has_contact` with `role: "iodef"`: a `mailto:` address
+targets its `email_address`, and an `https:` URL targets an `endpoint` with
+`method: "POST"`, because RFC 6546 delivers IODEF reports by HTTPS POST. An
+`endpoint` is a contact target for `iodef` only, and `iodef` never targets a
+`phone`.
+
+`authenticates` points a `secret` at what it logs in to, keyed on the login name
+and the breach it was published in, each `""` when the source gives none. So one
+password leaked for `alice` in two breaches is two edges, and a scanner hit with
+no breach is a third. The breach is a lowercase `<corpus>:<id>` token such as
+`hibp:linkedin`; slug a display name by lowercasing it and replacing each run of
+other characters with one `-`, and keep the display name in `breach_title`. The
+token joins spellings within one corpus only: HIBP `linkedin` and LeakCheck
+`linkedin.com` stay two tokens, since nothing maps one corpus's ids to another's.
+
+`links_to` records that a crawled page references another URL, keyed on the HTML
+element that holds the reference, so a script include and an anchor to one URL
+are two edges. `attribute` (`href`, `src`) is last-writer-wins. Use `element: ""`
+when the crawler reports no element.
+
 `mta_sts_policy` holds the TXT record published at `_mta-sts.<domain>`, and it
 is parent-scoped through `has_mta_sts_policy`, unlike `spf_record` and
 `dmarc_record`. The difference is that an SPF or DMARC value *is* the whole

@@ -32,6 +32,11 @@ DOCS: dict[str, Any] = {
         ),
         "asn": "A strict JSON integer from 0 through 4294967295.",
         "boolean": 'A strict JSON `true` or `false`; the strings `"true"` and `"1"` and the number 1 are rejected.',
+        "breach_token_or_empty": (
+            "The empty string, or `<corpus>:<id>`: a lowercase tech_token naming the breach corpus, a colon, and "
+            "1 to 200 lowercase characters from letters, digits and `._/-`, such as `hibp:linkedin` or "
+            "`leakcheck:linkedin.com`. Slug a display name: lowercase, runs of other characters become one `-`."
+        ),
         "bucket_name": (
             "The provider-global name of an object-storage bucket: 3 to 222 lowercase ASCII characters from "
             "letters, digits, hyphen, underscore and dot, starting and ending alphanumeric, without a doubled "
@@ -112,6 +117,8 @@ DOCS: dict[str, Any] = {
             "A certificate serial number as 1 to 40 lowercase hexadecimal digits without leading zeros or "
             "separators: tlsx's `AB:CD:...` becomes `abcd...`."
         ),
+        "html_token": "An HTML element or attribute name: a lowercase letter, then up to 31 letters, digits or hyphens.",
+        "html_token_or_empty": "The empty string, or an html_token.",
         "http_fingerprint_value": (
             "Either a signed 32-bit decimal integer written in ASCII without a leading zero or a plus sign, for "
             "a MurmurHash3 favicon hash, or exactly 64 lowercase hexadecimal characters for a response digest. "
@@ -152,6 +159,7 @@ DOCS: dict[str, Any] = {
             "1 to 128 printable ASCII characters without space, `&`, `=`, or `#`; one single parameter name, "
             "never a raw query string."
         ),
+        "partial_date": "`YYYY`, `YYYY-MM` or `YYYY-MM-DD`, a date known only to the precision the source gives.",
         "phone_e164": "An E.164 number: `+`, a leading digit from 1 through 9, and in total 2 to 15 digits.",
         "printable_text_1024": "A string of 1-1024 printable Unicode characters.",
         "printable_text_200": "A string of 1-200 printable Unicode characters.",
@@ -220,6 +228,10 @@ DOCS: dict[str, Any] = {
         "uint16": "A strict JSON integer from 0 through 65535.",
         "uint32": "A strict JSON integer from 0 through 4294967295.",
         "uint63": "A strict JSON integer from 0 through 9223372036854775807.",
+        "username_or_empty": (
+            "The empty string, or 1 to 256 printable ASCII characters without space: a login name exactly as "
+            "the source spells it."
+        ),
         "utc_timestamp": (
             "An instant in UTC as `YYYY-MM-DDTHH:MM:SSZ` with an optional 1-6 digit fraction before the `Z`. "
             "Offsets are rejected, so one instant has one spelling and stored values sort and compare as text."
@@ -251,6 +263,10 @@ DOCS: dict[str, Any] = {
         "dns_name_kind.1": (
             "`value` must classify as this type against the bundled PSL: a registrable domain for `domain`, a "
             "name below one for `subdomain`."
+        ),
+        "has_contact_endpoint_role.1": (
+            "An `endpoint` target requires `role` `iodef` and `method` `POST` (RFC 6546), and `iodef` never "
+            "targets a `phone`: a CAA iodef names a mailto address or an https report URL."
         ),
         "has_contact_registration_roles.1": (
             "From a `whois_registration`, `role` must be `registrant`, `admin`, `tech` or `billing`; from a "
@@ -731,6 +747,28 @@ DOCS: dict[str, Any] = {
             "excludes": "Not the holder of the network; that is `operated_by`.",
             "properties": {},
         },
+        "authenticates": {
+            "summary": (
+                "The secret is a credential for the principal: a mailbox, account, tenant, repository, service, "
+                "endpoint, bucket or cloud resource, optionally for one login name and one breach."
+            ),
+            "excludes": (
+                "Not a person. Never the secret itself: plaintext-bearing keys are refused, and the secret node "
+                "holds only its digest."
+            ),
+            "notes": (
+                "Identity is (`username`, `breach`), so one pair exposed in two breaches is two edges. The breach "
+                "token joins spellings within one corpus only; across corpora the same breach stays two tokens. "
+                'Send `""` for a value the source does not give, never a guess.'
+            ),
+            "properties": {
+                "username": "The login name the credential is for, as the source spells it, or empty.",
+                "breach": "The corpus and breach id the pair was published in, or empty for a live scanner hit.",
+                "breach_title": "The corpus's display name for the breach; the latest write wins.",
+                "breach_date": "When the breach happened, to the precision the corpus gives.",
+                "verified": "Whether the pair was confirmed to work.",
+            },
+        },
         "backed_by_bucket": {
             "summary": "A name or URL serves content from the bucket.",
             "excludes": "Not a bucket found only by guessing names; write that bucket node with its evidence instead.",
@@ -793,7 +831,7 @@ DOCS: dict[str, Any] = {
             },
         },
         "has_contact": {
-            "summary": "The source publishes the contact for one role.",
+            "summary": "The source publishes the contact for one role, including a CAA iodef report address or URL.",
             "excludes": "Not a person record; person and company types are out of scope.",
             "notes": (
                 "Use `published` for an address harvested from an organization's own surface with no declared "
@@ -917,6 +955,18 @@ DOCS: dict[str, Any] = {
             "summary": "The finding or CVE is an instance of the CWE weakness class.",
             "excludes": "Not a claim of exploitability.",
             "properties": {},
+        },
+        "links_to": {
+            "summary": "The source page references the target URL, through one HTML element.",
+            "excludes": "Not an HTTP redirect (`redirects_to`) and not a URL guessed by brute force.",
+            "notes": (
+                "Identity is `element`, so a script include and an anchor to one URL are two edges; `attribute` "
+                'is last-writer-wins. Use `""` when the crawler reports no element.'
+            ),
+            "properties": {
+                "element": "The referencing HTML element, such as `a` or `script`, or empty.",
+                "attribute": "The attribute that held the URL, such as `href` or `src`.",
+            },
         },
         "issued_by": {
             "summary": "The certificate was issued by the target certificate; a self edge marks a self-signed one.",

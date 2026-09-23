@@ -21,6 +21,10 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     "alpn_tokens": ((["h2", "http/1.1"], [], ["h2", "h2"]), ("h2", ["h2 "], [""], ["é"], [1])),
     "asn": ((0, 64512, 4294967295), (-1, 4294967296, True, "64512")),
     "boolean": ((True, False), ("true", 1, 0, None)),
+    "breach_token_or_empty": (
+        ("", "hibp:linkedin", "leakcheck:linkedin.com", "hibp:collection-1"),
+        ("LinkedIn", "hibp:LinkedIn", "hibp:", "hibp:collection #1", ":linkedin", "hibp:" + "x" * 201),
+    ),
     "bucket_name": (
         ("example-assets", "my_bucket", "a.b.c"),
         ("ab", "Example", "ex..ample", "192.168.1.1", "-abc", "a" * 223),
@@ -130,6 +134,8 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ),
     ),
     "hex_serial": (("0", "1", "abcdef0123456789", "f" * 40), ("", "00", "0a", "AB", "ab:cd", "f" * 41)),
+    "html_token": (("a", "script", "data-src", "x" * 32), ("", "A", "1a", "a b", "x" * 33)),
+    "html_token_or_empty": (("", "a", "iframe"), ("A", "-a", "a_b")),
     "http_fingerprint_value": (("-1752256170", "0", "a" * 64), ("+1", "A" * 64, "01", "-0", "2147483648")),
     "http_status": ((100, 200, 599), (99, 600, "200", True, 200.0)),
     "http_url": (
@@ -176,6 +182,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ),
     ),
     "parameter_name": (("id", "X-Request-Id", "%20foo"), ("id=1", "two words", "", "a" * 129, "café")),
+    "partial_date": (("2019", "2019-01", "2019-01-07"), ("19", "2019-1", "2019-13", "2019-02-30", "2019/01", "")),
     "phone_e164": (("+14155552671", "+12"), ("14155552671", "+0155552671", "+1", "+" + "9" * 16, "+1 415 555")),
     "printable_text_1024": (("x", "x" * 1024), ("", "x" * 1025, "line\nbreak", 1)),
     "printable_text_200": (("x", "x" * 200), ("", "x" * 201, "a\tb")),
@@ -216,6 +223,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     "uint16": ((0, 65535), (-1, 65536, True, "1")),
     "uint32": ((0, 86400, 4294967295), (-1, 4294967296, True, "86400")),
     "uint63": ((0, 2**63 - 1), (-1, 2**63, True, 1.5)),
+    "username_or_empty": (("", "alice", "alice@example.com", "x" * 256), ("a b", "x" * 257, "caf\u00e9", "a\tb")),
     "utc_timestamp": (
         ("1995-08-14T04:00:00Z", "2026-09-23T01:31:57.079Z", "2024-02-29T23:59:59.123456Z"),
         (
@@ -361,8 +369,10 @@ CHECKS: dict[str, tuple[tuple[Record, ...], tuple[Record, ...]]] = {
         (
             ("secret", {"value_sha256": "a" * 64, "detector": "aws", "context": {"file": "a.env"}}),
             ("exposes_secret", {"location": "src/config.py", "commit": "a" * 40}),
+            ("authenticates", {"username": "alice", "breach": "", "verified": True}),
         ),
         (
+            ("authenticates", {"username": "", "breach": "", "Password": "hunter2"}),
             ("secret", {"value_sha256": "a" * 64, "password": "hunter2"}),
             ("secret", {"value_sha256": "a" * 64, "Raw": "hunter2"}),
             ("secret", {"value_sha256": "a" * 64, "nested": [{"deeper": {"rawV2": "x"}}]}),
@@ -440,6 +450,34 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
                 ("ip_cidr", {"value": "192.0.2.0/24", "version": 4}),
                 ("ip_address", {"value": "2001:db8::1", "version": 6}),
             ),
+        ),
+    ),
+    "has_contact_endpoint_role.1": (
+        (
+            (
+                {"role": "iodef"},
+                ("domain", {"value": "example.com"}),
+                ("endpoint", {"url": "https://iodef.example.com/report", "method": "POST"}),
+            ),
+            (
+                {"role": "iodef"},
+                ("domain", {"value": "example.com"}),
+                ("email_address", {"value": "iodef@example.com"}),
+            ),
+            ({"role": "abuse"}, ("domain", {"value": "example.com"}), ("phone", {"value": "+14155552671"})),
+        ),
+        (
+            (
+                {"role": "abuse"},
+                ("domain", {"value": "example.com"}),
+                ("endpoint", {"url": "https://iodef.example.com/report", "method": "POST"}),
+            ),
+            (
+                {"role": "iodef"},
+                ("domain", {"value": "example.com"}),
+                ("endpoint", {"url": "https://iodef.example.com/report", "method": "GET"}),
+            ),
+            ({"role": "iodef"}, ("domain", {"value": "example.com"}), ("phone", {"value": "+14155552671"})),
         ),
     ),
     "has_contact_registration_roles.1": (

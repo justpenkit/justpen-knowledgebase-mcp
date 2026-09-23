@@ -113,6 +113,8 @@ RELATION_TYPES = {
     "has_registration",
     "hosted_on",
     "in_account",
+    "authenticates",
+    "links_to",
 }
 
 
@@ -132,7 +134,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "f911981669bbb01be815d33db0ef4fac04a426b83174b5ec7f6ef59b71015127"
+    assert CATALOG_FINGERPRINT == "3cd3199e73f6d36e519fd0b643bced67ed6fa7fb61eab4c788892192a1470bd0"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -843,8 +845,22 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "federates_with": (d, ["identity_tenant"]),
         "has_contact": (
             ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration"],
-            ["email_address", "phone"],
+            ["email_address", "phone", "endpoint"],
         ),
+        "authenticates": (
+            ["secret"],
+            [
+                "email_address",
+                "cloud_account",
+                "identity_tenant",
+                "repository",
+                "service",
+                "endpoint",
+                "storage_bucket",
+                "cloud_resource",
+            ],
+        ),
+        "links_to": (["endpoint"], ["endpoint"]),
         "has_http_fingerprint": (["endpoint"], ["http_fingerprint"]),
         "has_mta_sts_policy": (d, ["mta_sts_policy"]),
         "owns_repository": (d, ["repository"]),
@@ -928,6 +944,20 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         ("has_mta_sts_policy", {}),
         ("owns_repository", {}),
         ("presents_host_key", {}),
+        ("authenticates", {"username": "", "breach": ""}),
+        (
+            "authenticates",
+            {
+                "username": "alice@example.com",
+                "breach": "hibp:collection-1",
+                "breach_title": "Collection #1",
+                "breach_date": "2019-01",
+                "verified": False,
+            },
+        ),
+        ("links_to", {"element": ""}),
+        ("links_to", {"element": "script", "attribute": "src"}),
+        ("has_contact", {"role": "iodef"}),
     ],
 )
 def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[str, object]) -> None:
@@ -1001,6 +1031,15 @@ def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[s
         ("exposes_secret", {"location": "line\nbreak"}),
         ("exposes_secret", {"location": "src/config.py", "Match": "AWS_SECRET=wJalr"}),
         ("exposes_secret", {"location": "src/config.py", "gitleaks": {"Secret": "wJalr"}}),
+        ("authenticates", {"username": "alice"}),
+        ("authenticates", {"username": "a b", "breach": ""}),
+        ("authenticates", {"username": "", "breach": "LinkedIn"}),
+        ("authenticates", {"username": "", "breach": "hibp:Collection #1"}),
+        ("authenticates", {"username": "", "breach": "", "breach_date": "2019-13"}),
+        ("authenticates", {"username": "", "breach": "", "password": "hunter2"}),
+        ("links_to", {"element": "A"}),
+        ("links_to", {"element": "a", "attribute": ""}),
+        ("has_contact", {"role": "IODEF"}),
         ("federates_with", {"namespace_type": "Federated"}),
         ("federates_with", {"namespace_type": "unknown"}),
     ],
