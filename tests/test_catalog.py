@@ -125,7 +125,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "b80e7d9ae0cef8d58bf6f6e48f641ca9781a8642c645399aa4c5e5827ff0ca17"
+    assert CATALOG_FINGERPRINT == "7d8c0716fdd5e39445a060580df9ad5905c39983bdfb11b451ef1b07d00adbba"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1066,16 +1066,16 @@ def test_every_relation_endpoint_names_a_declared_node_type() -> None:
             assert set(definition[field]) <= nodes, f"{type_name}.{field} names an unknown node type"
 
 
-def test_every_required_rule_is_published_and_executable() -> None:
+def test_every_declared_rule_is_published_and_executable() -> None:
     """A rule missing from _FORMATS is undocumented, and one missing from _schema_for_rule
     degrades the discovery schema to a bare string, and one published but referenced by nothing is
-    dead weight an agent still has to read. The positive cases above cover the third place a rule
-    has to exist, _valid_field, which rejects every value without it."""
+    dead weight an agent still has to read. The golden cases cover the third place a rule has to
+    exist, _valid_field, which rejects every value without it. Optional maps count as uses."""
     manifest = catalog_manifest()
     used: set[str] = set()
     for kind in ("nodes", "relations"):
         for type_name, definition in manifest[kind].items():
-            for field, rule in definition["required"].items():
+            for field, rule in {**definition["required"], **definition["optional"]}.items():
                 if isinstance(rule, list):
                     continue
                 assert rule in manifest["formats"], f"{kind}.{type_name}.{field} uses an unpublished rule"
@@ -1481,3 +1481,79 @@ def test_type_description_is_an_isolated_copy() -> None:
     first = catalog_module.type_description("nodes", "domain")
     first["properties"]["value"] = "changed"
     assert catalog_module.type_description("nodes", "domain")["properties"]["value"] != "changed"
+
+
+def _view_with(monkeypatch: pytest.MonkeyPatch, kind: str, type_name: str, key: str, value: object) -> None:
+    """Serve validation from a rebuilt catalog in which one type declares something extra."""
+    table = catalog_module._NODES if kind == "nodes" else catalog_module._RELATIONS
+    changed = {**table, type_name: {**table[type_name], key: value}}
+    view = catalog_module._read_only(json.loads(_rebuilt(**{kind: changed})))
+    monkeypatch.setattr(catalog_module, "_CATALOG_VIEW", view)
+
+
+@pytest.mark.parametrize(
+    ("properties", "accepted"),
+    [
+        ({"value": "example.com"}, True),
+        ({"value": "example.com", "note": "registered in 2004"}, True),
+        ({"value": "example.com", "undeclared": None}, True),
+        ({"value": "example.com", "note": ""}, False),
+        ({"value": "example.com", "note": None}, False),
+        ({"value": "example.com", "note": 1}, False),
+    ],
+)
+def test_declared_optional_properties_are_validated_when_present(
+    monkeypatch: pytest.MonkeyPatch, properties: dict[str, object], *, accepted: bool
+) -> None:
+    """AC-7: an invalid declared attribute is rejected, an absent one and an undeclared key are
+    accepted, and null is never a value: clearing is `remove_properties`."""
+    _view_with(monkeypatch, "nodes", "domain", "optional", {"note": "printable_text_200"})
+    if accepted:
+        validate_record("nodes", "domain", properties)
+        return
+    with pytest.raises(ExpectedValidationError) as failure:
+        validate_record("nodes", "domain", properties)
+    assert failure.value.message == "/properties/note: expected printable_text_200"
+
+
+def test_optional_properties_reach_the_discovery_schema_but_not_its_required_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    table = catalog_module._NODES
+    changed = {**table, "domain": {**table["domain"], "optional": {"note": "printable_text_200"}}}
+    monkeypatch.setattr(catalog_module, "CATALOG_JSON", _rebuilt(nodes=changed))
+    schema = catalog_schema("nodes", "domain")
+
+    assert schema["required"] == ["value"]
+    assert schema["properties"]["note"] == {"type": "string", "format": "printable_text_200"}
+
+
+def _catalog_with(kind: str, type_name: str, **changes: object) -> dict[str, object]:
+    table = catalog_module._NODES if kind == "nodes" else catalog_module._RELATIONS
+    return json.loads(_rebuilt(**{kind: {**table, type_name: {**table[type_name], **changes}}}))
+
+
+@pytest.mark.parametrize(
+    ("catalog", "message"),
+    [
+        (_catalog_with("nodes", "domain", optional={"value": "dns_name"}), "declares \\['value'\\] twice"),
+        (
+            _catalog_with("nodes", "domain", identity={"properties": ["value", "note"]}, optional={"note": "cve"}),
+            "identity names a property outside its required map",
+        ),
+        (
+            {
+                **_catalog_with("nodes", "domain", optional={"label": "printable_text_200"}),
+                "relations": _catalog_with("relations", "resolves_to", optional={"label": "cve"})["relations"],
+            },
+            "optional label has one rule on",
+        ),
+        (_catalog_with("nodes", "secret", optional={"Password": "printable_text_200"}), "plaintext-bearing name"),
+    ],
+)
+def test_the_property_contract_refuses_contradictory_maps(
+    monkeypatch: pytest.MonkeyPatch, catalog: dict[str, object], message: str
+) -> None:
+    monkeypatch.setattr(catalog_module, "_CATALOG", catalog)
+    with pytest.raises(RuntimeError, match=message):
+        catalog_module._ensure_property_contract()

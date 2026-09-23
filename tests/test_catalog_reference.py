@@ -180,9 +180,9 @@ def test_every_type_section_shows_props_identity_and_checks(page: str, kind: str
             assert f"**Sources:** {_code(definition['sources'])}" in text, name
             assert f"**Targets:** {_code(definition['targets'])}" in text, name
         rows = {row[0].strip("`"): row for row in _table_rows(sections[name])}
-        assert set(rows) == set(definition["required"]), name
+        assert set(rows) == {*definition["required"], *definition["optional"]}, name
         for prop, (_prop, required, _rule, meaning) in rows.items():
-            assert required == "yes"
+            assert required == ("yes" if prop in definition["required"] else "no"), (name, prop)
             assert meaning == docs["properties"][prop].replace("\\", ""), (name, prop)
 
 

@@ -33,7 +33,12 @@ GATES = [
     (
         "Required properties",
         "`required` map",
-        "A missing required property, or one whose value fails its rule. Properties outside the map are stored as submitted and are not validated.",
+        "A missing required property, or one whose value fails its rule.",
+    ),
+    (
+        "Optional properties",
+        "`optional` map",
+        "A declared optional property that is null or whose value fails its rule. An absent one is accepted, and properties outside both maps are stored as submitted and are not validated.",
     ),
     (
         "Format rule",
@@ -179,8 +184,10 @@ def _type_section(kind: str, name: str, definition: dict[str, Any]) -> list[str]
     facts.append(f"**Canonicalizations:** {_code(definition['canonicalize'])}")
     lines.extend(["<br>".join(facts), ""])
     required = cast("dict[str, str | list[str]]", definition["required"])
-    if required:
-        rows = [[f"`{prop}`", "yes", _rule(rule), docs["properties"][prop]] for prop, rule in required.items()]
+    optional = cast("dict[str, str | list[str]]", definition["optional"])
+    rows = [[f"`{prop}`", "yes", _rule(rule), docs["properties"][prop]] for prop, rule in required.items()]
+    rows.extend([f"`{prop}`", "no", _rule(rule), docs["properties"][prop]] for prop, rule in sorted(optional.items()))
+    if rows:
         lines.extend([_table(["Property", "Required", "Rule", "Meaning"], rows), ""])
     return lines
 

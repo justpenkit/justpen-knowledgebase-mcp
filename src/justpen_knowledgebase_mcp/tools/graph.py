@@ -56,7 +56,7 @@ def register(mcp: FastMCP) -> None:
         nodes: Annotated[list[NodeWrite], Field(default_factory=list[NodeWrite], max_length=100)],
         relations: Annotated[list[RelationWrite], Field(default_factory=list[RelationWrite], max_length=100)],
     ) -> ToolResult:
-        """Atomically upsert 1-100 nodes/relations using kb_types. New parent-scoped nodes require exactly one declared scope relation in this request; existing scoped IDs do not. The MCP computes keys and forbids re-parenting. ID patches preserve omitted metadata; explicit null clears label/source, while property null is literal data. Endpoints are immutable. Evidence links are explicit."""
+        """Atomically upsert 1-100 nodes/relations using kb_types. New parent-scoped nodes require exactly one declared scope relation in this request; existing scoped IDs do not. The MCP computes keys and forbids re-parenting. ID patches preserve omitted metadata; explicit null clears label/source, while property null is literal data except for declared properties, which reject it. Endpoints are immutable. Evidence links are explicit."""
         return await invoke(ctx, "write", locals(), WriteRequest)
 
     @mcp.tool(

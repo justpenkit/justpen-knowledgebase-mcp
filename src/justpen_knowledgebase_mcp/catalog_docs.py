@@ -19,6 +19,9 @@ DOCS: dict[str, Any] = {
         "depth": "Maximum nesting depth of the properties object.",
         "integers": "Integers outside signed 64-bit are rejected.",
         "numbers": "NaN and infinity are rejected.",
+        "optional_nonnull": (
+            "A declared optional property may be absent but never null; clear one with `remove_properties`."
+        ),
         "properties_bytes": "Maximum size of one canonical properties object, in UTF-8 bytes.",
         "required_nonnull": "A required property may not be null or absent.",
     },

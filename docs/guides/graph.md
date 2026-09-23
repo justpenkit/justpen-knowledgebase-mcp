@@ -150,7 +150,8 @@ Remove children explicitly with RFC 6901 JSON Pointers:
 
 Required identity fields and relation endpoints are immutable. Omitted label or
 source values are preserved; explicit `null` clears those optional metadata
-fields. Property `null` remains literal JSON data. `observed_at` uses the last
+fields. Property `null` remains literal JSON data, except that a property the
+catalog declares rejects it; remove that property with `remove_properties`. `observed_at` uses the last
 writer's supplied timestamp even when it is chronologically older; it is not a
 maximum-time merge.
 

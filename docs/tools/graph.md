@@ -45,8 +45,10 @@ returns that declaration, including the format rule behind every required
 property and the id of every check and canonicalization a type runs, so an
 agent can read the contract instead of guessing it. A few relations also check
 endpoint **values**: `has_subdomain` requires the target to end in the source,
-`contains_ip` and `contains_cidr` require real containment. Properties outside
-the required map are accepted as submitted and are not validated.
+`contains_ip` and `contains_cidr` require real containment. A type may also
+declare `optional` properties: each is validated whenever it is present, and it
+may be absent but never null. Properties outside both maps are accepted as
+submitted and are not validated.
 
 `CONFLICT` also reports attempts to change an existing record's type, required
 identity fields, or relation endpoints, which are immutable. It also reports an
@@ -63,7 +65,8 @@ Nmap label during `kb_write`. Names whose registry entry is TLS-capable, such as
 
 Object patches merge recursively, arrays replace whole values, and `{}` leaves
 existing object children. Required identity cannot change. Explicit `null`
-clears label/source but is literal data inside properties. A supplied
+clears label/source but is literal data inside properties, except that a declared
+property rejects it; remove one with `remove_properties`. A supplied
 `observed_at` is last-writer-wins rather than maximum timestamp.
 
 Removing `/a` while setting `{"a": {}}` conflicts because the set recreates the

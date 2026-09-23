@@ -6,28 +6,30 @@ The catalog declares **31 node types** and **44 relation types**. Conventions th
 
 ## What a write is checked against
 
-| Gate                | Declared in                                        | Rejects                                                                                                                                                       |
-| ------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Type name           | `nodes` / `relations` keys                         | An unknown type, on write and on schema lookup.                                                                                                               |
-| Required properties | `required` map                                     | A missing required property, or one whose value fails its rule. Properties outside the map are stored as submitted and are not validated.                     |
-| Format rule         | `formats`, the validator, and the discovery schema | A value that does not match the published spelling. A rule missing from any of the three places would silently weaken the contract, so a test pins all three. |
-| Identity            | `identity.properties`                              | A later write that changes an identity property of an existing record.                                                                                        |
-| Parent scope        | `identity.scope`                                   | A new scoped node without exactly one scope relation in the same write, a re-parenting attempt, and a parent or scope-relation delete while the child exists. |
-| Endpoint types      | `sources`, `targets`, `self_edge`                  | A relation between node types it does not connect, and a self edge where none is allowed.                                                                     |
-| Checks              | `checks` ids per type                              | Two properties that individually pass but disagree, and a relation whose endpoints' stored values do not actually stand in it.                                |
-| Canonicalization    | `canonicalize` ids per type                        | Nothing: a declared non-canonical spelling is rewritten before validation, identity and storage.                                                              |
+| Gate                | Declared in                                        | Rejects                                                                                                                                                                             |
+| ------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Type name           | `nodes` / `relations` keys                         | An unknown type, on write and on schema lookup.                                                                                                                                     |
+| Required properties | `required` map                                     | A missing required property, or one whose value fails its rule.                                                                                                                     |
+| Optional properties | `optional` map                                     | A declared optional property that is null or whose value fails its rule. An absent one is accepted, and properties outside both maps are stored as submitted and are not validated. |
+| Format rule         | `formats`, the validator, and the discovery schema | A value that does not match the published spelling. A rule missing from any of the three places would silently weaken the contract, so a test pins all three.                       |
+| Identity            | `identity.properties`                              | A later write that changes an identity property of an existing record.                                                                                                              |
+| Parent scope        | `identity.scope`                                   | A new scoped node without exactly one scope relation in the same write, a re-parenting attempt, and a parent or scope-relation delete while the child exists.                       |
+| Endpoint types      | `sources`, `targets`, `self_edge`                  | A relation between node types it does not connect, and a self edge where none is allowed.                                                                                           |
+| Checks              | `checks` ids per type                              | Two properties that individually pass but disagree, and a relation whose endpoints' stored values do not actually stand in it.                                                      |
+| Canonicalization    | `canonicalize` ids per type                        | Nothing: a declared non-canonical spelling is rewritten before validation, identity and storage.                                                                                    |
 
 ## Shared limits
 
-| Setting                 | Value           | Meaning                                                                   |
-| ----------------------- | --------------- | ------------------------------------------------------------------------- |
-| `additional_properties` | true            | Properties outside the declared maps are accepted and stored unvalidated. |
-| `coercion`              | false           | No JSON type is converted. A string `"443"` is not an integer.            |
-| `depth`                 | 16              | Maximum nesting depth of the properties object.                           |
-| `integers`              | `signed64`      | Integers outside signed 64-bit are rejected.                              |
-| `numbers`               | `finite double` | NaN and infinity are rejected.                                            |
-| `properties_bytes`      | 65536           | Maximum size of one canonical properties object, in UTF-8 bytes.          |
-| `required_nonnull`      | true            | A required property may not be null or absent.                            |
+| Setting                 | Value           | Meaning                                                                                        |
+| ----------------------- | --------------- | ---------------------------------------------------------------------------------------------- |
+| `additional_properties` | true            | Properties outside the declared maps are accepted and stored unvalidated.                      |
+| `coercion`              | false           | No JSON type is converted. A string `"443"` is not an integer.                                 |
+| `depth`                 | 16              | Maximum nesting depth of the properties object.                                                |
+| `integers`              | `signed64`      | Integers outside signed 64-bit are rejected.                                                   |
+| `numbers`               | `finite double` | NaN and infinity are rejected.                                                                 |
+| `optional_nonnull`      | true            | A declared optional property may be absent but never null; clear one with `remove_properties`. |
+| `properties_bytes`      | 65536           | Maximum size of one canonical properties object, in UTF-8 bytes.                               |
+| `required_nonnull`      | true            | A required property may not be null or absent.                                                 |
 
 ## Node types
 

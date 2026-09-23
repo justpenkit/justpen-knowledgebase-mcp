@@ -28,6 +28,7 @@ _COMMON = {
     "depth": 16,
     "integers": "signed64",
     "numbers": "finite double",
+    "optional_nonnull": True,
     "properties_bytes": 65536,
     "required_nonnull": True,
 }
@@ -95,6 +96,7 @@ def _relation(
     targets: list[str],
     *,
     required: dict[str, str | list[str]] | None = None,
+    optional: dict[str, str | list[str]] | None = None,
     identity: dict[str, object] | None = None,
     self_edge: bool = False,
     checks: list[str] | None = None,
@@ -103,6 +105,7 @@ def _relation(
     return {
         "identity": identity if identity is not None else _identity([]),
         "required": required if required is not None else {},
+        "optional": optional if optional is not None else {},
         "self_edge": self_edge,
         "sources": sources,
         "targets": targets,
@@ -747,6 +750,7 @@ def _build_catalog(
         built[kind] = {}
         for name, definition in definitions.items():
             entry = {**definition}
+            entry["optional"] = dict(definition.get("optional", {}))
             entry["checks"] = list(definition.get("checks", ()))
             entry["canonicalize"] = list(definition.get("canonicalize", ()))
             allowed = {*checks, *endpoint_checks} if kind == "relations" else set(checks)
@@ -835,7 +839,7 @@ def type_description(kind: str, type_name: str) -> dict[str, Any]:
 
 
 def _declared_properties(definition: Mapping[str, Any]) -> set[str]:
-    return set(definition["required"])
+    return {*definition["required"], *definition["optional"]}
 
 
 def _ensure_docs_contract() -> None:
@@ -908,6 +912,12 @@ def validate_record(kind: str, type_name: str, properties: dict[str, Any]) -> No
             # The shared view spells a JSON array as a tuple; the published message keeps the list
             # spelling clients already receive, so routing this read changes no client-visible text.
             raise ExpectedValidationError(f"/properties/{field}: expected {_published_rule(rule)}")
+    optional = cast("Mapping[str, str | list[str] | tuple[str, ...]]", definition["optional"])
+    for field, rule in optional.items():
+        # A declared attribute is validated whenever it is present, and null is not a value of any
+        # rule; clearing one is `remove_properties`, not a write of null.
+        if field in properties and not _valid_field(properties[field], rule):
+            raise ExpectedValidationError(f"/properties/{field}: expected {_published_rule(rule)}")
     for rule_id in definition["checks"]:
         check = _CHECKS.get(rule_id)
         if check is not None:
@@ -960,6 +970,36 @@ def _ensure_cross_field_contract() -> None:
 
 
 _ensure_cross_field_contract()
+
+# Types that carry or point at a secret; no declared attribute there may share a plaintext-bearing name.
+_SECRET_FAMILY = ("secret", "exposes_secret", "authenticates")
+
+
+def _ensure_property_contract() -> None:
+    """Fail at import if a required or optional map contradicts the identity or another type.
+
+    Identity hashes `properties[field]`, so an identity property outside the required map would
+    raise KeyError on a write that omits it. An optional name reused with a different rule would
+    give one attribute two meanings across the catalog. Required maps legitimately reuse `name`,
+    `value` and `kind` with different rules, so that uniqueness is scoped to optional names.
+    """
+    optional_rules: dict[str, tuple[str, object]] = {}
+    for kind in ("nodes", "relations"):
+        for type_name, definition in cast("dict[str, dict[str, Any]]", _CATALOG[kind]).items():
+            required, optional = definition["required"], definition["optional"]
+            if set(required) & set(optional):
+                raise RuntimeError(f"{type_name} declares {sorted(set(required) & set(optional))} twice")
+            if not set(definition["identity"]["properties"]) <= set(required):
+                raise RuntimeError(f"{type_name} identity names a property outside its required map")
+            for name, rule in optional.items():
+                first = optional_rules.setdefault(name, (type_name, rule))
+                if first[1] != rule:
+                    raise RuntimeError(f"optional {name} has one rule on {first[0]} and another on {type_name}")
+                if type_name in _SECRET_FAMILY and name.casefold() in _SECRET_PLAINTEXT_KEYS:
+                    raise RuntimeError(f"{type_name} declares {name}, a plaintext-bearing name")
+
+
+_ensure_property_contract()
 
 
 # NIST IR 7695 formatted-string binding: `part` plus ten colon-separated attribute components.
@@ -1261,10 +1301,11 @@ def catalog_schema(kind: str, type_name: str) -> dict[str, Any]:
         raise ExpectedValidationError("unknown catalog type")
     definition = cast("dict[str, Any]", manifest[kind][type_name])
     required = cast("dict[str, str | list[str]]", definition["required"])
+    optional = cast("dict[str, str | list[str]]", definition["optional"])
     return {
         "type": "object",
         "required": list(required),
-        "properties": {name: _schema_for_rule(rule) for name, rule in required.items()},
+        "properties": {name: _schema_for_rule(rule) for name, rule in {**required, **optional}.items()},
         "additionalProperties": True,
         "x-identity": definition["identity"],
         "x-maxUtf8Bytes": manifest["common"]["properties_bytes"],
