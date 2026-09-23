@@ -1034,8 +1034,24 @@ async def test_a_finding_scopes_to_a_parameter_that_is_itself_scoped_to_an_endpo
                 {"type": "endpoint", "properties": {"url": "https://example.com/b", "method": "GET"}},
                 {"type": "parameter", "properties": {"name": "id", "location": "query"}},
                 {"type": "parameter", "properties": {"name": "id", "location": "query"}},
-                {"type": "finding", "properties": {"title": "reflected value", "severity": "medium"}},
-                {"type": "finding", "properties": {"title": "reflected value", "severity": "medium"}},
+                {
+                    "type": "finding",
+                    "properties": {
+                        "rule": "manual:reflected-value",
+                        "matcher": "",
+                        "title": "reflected value",
+                        "severity": "medium",
+                    },
+                },
+                {
+                    "type": "finding",
+                    "properties": {
+                        "rule": "manual:reflected-value",
+                        "matcher": "",
+                        "title": "reflected value",
+                        "severity": "medium",
+                    },
+                },
             ],
             "relations": [
                 {

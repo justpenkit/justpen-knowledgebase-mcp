@@ -205,6 +205,20 @@ registry does not publish. Never uppercase one. An abuse contact is an
 not an attribute on this node; treat it as low-confidence either way, because
 the registries themselves state the value is frequently wrong or absent.
 
+A `finding` is keyed on `rule` and `matcher` under its parent, the way nuclei
+deduplicates by template, matcher and target. `rule` is the reporting tool and
+its own rule id, such as `nuclei:http-missing-security-headers`; `matcher`
+separates the results one rule reports on one parent, such as a nuclei matcher
+name, or is `""` when the rule has one result. `title` and `severity` are
+required but not identity, so a template renamed between releases patches the
+title instead of forking the finding. Two results of one rule that both send
+`matcher: ""` on one parent are one finding: pick a discriminator per source. The
+parent is fixed per source as well: a nuclei HTTP result hangs off the
+`endpoint` it matched, a network or TLS result off the `port`, a DNS result off
+the name. For a TLS result on a named host, prefix the matcher with the host
+(`www.example.com:expired-ssl`), so two virtual hosts behind one address stay
+two findings. `unknown` severity means none was assigned; it is not below `info`.
+
 `has_weakness` classifies a `finding` or a `cve` as an instance of a CWE
 weakness class. Both sources are real: a scanner assigns the class to its own
 finding, and the NVD assigns it to a published CVE. A `finding` title is free

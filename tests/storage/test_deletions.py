@@ -83,7 +83,15 @@ async def scoped_graph(kb, relation_type):
         "has_finding": (
             [
                 {"type": "domain", "properties": {"value": "example.com"}},
-                {"type": "finding", "properties": {"title": "Exposed admin", "severity": "high"}},
+                {
+                    "type": "finding",
+                    "properties": {
+                        "rule": "manual:exposed-admin",
+                        "matcher": "",
+                        "title": "Exposed admin",
+                        "severity": "high",
+                    },
+                },
             ],
             [
                 {
@@ -395,7 +403,15 @@ async def test_a_scoped_child_of_a_scoped_child_is_deleted_innermost_first(tmp_p
                     "nodes": [
                         {"type": "endpoint", "properties": {"url": "https://example.com/search", "method": "GET"}},
                         {"type": "parameter", "properties": {"name": "q", "location": "query"}},
-                        {"type": "finding", "properties": {"title": "reflected value", "severity": "medium"}},
+                        {
+                            "type": "finding",
+                            "properties": {
+                                "rule": "manual:reflected-value",
+                                "matcher": "",
+                                "title": "reflected value",
+                                "severity": "medium",
+                            },
+                        },
                     ],
                     "relations": [
                         {

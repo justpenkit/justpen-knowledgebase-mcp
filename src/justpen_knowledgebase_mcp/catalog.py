@@ -53,6 +53,8 @@ _FORMATS: dict[str, int] = {
     "dns_name": 1,
     "dns_or_explicit_empty": 1,
     "email_address": 1,
+    "finding_matcher_or_empty": 1,
+    "finding_rule": 1,
     "epp_status_list": 1,
     "http_fingerprint_value": 1,
     "http_status": 1,
@@ -191,10 +193,12 @@ _NODES: dict[str, dict[str, Any]] = {
         "canonicalize": ["endpoint_url_drop_query.1"],
     },
     "finding": {
-        "identity": _identity(["title"], scope=_SCOPE_FINDING),
+        "identity": _identity(["rule", "matcher"], scope=_SCOPE_FINDING),
         "required": {
+            "rule": "finding_rule",
+            "matcher": "finding_matcher_or_empty",
             "title": "printable_text_200",
-            "severity": ["info", "low", "medium", "high", "critical"],
+            "severity": ["info", "low", "medium", "high", "critical", "unknown"],
         },
     },
     "host_key": {
@@ -1227,6 +1231,8 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "dns_name": lambda text: _dns_kind(text) is not None,
         "dns_or_explicit_empty": lambda text: text == "" or _dns_kind(text) is not None,
         "email_address": _valid_email_address,
+        "finding_matcher_or_empty": lambda text: text == "" or _FINDING_MATCHER.fullmatch(text) is not None,
+        "finding_rule": lambda text: _FINDING_RULE.fullmatch(text) is not None,
         "http_fingerprint_value": lambda text: (
             re.fullmatch(r"[0-9a-f]{64}", text) is not None or _valid_signed_int32_text(text)
         ),
@@ -1251,7 +1257,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "sha256": lambda text: re.fullmatch(r"[0-9a-f]{64}", text) is not None,
         "spf": _valid_spf,
         "srv_label": lambda text: re.fullmatch(r"_[a-z0-9](?:[a-z0-9-]{0,60}[a-z0-9])?", text) is not None,
-        "tech_token": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9._+-]{0,61}[a-z0-9])?", text) is not None,
+        "tech_token": lambda text: re.fullmatch(_TECH_SLUG, text) is not None,
         "tech_version": lambda text: 1 <= len(text) <= 64 and all(0x21 <= ord(char) <= 0x7E for char in text),
         "tenant_id": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?", text) is not None,
         "tls_fingerprint_value": lambda text: re.fullmatch(r"[0-9a-f]{32}|[0-9a-f]{62}", text) is not None,
@@ -1315,6 +1321,11 @@ _EPP_STATUSES = frozenset(
         "transferPeriod",
     }
 )
+# `<tool>:<id>`: the reporting tool's token, then its own rule id exactly as it spells it.
+_TECH_SLUG = r"[a-z0-9](?:[a-z0-9._+-]{0,61}[a-z0-9])?"
+_FINDING_RULE = re.compile(_TECH_SLUG + r":[A-Za-z0-9._/-]{1,200}")
+# Long enough for an SNI host prefix (253 bytes) before a matcher name.
+_FINDING_MATCHER = re.compile(r"[A-Za-z0-9._:/-]{1,400}")
 # RFC 5730 repository object id, ASCII only: `2138514_DOMAIN_COM-VRSN`, `DOM000000113746-FRNIC`.
 _ROID = re.compile(r"[A-Za-z0-9_]{1,80}-[A-Za-z0-9]{1,8}")
 _UTC_TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z")

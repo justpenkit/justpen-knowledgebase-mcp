@@ -70,6 +70,14 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
             "ok",
         ),
     ),
+    "finding_matcher_or_empty": (
+        ("", "x-frame-options", "my_host.example.com:expired-ssl", "a.example.com:", "m" * 400),
+        ("a b", "m" * 401, "caf\u00e9", "x;y", 1),
+    ),
+    "finding_rule": (
+        ("nuclei:http-missing-security-headers", "nuclei:CVE-2021-44228", "bbot:badsecrets", "manual:a/b_c.d"),
+        ("nuclei", "Nuclei:x", "nuclei:", ":x", "nuclei:a b", "nuclei:" + "x" * 201, "nu clei:x"),
+    ),
     "http_fingerprint_value": (("-1752256170", "0", "a" * 64), ("+1", "A" * 64, "01", "-0", "2147483648")),
     "http_status": ((100, 200, 599), (99, 600, "200", True, 200.0)),
     "http_url": (

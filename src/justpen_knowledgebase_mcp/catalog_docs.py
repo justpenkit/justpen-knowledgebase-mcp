@@ -79,6 +79,15 @@ DOCS: dict[str, Any] = {
             "RFC 3915 grace periods, sorted ascending with no duplicate. Convert RDAP's spaced words: "
             "`client transfer prohibited` is `clientTransferProhibited`, `active` is `ok`."
         ),
+        "finding_matcher_or_empty": (
+            "The empty string, or 1 to 400 characters from ASCII letters, digits and `._:/-`: the reporting "
+            "tool's sub-rule discriminator, such as a nuclei matcher name or `<host>:<matcher>` for a TLS result."
+        ),
+        "finding_rule": (
+            "`<tool>:<id>`: a lowercase tech_token naming the reporting tool, a colon, and 1 to 200 characters "
+            "from ASCII letters, digits and `._/-` spelling the tool's own rule id, such as "
+            "`nuclei:http-missing-security-headers` or `manual:exposed-admin-panel`."
+        ),
         "http_fingerprint_value": (
             "Either a signed 32-bit decimal integer written in ASCII without a leading zero or a plus sign, for "
             "a MurmurHash3 favicon hash, or exactly 64 lowercase hexadecimal characters for a response digest. "
@@ -364,8 +373,17 @@ DOCS: dict[str, Any] = {
                 "Not the weakness class (`cwe`) or a published advisory (`cve`); those link through "
                 "`has_weakness` and `affected_by`."
             ),
+            "notes": (
+                "Identity is the rule and matcher under the parent, as nuclei deduplicates by template, "
+                "matcher and target, so a renamed template patches `title` instead of forking. Send a distinct "
+                '`matcher` for each result one rule reports on one parent; two results sharing `""` '
+                "overwrite each other. `unknown` severity means none was assigned and is not ordinal: never "
+                "sort or filter it as below `info`."
+            ),
             "properties": {
-                "title": "The finding title; with the parent, it identifies the finding.",
+                "rule": "The reporting tool and its rule id, such as a nuclei template id.",
+                "matcher": "The sub-rule discriminator, such as a matcher name, or empty when the rule has one result.",
+                "title": "The rule's human-readable name; the latest write wins.",
                 "severity": "The reporter's severity; the latest write wins.",
             },
         },

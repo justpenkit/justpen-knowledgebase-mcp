@@ -128,7 +128,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "f0f7a73d66caf26bfabf6ef086974c2f7b9159ac2677395cae8a47f37cda71b1"
+    assert CATALOG_FINGERPRINT == "58d0da7d976fd4c6106f8daea1790272a5fdc2c88058aeecba99c4a9a3c8aaf8"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -173,7 +173,7 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         "scope": {"relation": "has_service", "endpoint": "source"},
     }
     assert manifest["nodes"]["finding"]["identity"] == {
-        "properties": ["title"],
+        "properties": ["rule", "matcher"],
         "scope": {"relation": "has_finding", "endpoint": "source"},
     }
     assert manifest["nodes"]["mta_sts_policy"]["identity"] == {
@@ -211,8 +211,14 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("service", {"name": "ssh"}),
         ("service", {"name": "ssh", "secure": "observed"}),
         ("service", {"name": "unknown"}),
-        ("finding", {"title": "x", "severity": "info"}),
-        ("finding", {"title": "x" * 200, "severity": "critical"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "x", "severity": "info"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "x" * 200, "severity": "critical"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "x", "severity": "unknown"}),
+        (
+            "finding",
+            {"rule": "nuclei:expired-ssl", "matcher": "my_host.example.com:expired", "title": "x", "severity": "low"},
+        ),
+        ("finding", {"rule": "bbot:badsecrets", "matcher": "0123456789abcdef", "title": "x", "severity": "high"}),
         ("certificate", {"der_sha256": "a" * 64}),
         ("endpoint", {"url": "https://api.example.com/a%2Fb?q=X", "method": "PROPFIND"}),
         ("endpoint", {"url": "https://example.com/?", "method": "GET"}),
@@ -398,11 +404,18 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("service", {"name": "X11"}),
         ("service", {"name": "ssl/http"}),
         ("service", {"name": "definitely-not-registered"}),
-        ("finding", {"title": "", "severity": "low"}),
-        ("finding", {"title": "x" * 201, "severity": "low"}),
-        ("finding", {"title": "line\nbreak", "severity": "low"}),
-        ("finding", {"title": 1, "severity": "low"}),
-        ("finding", {"title": "title", "severity": "unknown"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "", "severity": "low"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "x" * 201, "severity": "low"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "line\nbreak", "severity": "low"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": 1, "severity": "low"}),
+        ("finding", {"rule": "nuclei:exposed-panel", "matcher": "", "title": "title", "severity": "Unknown"}),
+        ("finding", {"title": "t", "severity": "low"}),
+        ("finding", {"rule": "nuclei:x", "title": "t", "severity": "low"}),
+        ("finding", {"rule": "Nuclei:x", "matcher": "", "title": "t", "severity": "low"}),
+        ("finding", {"rule": "nuclei", "matcher": "", "title": "t", "severity": "low"}),
+        ("finding", {"rule": "nuclei:a b", "matcher": "", "title": "t", "severity": "low"}),
+        ("finding", {"rule": "nuclei:x", "matcher": "a b", "title": "t", "severity": "low"}),
+        ("finding", {"rule": "nuclei:x", "matcher": "m" * 401, "title": "t", "severity": "low"}),
         ("certificate", {"der_sha256": "A" * 64}),
         ("certificate", {"der_sha256": "a" * 63}),
         ("endpoint", {"url": "HTTPS://example.com/", "method": "GET"}),
@@ -1285,9 +1298,11 @@ def test_enum_rule_rejection_keeps_the_published_list_spelling() -> None:
     client receives has to stay the list spelling it has always been, so routing that read changes
     no client-visible text. Without `_published_rule` this reads `expected ('info', ...)`."""
     with pytest.raises(ExpectedValidationError) as failure:
-        validate_record("nodes", "finding", {"title": "t", "severity": "catastrophic"})
+        validate_record(
+            "nodes", "finding", {"rule": "manual:x", "matcher": "", "title": "t", "severity": "catastrophic"}
+        )
     assert str(failure.value.message) == (
-        "/properties/severity: expected ['info', 'low', 'medium', 'high', 'critical']"
+        "/properties/severity: expected ['info', 'low', 'medium', 'high', 'critical', 'unknown']"
     )
 
     with pytest.raises(ExpectedValidationError) as scalar:

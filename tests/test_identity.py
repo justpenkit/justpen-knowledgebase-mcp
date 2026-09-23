@@ -61,7 +61,7 @@ def test_scoped_identity_is_canonical_and_parent_sensitive():
     [
         ("port", {"transport": "tcp", "number": 443}),
         ("service", {"name": "unknown"}),
-        ("finding", {"title": "Open management port", "severity": "high"}),
+        ("finding", {"rule": "manual:open-management-port", "matcher": "", "title": "Open port", "severity": "high"}),
     ],
 )
 def test_scoped_identity_requires_parent(type_name, properties):
@@ -284,3 +284,17 @@ def test_a_published_pattern_stays_inside_the_subset_ecma_262_spells_identically
     assert grammar.flags == re.UNICODE
     for construct in NOT_PUBLISHABLE_VERBATIM:
         assert construct not in pattern, construct
+
+
+def test_a_finding_is_its_rule_and_matcher_under_its_parent_whatever_its_title():
+    """D-13: a template rename patches the title instead of forking the finding, and two matchers
+    of one template on one parent are two findings instead of one overwritten one."""
+    first = {"rule": "nuclei:tech-detect", "matcher": "nginx", "title": "Wappalyzer Technology Detection"}
+    renamed = {**first, "title": "Technology Detection"}
+    other_matcher = {**first, "matcher": "php"}
+    for properties in (first, renamed, other_matcher):
+        properties["severity"] = "info"
+
+    assert identity_key("nodes", "finding", first, PARENT) == identity_key("nodes", "finding", renamed, PARENT)
+    assert identity_key("nodes", "finding", first, PARENT) != identity_key("nodes", "finding", other_matcher, PARENT)
+    assert identity_key("nodes", "finding", first, PARENT) != identity_key("nodes", "finding", first, OTHER_PARENT)
