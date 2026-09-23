@@ -527,9 +527,17 @@ _ensure_scope_contract()
 
 
 def _canonicalize_endpoint_url(properties: dict[str, Any]) -> None:
+    """Drop a query only from a URL that is valid with it, so a malformed query is still rejected.
+
+    Stripping first would let `?a b<>` through: validation would see only the clean path. An empty
+    query (`/search?`) is valid and dropped too.
+    """
     url = properties.get("url")
-    if type(url) is str and "?" in url:
-        properties["url"] = url.split("?", 1)[0]
+    if type(url) is not str or "?" not in url:
+        return
+    base, _separator, query = url.partition("?")
+    if _valid_url(url) or (query == "" and _valid_url(base)):
+        properties["url"] = base
 
 
 def _canonicalize_caa_parameters(properties: dict[str, Any]) -> None:

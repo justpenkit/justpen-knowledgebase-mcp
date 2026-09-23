@@ -84,8 +84,8 @@ DOCS: dict[str, Any] = {
         "http_url": (
             "Canonical absolute ASCII http/https URL with lowercase host, mandatory path, no userinfo, "
             "fragment, whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase "
-            "percent escape. A query string is removed before identity and storage, so one endpoint holds one "
-            "path; parameter names belong to parameter nodes."
+            "percent escape. A submitted query string is validated with the rest of the URL and then removed "
+            "before identity and storage, so one endpoint holds one path; parameter names belong to parameter nodes."
         ),
         "ip": "Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.",
         "ip_version": "A strict JSON integer equal to 4 or 6.",
@@ -240,8 +240,9 @@ DOCS: dict[str, Any] = {
             "parameter list is identity-bearing. A non-ASCII name is left for validation to reject."
         ),
         "endpoint_url_drop_query.1": (
-            "Everything from the first `?` in `url` is removed before the URL is validated and hashed, so one "
-            "path is one endpoint; parameter names belong to `parameter` nodes."
+            "Once the whole `url`, query included, passes `http_url`, everything from its first `?` is removed "
+            "before hashing and storage, so one path is one endpoint. A URL whose query is malformed is left "
+            "unchanged and rejected."
         ),
     },
     "nodes": {
@@ -330,7 +331,7 @@ DOCS: dict[str, Any] = {
                 "bodies and headers belong in evidence."
             ),
             "properties": {
-                "url": "Absolute canonical http/https URL; a submitted query string is removed before identity.",
+                "url": "Absolute canonical http/https URL; a valid submitted query string is removed before identity.",
                 "method": "The uppercase HTTP method token.",
                 "status": "The status code of the latest response observed.",
                 "title": "The HTML title of the latest response.",

@@ -410,6 +410,10 @@ CANONICALIZATIONS: dict[str, tuple[tuple[Rewrite, ...], tuple[Record, ...]]] = {
                 {"url": "https://api.example.com/", "method": "GET"},
             ),
         ),
-        (("endpoint", {"url": "https://api.example.com/search", "method": "GET", "title": "Search?x"}),),
+        (
+            ("endpoint", {"url": "https://api.example.com/search", "method": "GET", "title": "Search?x"}),
+            ("endpoint", {"url": "https://api.example.com/search?a b<>", "method": "GET"}),
+            ("endpoint", {"url": "https://api.example.com/search?q=%zz", "method": "GET"}),
+        ),
     ),
 }
