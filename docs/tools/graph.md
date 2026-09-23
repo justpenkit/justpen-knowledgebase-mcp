@@ -138,15 +138,13 @@ predates schema version 3 and is refused at open, so no forked pair reaches a
 readable workspace. Within a workspace this release created, the fold happens on
 every write, so the fork cannot form.
 
-No required map references the `cpe23_or_empty` rule, so a stored `cpe` is
-never validated against it. Produce the spelling the rule describes and
-re-validate it on read rather than trusting the stored bytes.
-
-A versioned `technology.cpe` (`cpe:2.3:a:f5:nginx:1.18.0:*:...`) belongs on the
-`runs_technology` edge beside `version`, since the version is per-host. An
-unversioned product CPE may sit on the `technology` node itself. Omit the key
-rather than sending an empty string; a later write that sends the key overwrites
-the stored value.
+A versioned CPE (`cpe:2.3:a:f5:nginx:1.18.0:*:...`) belongs on the
+`runs_technology` edge beside `version`, since the version is per-host. The
+`technology` node, shared by every host, accepts only a product-level CPE whose
+version attribute is `*` or `-`, and rejects a versioned one. Both `cpe`
+properties and the edge's `version` are declared and validated: a CPE is the
+lowercase 2.3 formatted string, so convert the `cpe:/a:...` URI binding nmap
+prints. Omit an unknown key rather than sending an empty string.
 
 A `dkim_record` is identified by its selector and its parent domain, not by its
 key. Writing the same selector again patches the stored `value` in place, so a

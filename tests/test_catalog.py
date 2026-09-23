@@ -27,6 +27,7 @@ from justpen_knowledgebase_mcp.identity import identity_key
 from . import catalog_golden as golden
 
 CPE_NGINX = "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*"
+CPE_NGINX_PRODUCT = "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*"
 
 NODE_TYPES = {
     "domain",
@@ -125,7 +126,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "a4f0b834a23bff63cb1bf5f9413224e589fda00e479c464c5ed6ee90e7e1d70f"
+    assert CATALOG_FINGERPRINT == "a5e45b09dcc86018f952d2e36e04c7aa988059db5d0ba432ea352af37fe22116"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -218,7 +219,8 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("technology", {"name": "nginx"}),
         ("technology", {"name": "a"}),
         ("technology", {"name": "a" * 63}),
-        ("technology", {"name": "php_7.4+x", "cpe": CPE_NGINX, "categories": ["web-server"]}),
+        ("technology", {"name": "php_7.4+x", "cpe": CPE_NGINX_PRODUCT, "categories": ["web-server"]}),
+        ("technology", {"name": "nginx", "cpe": "cpe:2.3:a:f5:nginx:-:*:*:*:*:*:*:*"}),
         ("dmarc_record", {"value": "v=DMARC1"}),
         ("dmarc_record", {"value": "v=DMARC1; p=reject; rua=mailto:dmarc@example.com"}),
         ("dmarc_record", {"value": "v=DMARC1 p=none"}),
@@ -409,6 +411,9 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("technology", {"name": "a" * 64}),
         ("technology", {"name": "ngin x"}),
         ("technology", {"name": 1}),
+        ("technology", {"name": "nginx", "cpe": CPE_NGINX}),
+        ("technology", {"name": "nginx", "cpe": ""}),
+        ("technology", {"name": "nginx", "cpe": "cpe:/a:f5:nginx"}),
         ("dmarc_record", {"value": "v=DMARC10"}),
         ("dmarc_record", {"value": "V=DMARC1; p=none"}),
         ("dmarc_record", {"value": "v=dmarc1; p=none"}),
@@ -899,7 +904,6 @@ def test_invalid_relation_types_bounds_and_grammars(type_name: str, properties: 
 @pytest.mark.parametrize(
     "value",
     [
-        "",
         CPE_NGINX,
         "cpe:2.3:a:apache:http_server:2.4.41:*:*:*:*:*:*:*",
         "cpe:2.3:a:vendor:product:8.???:*:*:*:*:*:*:*",
@@ -908,12 +912,13 @@ def test_invalid_relation_types_bounds_and_grammars(type_name: str, properties: 
     ],
 )
 def test_cpe23_rule_accepts_the_formatted_string_binding(value: str) -> None:
-    assert catalog_module._valid_field(value, "cpe23_or_empty")
+    assert catalog_module._valid_field(value, "cpe23")
 
 
 @pytest.mark.parametrize(
     "value",
     [
+        "",
         "cpe:/a:apache:http_server:2.4.41",
         "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*",
         "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*:*",
@@ -923,22 +928,15 @@ def test_cpe23_rule_accepts_the_formatted_string_binding(value: str) -> None:
         "cpe:2.3:a:f5:" + "n" * 512 + ":*:*:*:*:*:*:*:*",
     ],
 )
-def test_cpe23_rule_rejects_legacy_uri_and_malformed_bindings(value: str) -> None:
-    assert not catalog_module._valid_field(value, "cpe23_or_empty")
+def test_cpe23_rule_rejects_empty_legacy_uri_and_malformed_bindings(value: str) -> None:
+    """D-14: the unused `cpe23_or_empty` rule is gone; an absent cpe is an absent key, not ''."""
+    assert not catalog_module._valid_field(value, "cpe23")
 
 
-def test_cpe23_rule_is_published_without_a_consuming_required_map() -> None:
-    manifest = catalog_manifest()
-    referenced = {
-        rule
-        for kind in ("nodes", "relations")
-        for definition in manifest[kind].values()
-        for rule in definition["required"].values()
-        if isinstance(rule, str)
-    }
-
-    assert "cpe23_or_empty" in manifest["formats"]
-    assert "cpe23_or_empty" not in referenced
+def test_a_versioned_cpe_is_read_through_its_escaped_colons() -> None:
+    assert catalog_module._cpe_version("cpe:2.3:a:vendor:pro\\:duct:-:*:*:*:*:*:*:*") == "-"
+    assert catalog_module._cpe_version("cpe:2.3:a:ven\\\\:prod:1:*:*:*:*:*:*:*") == "1"
+    assert catalog_module._cpe_version("cpe:/a:f5:nginx") is None
 
 
 def test_every_order_independent_property_is_required_by_its_own_type() -> None:
@@ -1111,8 +1109,7 @@ def test_every_declared_rule_is_published_and_executable() -> None:
                 assert catalog_schema(kind, type_name)["properties"][field].get("format") == rule
                 used.add(rule)
 
-    # `cpe23_or_empty` is the one deliberate exception, covered by its own test above.
-    assert set(manifest["formats"]) - used == {"cpe23_or_empty"}
+    assert set(manifest["formats"]) == used
 
 
 def _plain(value: object) -> object:

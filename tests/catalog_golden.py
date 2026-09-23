@@ -33,9 +33,9 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ("192.0.2.0/24", "2001:db8::/32", "0.0.0.0/0"),
         ("192.0.2.1/24", "192.0.2.0", "2001:DB8::/32", "192.0.2.0/255.255.255.0", "fe80::/64%en0"),
     ),
-    "cpe23_or_empty": (
-        ("", CPE_NGINX, "cpe:2.3:o:-:-:-:-:-:-:-:-:-:-"),
-        ("cpe:/a:apache:http_server:2.4.41", "CPE:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*", "cpe:2.3:a:f5"),
+    "cpe23": (
+        (CPE_NGINX, "cpe:2.3:o:-:-:-:-:-:-:-:-:-:-", "cpe:2.3:a:vendor:pro\\:duct:*:*:*:*:*:*:*:*"),
+        ("", "cpe:/a:apache:http_server:2.4.41", "CPE:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*", "cpe:2.3:a:f5"),
     ),
     "cve": (("CVE-2026-1234", "CVE-1999-1234567"), ("cve-2026-1234", "CVE-26-1234", "CVE-2026-123", 20261234)),
     "cwe": (("CWE-79", "CWE-999999"), ("cwe-79", "CWE-1234567", "CWE-", "79", 79)),
@@ -103,6 +103,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     "spf": (("v=spf1", "v=spf1 -all"), ("v=spf10", " v=spf1", "v=spf1\t-all", "v=spf1 é")),
     "srv_label": (("_ldap", "_tcp", "_" + "b" * 62), ("ldap", "_LDAP", "_ldap-", "_" + "a" * 63)),
     "tech_token": (("nginx", "php_7.4+x", "a"), ("Nginx", "-nginx", "nginx-", "a" * 64, "ngin x", "")),
+    "tech_version": (("1.18.0", "2.4.41-ubuntu", "x" * 64), ("", "1.18 beta", "x" * 65, "1.0\u00e9")),
     "tenant_id": (("dev-12345", "72f988bf-86f1-41af-91ab-2d7cd011db47"), ("Dev-12345", "", "-x", "a" * 129)),
     "tls_cipher_name": (
         ("TLS_AES_128_GCM_SHA256", "TLS_NULL_WITH_NULL_NULL"),
@@ -129,6 +130,14 @@ CHECKS: dict[str, tuple[tuple[Record, ...], tuple[Record, ...]]] = {
             ("storage_bucket", {"provider": "aws_s3", "name": "example-s3alias"}),
             ("storage_bucket", {"provider": "gcp_gcs", "name": "googtest"}),
         ),
+    ),
+    "cpe_product_level.1": (
+        (
+            ("technology", {"name": "nginx", "cpe": "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*"}),
+            ("technology", {"name": "nginx", "cpe": "cpe:2.3:a:f5:nginx:-:*:*:*:*:*:*:*"}),
+            ("technology", {"name": "nginx"}),
+        ),
+        (("technology", {"name": "nginx", "cpe": CPE_NGINX}),),
     ),
     "dns_name_kind.1": (
         (("domain", {"value": "example.com"}), ("subdomain", {"value": "api.example.com"})),

@@ -167,6 +167,7 @@ Each check runs after the required map has validated the properties it reads. A 
 | `bucket_name_spelling.1`        | `storage_bucket`      | `name` is checked against the declared `provider`: length, grammar, and the prefixes, suffixes and substrings that provider reserves.                                                                                                                                                      |
 | `contains_cidr_proper_subnet.1` | `contains_cidr`       | The target network must be a proper subnet of the source, at the same IP version.                                                                                                                                                                                                          |
 | `contains_ip_member.1`          | `contains_ip`         | The target address must fall inside the source network, at the same IP version.                                                                                                                                                                                                            |
+| `cpe_product_level.1`           | `technology`          | A `cpe` on a `technology` must leave the version attribute `*` or `-`: the node is shared by every host, so a versioned CPE belongs on the `runs_technology` edge beside `version`.                                                                                                        |
 | `dns_name_kind.1`               | `domain`, `subdomain` | `value` must classify as this type against the bundled PSL: a registrable domain for `domain`, a name below one for `subdomain`.                                                                                                                                                           |
 | `has_subdomain_suffix.1`        | `has_subdomain`       | The target's `value` must end in `.` plus the source's `value`.                                                                                                                                                                                                                            |
 | `http_fingerprint_value_kind.1` | `http_fingerprint`    | `favicon_mmh3` requires the signed 32-bit integer spelling; `body_sha256` and `header_sha256` require 64 lowercase hex characters.                                                                                                                                                         |
@@ -201,7 +202,7 @@ Every declared property that is not an enum names one of these rules. The versio
 | `bucket_name`            | 1       | The provider-global name of an object-storage bucket: 3 to 222 lowercase ASCII characters from letters, digits, hyphen, underscore and dot, starting and ending alphanumeric, without a doubled dot, and never a dotted-quad IPv4 address. Every provider is stricter than this union rule, and the declared provider fixes which of the narrower spellings is accepted.              |
 | `caa_parameters`         | 1       | An array of objects with name and value strings. Names start alphanumeric and continue alphanumeric or hyphen. Values are empty or use ASCII 0x21-0x3A and 0x3C-0x7E.                                                                                                                                                                                                                 |
 | `cidr`                   | 1       | Canonical strict IPv4 or IPv6 network with an explicit prefix length.                                                                                                                                                                                                                                                                                                                 |
-| `cpe23_or_empty`         | 1       | The empty string, or a lowercase CPE 2.3 formatted string (NIST IR 7695): 'cpe:2.3:' followed by the part and ten colon-separated components, each '*', '-', or an escaped attribute value optionally anchored by '*' or a run of '?', at most 512 characters. The legacy 'cpe:/' URI binding is rejected. No declared property uses this rule yet.                                   |
+| `cpe23`                  | 1       | A lowercase CPE 2.3 formatted string (NIST IR 7695) of at most 512 characters: 'cpe:2.3:', the part, and ten colon-separated attributes, each '*', '-', or an escaped value optionally anchored by '*' or a run of '?'. The legacy 'cpe:/' URI binding that nmap prints is rejected; convert it.                                                                                      |
 | `cve`                    | 1       | A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.                                                                                                                                                                                                                                                                                                                                   |
 | `cwe`                    | 1       | A string matching `CWE-[0-9]{1,6}` exactly, uppercase as MITRE publishes it.                                                                                                                                                                                                                                                                                                          |
 | `dkim_selector`          | 1       | A lowercase ASCII DKIM selector of at most 253 bytes, as one or more dot-separated labels of at most 63 bytes each, written without the `_domainkey` suffix or the domain. In practice it is far shorter, since `<selector>._domainkey.<domain>` must itself fit in 253 bytes.                                                                                                        |
@@ -231,6 +232,7 @@ Every declared property that is not an enum names one of these rules. The versio
 | `spf`                    | 1       | Printable ASCII beginning with `v=spf1` followed by a normal space or end of text.                                                                                                                                                                                                                                                                                                    |
 | `srv_label`              | 1       | A 2-63 byte lowercase ASCII SRV label beginning with underscore.                                                                                                                                                                                                                                                                                                                      |
 | `tech_token`             | 1       | A 1-63 character lowercase ASCII technology slug that starts and ends alphanumeric and may contain interior dot, underscore, plus, or hyphen.                                                                                                                                                                                                                                         |
+| `tech_version`           | 1       | 1 to 64 printable ASCII characters without space: a version string as the product reports it.                                                                                                                                                                                                                                                                                         |
 | `tenant_id`              | 1       | A 1-128 character lowercase ASCII identity-tenant identifier that starts and ends alphanumeric and may contain interior dot, underscore or hyphen. The declared provider fixes the narrower spelling: a canonical lowercase UUID for Entra ID, a bare organization slug for Okta.                                                                                                     |
 | `tls_cipher_name`        | 1       | The spelling of an IANA TLS cipher suite name: 5 to 128 uppercase ASCII characters beginning 'TLS\_', with underscore-separated alphanumeric components. Shape only; membership in the IANA registry is not checked.                                                                                                                                                                  |
 | `tls_fingerprint_value`  | 1       | Exactly 32 lowercase hexadecimal characters for a JA3S MD5 digest, or exactly 62 for a JARM fingerprint. The declared kind fixes which length is accepted.                                                                                                                                                                                                                            |
@@ -608,11 +610,14 @@ A product, framework or service slug, shared by every host that runs it.
 
 **Not modeled:** Not a per-host version, which belongs on `runs_technology`. Never a finding source.
 
-**Identity:** `name`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
+The slug has no naming authority; use the product's Wappalyzer name lowercased with spaces as hyphens, and put the vendor's product-level CPE in `cpe` to anchor it.
 
-| Property | Required | Rule         | Meaning                     |
-| -------- | -------- | ------------ | --------------------------- |
-| `name`   | yes      | `tech_token` | The lowercase product slug. |
+**Identity:** `name`<br>**Parent scope:** —<br>**Checks:** `cpe_product_level.1`<br>**Canonicalizations:** —
+
+| Property | Required | Rule         | Meaning                                                                |
+| -------- | -------- | ------------ | ---------------------------------------------------------------------- |
+| `name`   | yes      | `tech_token` | The lowercase product slug.                                            |
+| `cpe`    | no       | `cpe23`      | The product-level CPE 2.3 name, with the version attribute `*` or `-`. |
 
 ### `tls_cipher_suite`
 
@@ -1051,6 +1056,11 @@ The source runs the technology, including a name pointing at a SaaS host.
 **Not modeled:** Not a protective front such as a WAF or CDN (`protected_by`).
 
 **Identity:** —<br>**Sources:** `service`, `endpoint`, `domain`, `subdomain`<br>**Targets:** `technology`<br>**Self edge:** no<br>**Checks:** —<br>**Canonicalizations:** —
+
+| Property  | Required | Rule           | Meaning                                                  |
+| --------- | -------- | -------------- | -------------------------------------------------------- |
+| `cpe`     | no       | `cpe23`        | The versioned CPE 2.3 name for what this source runs.    |
+| `version` | no       | `tech_version` | The version this source runs, as the product reports it. |
 
 ### `serves_endpoint`
 

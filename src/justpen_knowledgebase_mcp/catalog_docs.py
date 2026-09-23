@@ -43,11 +43,10 @@ DOCS: dict[str, Any] = {
             "alphanumeric or hyphen. Values are empty or use ASCII 0x21-0x3A and 0x3C-0x7E."
         ),
         "cidr": "Canonical strict IPv4 or IPv6 network with an explicit prefix length.",
-        "cpe23_or_empty": (
-            "The empty string, or a lowercase CPE 2.3 formatted string (NIST IR 7695): 'cpe:2.3:' followed by "
-            "the part and ten colon-separated components, each '*', '-', or an escaped attribute value "
-            "optionally anchored by '*' or a run of '?', at most 512 characters. The legacy 'cpe:/' URI "
-            "binding is rejected. No declared property uses this rule yet."
+        "cpe23": (
+            "A lowercase CPE 2.3 formatted string (NIST IR 7695) of at most 512 characters: 'cpe:2.3:', the "
+            "part, and ten colon-separated attributes, each '*', '-', or an escaped value optionally anchored "
+            "by '*' or a run of '?'. The legacy 'cpe:/' URI binding that nmap prints is rejected; convert it."
         ),
         "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
         "cwe": "A string matching `CWE-[0-9]{1,6}` exactly, uppercase as MITRE publishes it.",
@@ -131,6 +130,7 @@ DOCS: dict[str, Any] = {
             "A 1-63 character lowercase ASCII technology slug that starts and ends alphanumeric and may contain "
             "interior dot, underscore, plus, or hyphen."
         ),
+        "tech_version": "1 to 64 printable ASCII characters without space: a version string as the product reports it.",
         "tenant_id": (
             "A 1-128 character lowercase ASCII identity-tenant identifier that starts and ends alphanumeric and "
             "may contain interior dot, underscore or hyphen. The declared provider fixes the narrower spelling: "
@@ -162,6 +162,10 @@ DOCS: dict[str, Any] = {
             "The target network must be a proper subnet of the source, at the same IP version."
         ),
         "contains_ip_member.1": "The target address must fall inside the source network, at the same IP version.",
+        "cpe_product_level.1": (
+            "A `cpe` on a `technology` must leave the version attribute `*` or `-`: the node is shared by every "
+            "host, so a versioned CPE belongs on the `runs_technology` edge beside `version`."
+        ),
         "dns_name_kind.1": (
             "`value` must classify as this type against the bundled PSL: a registrable domain for `domain`, a "
             "name below one for `subdomain`."
@@ -454,7 +458,14 @@ DOCS: dict[str, Any] = {
         "technology": {
             "summary": "A product, framework or service slug, shared by every host that runs it.",
             "excludes": "Not a per-host version, which belongs on `runs_technology`. Never a finding source.",
-            "properties": {"name": "The lowercase product slug."},
+            "notes": (
+                "The slug has no naming authority; use the product's Wappalyzer name lowercased with spaces as "
+                "hyphens, and put the vendor's product-level CPE in `cpe` to anchor it."
+            ),
+            "properties": {
+                "name": "The lowercase product slug.",
+                "cpe": "The product-level CPE 2.3 name, with the version attribute `*` or `-`.",
+            },
         },
         "tls_cipher_suite": {
             "summary": "An IANA TLS cipher suite at one protocol version, shared by every service accepting it.",
@@ -716,7 +727,10 @@ DOCS: dict[str, Any] = {
         "runs_technology": {
             "summary": "The source runs the technology, including a name pointing at a SaaS host.",
             "excludes": "Not a protective front such as a WAF or CDN (`protected_by`).",
-            "properties": {},
+            "properties": {
+                "version": "The version this source runs, as the product reports it.",
+                "cpe": "The versioned CPE 2.3 name for what this source runs.",
+            },
         },
         "serves_endpoint": {
             "summary": "The service serves the endpoint.",

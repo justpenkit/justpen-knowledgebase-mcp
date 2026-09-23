@@ -43,7 +43,7 @@ _FORMATS: dict[str, int] = {
     "bucket_name": 1,
     "caa_parameters": 1,
     "cidr": 1,
-    "cpe23_or_empty": 1,
+    "cpe23": 1,
     "cve": 1,
     "cwe": 1,
     "dkim_selector": 1,
@@ -73,6 +73,7 @@ _FORMATS: dict[str, int] = {
     "spf": 1,
     "srv_label": 1,
     "tech_token": 1,
+    "tech_version": 1,
     "tenant_id": 1,
     "tls_cipher_name": 1,
     "tls_fingerprint_value": 1,
@@ -280,6 +281,8 @@ _NODES: dict[str, dict[str, Any]] = {
     "technology": {
         "identity": _identity(["name"]),
         "required": {"name": "tech_token"},
+        "optional": {"cpe": "cpe23"},
+        "checks": ["cpe_product_level.1"],
     },
     "tls_cipher_suite": {
         "identity": _identity(["version", "name"]),
@@ -435,7 +438,11 @@ _RELATIONS = {
     "registered_through": _relation(["domain"], ["registrar"]),
     "resolves_to": _relation(_D, ["ip_address"]),
     "reverse_resolves_to": _relation(["ip_address"], _D),
-    "runs_technology": _relation(["service", "endpoint", "domain", "subdomain"], ["technology"]),
+    "runs_technology": _relation(
+        ["service", "endpoint", "domain", "subdomain"],
+        ["technology"],
+        optional={"version": "tech_version", "cpe": "cpe23"},
+    ),
     "serves_endpoint": _relation(["service"], ["endpoint"]),
     "supports_tls_cipher": _relation(["service"], ["tls_cipher_suite"]),
 }
@@ -709,11 +716,18 @@ def _proper_subnet(
     return isinstance(target, ipaddress.IPv6Network) and target != source and target.subnet_of(source)
 
 
+def _cross_field_technology(_type_name: str, properties: dict[str, Any]) -> None:
+    cpe = properties.get("cpe")
+    if type(cpe) is str and _cpe_version(cpe) not in ("*", "-"):
+        raise ExpectedValidationError("/properties/cpe: a technology cpe is product-level; put the version on the edge")
+
+
 # Every check runs after the required map validated the properties it reads. An id names one
 # behavior: changing what a callable accepts means a new version suffix, which changes the
 # fingerprint, so a workspace written under the old behavior is refused rather than reinterpreted.
 _CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
     "bucket_name_spelling.1": _cross_field_storage_bucket,
+    "cpe_product_level.1": _cross_field_technology,
     "dns_name_kind.1": _cross_field_dns_name,
     "http_fingerprint_value_kind.1": _cross_field_http_fingerprint,
     "ip_address_version.1": _cross_field_ip_address,
@@ -1023,6 +1037,17 @@ _CPE_COMPONENT = r"(?:[*\-]|\?*\*?(?:[a-z0-9._\-~]|\\[!-~])+\*?\?*)"
 _CPE23 = re.compile(r"cpe:2\.3:[aho*\-]:" + ":".join([_CPE_COMPONENT] * 10))
 
 
+# The same binding with each attribute captured, so a component is read the way the rule parsed it:
+# an escaped colon stays inside its component rather than splitting it.
+_CPE23_PARTS = re.compile(r"cpe:2\.3:([aho*\-]):" + ":".join([f"({_CPE_COMPONENT})"] * 10))
+
+
+def _cpe_version(cpe: str) -> str | None:
+    """Return the version attribute of a formatted string, or None when the binding is invalid."""
+    match = _CPE23_PARTS.fullmatch(cpe)
+    return match.group(4) if match is not None else None
+
+
 def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool:
     # An enum rule arrives as a list from `catalog_manifest()` and as a tuple from the shared view;
     # `str` is a Sequence too, so the check names the two containers rather than the protocol.
@@ -1054,7 +1079,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
     validators: dict[str, Callable[[str], bool]] = {
         "bucket_name": _valid_bucket_name,
         "cidr": lambda text: _parse_cidr(text) is not None,
-        "cpe23_or_empty": lambda text: text == "" or (len(text) <= 512 and _CPE23.fullmatch(text) is not None),
+        "cpe23": lambda text: len(text) <= 512 and _CPE23.fullmatch(text) is not None,
         "cve": lambda text: re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", text) is not None,
         "cwe": lambda text: re.fullmatch(r"CWE-[0-9]{1,6}", text) is not None,
         "dkim_selector": _valid_dkim_selector,
@@ -1084,6 +1109,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "spf": _valid_spf,
         "srv_label": lambda text: re.fullmatch(r"_[a-z0-9](?:[a-z0-9-]{0,60}[a-z0-9])?", text) is not None,
         "tech_token": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9._+-]{0,61}[a-z0-9])?", text) is not None,
+        "tech_version": lambda text: 1 <= len(text) <= 64 and all(0x21 <= ord(char) <= 0x7E for char in text),
         "tenant_id": lambda text: re.fullmatch(r"[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?", text) is not None,
         "tls_fingerprint_value": lambda text: re.fullmatch(r"[0-9a-f]{32}|[0-9a-f]{62}", text) is not None,
         "tls_cipher_name": lambda text: (
