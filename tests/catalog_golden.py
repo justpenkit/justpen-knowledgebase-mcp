@@ -20,6 +20,7 @@ Rewrite = tuple[str, dict[str, Any], dict[str, Any]]
 FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     "alpn_tokens": ((["h2", "http/1.1"], [], ["h2", "h2"]), ("h2", ["h2 "], [""], ["é"], [1])),
     "asn": ((0, 64512, 4294967295), (-1, 4294967296, True, "64512")),
+    "boolean": ((True, False), ("true", 1, 0, None)),
     "bucket_name": (
         ("example-assets", "my_bucket", "a.b.c"),
         ("ab", "Example", "ex..ample", "192.168.1.1", "-abc", "a" * 223),
@@ -53,6 +54,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ("Abuse@example.com", "abuse@localhost", "a@b@example.com", ".abuse@example.com", "abuse name@example.com"),
     ),
     "http_fingerprint_value": (("-1752256170", "0", "a" * 64), ("+1", "A" * 64, "01", "-0", "2147483648")),
+    "http_status": ((100, 200, 599), (99, 600, "200", True, 200.0)),
     "http_url": (
         ("https://example.com/", "http://[2001:db8::1]:8080/a", "https://api.example.com/a%2Fb"),
         (
@@ -70,8 +72,24 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ("2001:DB8::1", "2001:0db8::1", "192.168.001.1", "fe80::1%en0", "192.0.2.1/32"),
     ),
     "ip_version": ((4, 6), (5, "4", True)),
+    "media_type": (
+        ("text/html", "application/vnd.api+json", "image/svg+xml"),
+        ("text/html; charset=utf-8", "Text/HTML", "text", "text/", "/html", "text/html "),
+    ),
     "method": (("GET", "PROPFIND", "M" * 32), ("get", "M" * 33, "")),
     "mta_sts": (("v=STSv1", "v=STSv1; id=1", "v=STSv1 id=1"), ("v=STSv10", "V=STSv1", "", " v=STSv1")),
+    "mx_pattern_list": (
+        ([], ["mail.example.com"], ["*.mail.protection.outlook.com", "mx1.example.com"]),
+        (
+            ["mx1.example.com", "mx1.example.com"],
+            ["mx2.example.com", "mx1.example.com"],
+            ["MX.example.com"],
+            ["*.com"],
+            ["mail.example.com."],
+            "mail.example.com",
+            [1],
+        ),
+    ),
     "parameter_name": (("id", "X-Request-Id", "%20foo"), ("id=1", "two words", "", "a" * 129, "café")),
     "phone_e164": (("+14155552671", "+12"), ("14155552671", "+0155552671", "+1", "+" + "9" * 16, "+1 415 555")),
     "printable_text_1024": (("x", "x" * 1024), ("", "x" * 1025, "line\nbreak", 1)),
@@ -94,6 +112,8 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     "txt_value": (("x", "x" * 4096, "v=spf1include:x"), ("", "x" * 4097, "café", "line\nbreak")),
     "uint8": ((0, 255), (-1, 256, True, "1")),
     "uint16": ((0, 65535), (-1, 65536, True, "1")),
+    "uint32": ((0, 86400, 4294967295), (-1, 4294967296, True, "86400")),
+    "uint63": ((0, 2**63 - 1), (-1, 2**63, True, 1.5)),
 }
 
 # Check id -> (records the whole validation accepts, records the check itself rejects). Every

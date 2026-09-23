@@ -86,7 +86,9 @@ enforcement:
 `endpoint` has no dedicated HTTP-observation node. Record scan results directly
 on the `endpoint` node using `status`, `title`, `content_length`, `webserver`,
 and `content_type`, so agents converge on one spelling instead of forking
-equivalent facts under different keys. Response digests are the exception: they
+equivalent facts under different keys. These five are declared optional
+properties, validated whenever present: `content_type` is the lowercase media
+type without parameters, so strip `; charset=...` before writing. Response digests are the exception: they
 are pivots rather than descriptions, so they live on `http_fingerprint` nodes
 reached through `has_http_fingerprint`, not as `body_sha256` and `header_sha256`
 attributes.
@@ -267,7 +269,7 @@ stops there on purpose. A Google Workspace customer id is uppercase-initial on
 the wire and agents substitute the primary domain when they cannot read it, and
 an Auth0 tenant name is unique per region, so neither has one spelling an agent
 would reliably reproduce. The federation kind that `getuserrealm` reports belongs
-on the edge as a conventional `namespace_type` attribute (`managed`,
+on the edge as the declared optional `namespace_type` property (`managed`,
 `federated`), because it changes without the pairing changing.
 
 `repository` is keyed on the instance host, the owner and the name, all
@@ -318,9 +320,10 @@ fact, so two domains publishing the same string really do share one record,
 while an MTA-STS TXT value is only a version pointer: providers template it, and
 a date-only id such as `v=STSv1; id=20190429T010101;` is published verbatim by
 many unrelated tenants. Unscoped, those tenants would collapse onto one node,
-and the `mode`, `max_age` and `mx` attributes that each of them reads from its
+and the `mode`, `max_age` and `mx` properties that each of them reads from its
 own `https://mta-sts.<domain>/.well-known/mta-sts.txt` would overwrite each
-other. `txt_record` rejects a well-formed `v=STSv1` value for the same reason it
+other. Those three are declared and validated; write `mx` sorted and without
+duplicates. `txt_record` rejects a well-formed `v=STSv1` value for the same reason it
 rejects a well-formed `v=spf1` value.
 
 `has_finding` gained `parameter`, `dkim_record`, `mta_sts_policy`,

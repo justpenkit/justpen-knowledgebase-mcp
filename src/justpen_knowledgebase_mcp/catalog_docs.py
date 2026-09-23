@@ -31,6 +31,7 @@ DOCS: dict[str, Any] = {
             "identity-significant and duplicates are preserved."
         ),
         "asn": "A strict JSON integer from 0 through 4294967295.",
+        "boolean": 'A strict JSON `true` or `false`; the strings `"true"` and `"1"` and the number 1 are rejected.',
         "bucket_name": (
             "The provider-global name of an object-storage bucket: 3 to 222 lowercase ASCII characters from "
             "letters, digits, hyphen, underscore and dot, starting and ending alphanumeric, without a doubled "
@@ -75,6 +76,7 @@ DOCS: dict[str, Any] = {
             "a MurmurHash3 favicon hash, or exactly 64 lowercase hexadecimal characters for a response digest. "
             "The declared kind fixes which one is accepted."
         ),
+        "http_status": "A strict JSON integer HTTP status code from 100 through 599.",
         "http_url": (
             "Canonical absolute ASCII http/https URL with lowercase host, mandatory path, no userinfo, "
             "fragment, whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase "
@@ -83,10 +85,18 @@ DOCS: dict[str, Any] = {
         ),
         "ip": "Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.",
         "ip_version": "A strict JSON integer equal to 4 or 6.",
+        "media_type": (
+            "A lowercase media type essence `type/subtype` of RFC 6838 restricted names, without parameters: "
+            "`text/html`, never `text/html; charset=utf-8` or `Text/HTML`."
+        ),
         "method": "One to 32 characters matching an uppercase HTTP method token.",
         "mta_sts": (
             "Printable ASCII of at most 4096 characters beginning with 'v=STSv1' followed by a semicolon, a "
             "normal space, or end of text: the TXT record at `_mta-sts.<domain>`, not the policy file body."
+        ),
+        "mx_pattern_list": (
+            "An array of RFC 8461 `mx` patterns, each a lowercase dns_name or `*.` followed by one, sorted "
+            "ascending with no duplicate, so one policy has one spelling."
         ),
         "parameter_name": (
             "1 to 128 printable ASCII characters without space, `&`, `=`, or `#`; one single parameter name, "
@@ -140,6 +150,8 @@ DOCS: dict[str, Any] = {
         ),
         "uint8": "A strict JSON integer from 0 through 255.",
         "uint16": "A strict JSON integer from 0 through 65535.",
+        "uint32": "A strict JSON integer from 0 through 4294967295.",
+        "uint63": "A strict JSON integer from 0 through 9223372036854775807.",
     },
     "checks": {
         "bucket_name_spelling.1": (
@@ -213,7 +225,10 @@ DOCS: dict[str, Any] = {
                 "A self edge through `issued_by` records a self-signed certificate. Absence of that edge means "
                 "the issuer was never written, not that the chain ends."
             ),
-            "properties": {"der_sha256": "Lowercase hex SHA-256 of the certificate's DER bytes."},
+            "properties": {
+                "der_sha256": "Lowercase hex SHA-256 of the certificate's DER bytes.",
+                "self_signed": "True when the subject signed itself; keep it beside the `issued_by` self edge.",
+            },
         },
         "cve": {
             "summary": "A published CVE record, shared by every object affected by it.",
@@ -226,7 +241,10 @@ DOCS: dict[str, Any] = {
         "cwe": {
             "summary": "A CWE weakness class: the canonical spelling that joins findings from different scanners.",
             "excludes": "Not a finding or an advisory; those reach it through `has_weakness`. Never a finding source.",
-            "properties": {"value": "The CWE id as MITRE publishes it, such as `CWE-79`."},
+            "properties": {
+                "value": "The CWE id as MITRE publishes it, such as `CWE-79`.",
+                "name": "MITRE's name for the weakness class, fed by the CWE catalog rather than a scanner.",
+            },
         },
         "dkim_record": {
             "summary": "The DKIM key record one domain publishes for one selector, scoped through `has_dkim_selector`.",
@@ -271,6 +289,11 @@ DOCS: dict[str, Any] = {
             "properties": {
                 "url": "Absolute canonical http/https URL; a submitted query string is removed before identity.",
                 "method": "The uppercase HTTP method token.",
+                "status": "The status code of the latest response observed.",
+                "title": "The HTML title of the latest response.",
+                "content_length": "The body length in bytes of the latest response.",
+                "content_type": "The media type essence of the latest response, without parameters.",
+                "webserver": "The `Server` header value of the latest response.",
             },
         },
         "finding": {
@@ -339,7 +362,12 @@ DOCS: dict[str, Any] = {
                 "Scoped because the TXT value is only a version pointer that unrelated tenants publish verbatim; "
                 "unscoped, their policy attributes would overwrite each other."
             ),
-            "properties": {"value": "The TXT value beginning `v=STSv1`."},
+            "properties": {
+                "value": "The TXT value beginning `v=STSv1`.",
+                "mode": "The policy file's `mode`.",
+                "max_age": "The policy file's `max_age`, in seconds.",
+                "mx": "The policy file's `mx` patterns, sorted and without duplicates.",
+            },
         },
         "organization": {
             "summary": "A number-resource holder known to a regional internet registry, keyed on the registry and handle.",
@@ -520,7 +548,9 @@ DOCS: dict[str, Any] = {
         "federates_with": {
             "summary": "The name signs users in through the identity tenant.",
             "excludes": "Not ownership of the tenant by the name's registrant.",
-            "properties": {},
+            "properties": {
+                "namespace_type": "How the realm lookup classifies the name: `managed` or `federated`.",
+            },
         },
         "has_contact": {
             "summary": "The source publishes the contact for one role.",

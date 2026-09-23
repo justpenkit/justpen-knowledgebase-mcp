@@ -8,6 +8,7 @@ import ipaddress
 import json
 import re
 from dataclasses import dataclass
+from itertools import pairwise
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
@@ -38,6 +39,7 @@ _COMMON = {
 _FORMATS: dict[str, int] = {
     "alpn_tokens": 1,
     "asn": 1,
+    "boolean": 1,
     "bucket_name": 1,
     "caa_parameters": 1,
     "cidr": 1,
@@ -50,11 +52,14 @@ _FORMATS: dict[str, int] = {
     "dns_or_explicit_empty": 1,
     "email_address": 1,
     "http_fingerprint_value": 1,
+    "http_status": 1,
     "http_url": 1,
     "ip": 1,
     "ip_version": 1,
+    "media_type": 1,
     "method": 1,
     "mta_sts": 1,
+    "mx_pattern_list": 1,
     "parameter_name": 1,
     "phone_e164": 1,
     "printable_text_1024": 1,
@@ -74,6 +79,8 @@ _FORMATS: dict[str, int] = {
     "txt_value": 1,
     "uint8": 1,
     "uint16": 1,
+    "uint32": 1,
+    "uint63": 1,
 }
 
 
@@ -145,9 +152,10 @@ _NODES: dict[str, dict[str, Any]] = {
     "certificate": {
         "identity": _identity(["der_sha256"]),
         "required": {"der_sha256": "sha256"},
+        "optional": {"self_signed": "boolean"},
     },
     "cve": {"identity": _identity(["value"]), "required": {"value": "cve"}},
-    "cwe": {"identity": _identity(["value"]), "required": {"value": "cwe"}},
+    "cwe": {"identity": _identity(["value"]), "required": {"value": "cwe"}, "optional": {"name": "printable_text_200"}},
     "dkim_record": {
         "identity": _identity(["selector"], scope=_SCOPE_DKIM),
         "required": {"selector": "dkim_selector", "value": "txt_value"},
@@ -158,6 +166,13 @@ _NODES: dict[str, dict[str, Any]] = {
     "endpoint": {
         "identity": _identity(["url", "method"]),
         "required": {"url": "http_url", "method": "method"},
+        "optional": {
+            "status": "http_status",
+            "title": "printable_text_1024",
+            "content_length": "uint63",
+            "content_type": "media_type",
+            "webserver": "printable_text_200",
+        },
         "canonicalize": ["endpoint_url_drop_query.1"],
     },
     "finding": {
@@ -209,6 +224,7 @@ _NODES: dict[str, dict[str, Any]] = {
     "mta_sts_policy": {
         "identity": _identity(["value"], scope=_SCOPE_MTA_STS),
         "required": {"value": "mta_sts"},
+        "optional": {"mode": ["enforce", "testing", "none"], "max_age": "uint32", "mx": "mx_pattern_list"},
     },
     "organization": {
         "identity": _identity(["registry", "handle"]),
@@ -321,7 +337,7 @@ _RELATIONS = {
         required={"location": "printable_text_1024"},
         identity=_identity(["location"]),
     ),
-    "federates_with": _relation(_D, ["identity_tenant"]),
+    "federates_with": _relation(_D, ["identity_tenant"], optional={"namespace_type": ["managed", "federated"]}),
     "has_contact": _relation(
         ["organization", "registrar", "domain", "subdomain", "repository"],
         ["email_address", "phone"],
@@ -1016,11 +1032,19 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "asn": lambda item: 0 <= item <= 4294967295,
         "ip_version": lambda item: item in (4, 6),
         "redirect_status": lambda item: item in (301, 302, 303, 307, 308),
+        "http_status": lambda item: 100 <= item <= 599,
         "uint8": lambda item: 0 <= item <= 255,
         "uint16": lambda item: 0 <= item <= 65535,
+        "uint32": lambda item: 0 <= item <= 4294967295,
+        "uint63": lambda item: 0 <= item <= 2**63 - 1,
     }
+    # `bool` is a subclass of `int`, so every numeric branch compares the exact type.
     if rule in integer_validators:
         return type(value) is int and integer_validators[rule](value)
+    if rule == "boolean":
+        return type(value) is bool
+    if rule == "mx_pattern_list":
+        return _valid_sorted_set(value, _valid_mx_pattern)
     if rule == "alpn_tokens":
         return _valid_alpn_tokens(value)
     if rule == "caa_parameters":
@@ -1043,6 +1067,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         ),
         "http_url": _valid_url,
         "ip": lambda text: _parse_ip(text) is not None,
+        "media_type": lambda text: _MEDIA_TYPE.fullmatch(text) is not None,
         "method": lambda text: re.fullmatch(r"[A-Z][A-Z0-9!#$%&'*+.^_`|~-]{0,31}", text) is not None,
         "mta_sts": _valid_mta_sts,
         "parameter_name": lambda text: (
@@ -1068,6 +1093,28 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
     }
     validator = validators.get(rule)
     return validator is not None and validator(value)
+
+
+# RFC 6838 restricted names, lowercase, without parameters: `text/html`, never `text/html; charset=x`.
+_MEDIA_NAME = r"[a-z0-9][a-z0-9!#$&^_.+-]{0,126}"
+_MEDIA_TYPE = re.compile(f"{_MEDIA_NAME}/{_MEDIA_NAME}")
+
+
+def _valid_sorted_set(value: object, member: Callable[[str], bool]) -> bool:
+    """A set-like array has one spelling: strings sorted ascending with no duplicate."""
+    if type(value) is not list:
+        return False
+    items = cast("list[object]", value)
+    if any(type(item) is not str or not member(item) for item in items):
+        return False
+    texts = cast("list[str]", items)
+    return all(first < second for first, second in pairwise(texts))
+
+
+def _valid_mx_pattern(value: str) -> bool:
+    """An RFC 8461 `mx` pattern: a host name, or `*.` followed by one, matched a label at a time."""
+    name = value.removeprefix("*.")
+    return _dns_kind(name) is not None
 
 
 def _valid_dkim_selector(value: str) -> bool:
@@ -1273,11 +1320,18 @@ def _schema_for_rule(rule: str | list[str]) -> dict[str, Any]:
         "asn": {"type": "integer", "minimum": 0, "maximum": 4294967295, "format": rule},
         "ip_version": {"type": "integer", "enum": [4, 6], "format": rule},
         "redirect_status": {"type": "integer", "enum": [301, 302, 303, 307, 308], "format": rule},
+        "http_status": {"type": "integer", "minimum": 100, "maximum": 599, "format": rule},
         "uint8": {"type": "integer", "minimum": 0, "maximum": 255, "format": rule},
         "uint16": {"type": "integer", "minimum": 0, "maximum": 65535, "format": rule},
+        "uint32": {"type": "integer", "minimum": 0, "maximum": 4294967295, "format": rule},
+        "uint63": {"type": "integer", "minimum": 0, "maximum": 2**63 - 1, "format": rule},
     }
     if rule in integer_rules:
         return integer_rules[rule]
+    if rule == "boolean":
+        return {"type": "boolean", "format": rule}
+    if rule == "mx_pattern_list":
+        return {"type": "array", "items": {"type": "string"}, "uniqueItems": True, "format": rule}
     if rule == "alpn_tokens":
         return {"type": "array", "items": {"type": "string"}, "format": rule}
     if rule == "caa_parameters":

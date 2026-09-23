@@ -125,7 +125,7 @@ def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
     assert manifest["version"] == 3
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "7d8c0716fdd5e39445a060580df9ad5905c39983bdfb11b451ef1b07d00adbba"
+    assert CATALOG_FINGERPRINT == "a4f0b834a23bff63cb1bf5f9413224e589fda00e479c464c5ed6ee90e7e1d70f"
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -257,6 +257,23 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("cwe", {"value": "CWE-1"}),
         ("cwe", {"value": "CWE-999999"}),
         ("cwe", {"value": "CWE-89", "name": "SQL Injection"}),
+        (
+            "endpoint",
+            {
+                "url": "https://example.com/",
+                "method": "GET",
+                "status": 200,
+                "title": "Example Domain",
+                "content_length": 1256,
+                "content_type": "text/html",
+                "webserver": "ECS (dcb/7F83)",
+            },
+        ),
+        ("certificate", {"der_sha256": "a" * 64, "self_signed": True}),
+        (
+            "mta_sts_policy",
+            {"value": "v=STSv1; id=1", "mode": "enforce", "max_age": 604800, "mx": ["*.example.net", "mx.example.com"]},
+        ),
         ("organization", {"registry": "arin", "handle": "ORG-GOGL-1-ARIN"}),
         ("organization", {"registry": "ripe", "handle": "ORG-GC128-RIPE"}),
         ("organization", {"registry": "apnic", "handle": "A1"}),
@@ -457,6 +474,15 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("cwe", {"value": "CWE-1234567"}),
         ("cwe", {"value": "79"}),
         ("cwe", {"value": 79}),
+        ("cwe", {"value": "CWE-79", "name": ""}),
+        ("endpoint", {"url": "https://example.com/", "method": "GET", "status": "200"}),
+        ("endpoint", {"url": "https://example.com/", "method": "GET", "status": 99}),
+        ("endpoint", {"url": "https://example.com/", "method": "GET", "content_type": "text/html; charset=utf-8"}),
+        ("endpoint", {"url": "https://example.com/", "method": "GET", "content_length": -1}),
+        ("endpoint", {"url": "https://example.com/", "method": "GET", "title": None}),
+        ("certificate", {"der_sha256": "a" * 64, "self_signed": "yes"}),
+        ("mta_sts_policy", {"value": "v=STSv1; id=1", "mode": "Enforce"}),
+        ("mta_sts_policy", {"value": "v=STSv1; id=1", "mx": ["mx2.example.com", "mx1.example.com"]}),
         ("organization", {"registry": "ARIN", "handle": "ORG-GOGL-1-ARIN"}),
         ("organization", {"registry": "iana", "handle": "ORG-1"}),
         ("organization", {"registry": "arin", "handle": "ORG-"}),
@@ -786,6 +812,7 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         ("exposes_secret", {"location": "src/config.py"}),
         ("exposes_secret", {"location": "x" * 1024, "commit": "a" * 40}),
         ("federates_with", {"namespace_type": "federated"}),
+        ("federates_with", {"namespace_type": "managed", "federation_brand": "Contoso"}),
         ("has_http_fingerprint", {}),
         ("has_mta_sts_policy", {}),
         ("owns_repository", {}),
@@ -861,6 +888,8 @@ def test_valid_relation_fields_and_boundaries(type_name: str, properties: dict[s
         ("exposes_secret", {"location": ""}),
         ("exposes_secret", {"location": "x" * 1025}),
         ("exposes_secret", {"location": "line\nbreak"}),
+        ("federates_with", {"namespace_type": "Federated"}),
+        ("federates_with", {"namespace_type": "unknown"}),
     ],
 )
 def test_invalid_relation_types_bounds_and_grammars(type_name: str, properties: dict[str, object]) -> None:
@@ -1445,7 +1474,7 @@ def test_every_type_and_property_is_described(kind: str) -> None:
         docs = catalog_module.type_description(kind, type_name)
         assert docs["summary"], type_name
         assert docs["excludes"], type_name
-        assert set(docs["properties"]) == set(definition["required"]), type_name
+        assert set(docs["properties"]) == {*definition["required"], *definition["optional"]}, type_name
     assert set(catalog_module.format_descriptions()) == set(catalog_manifest()["formats"])
     assert set(catalog_module.common_descriptions()) == set(catalog_manifest()["common"])
 

@@ -197,6 +197,7 @@ Every declared property that is not an enum names one of these rules. The versio
 | ------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `alpn_tokens`            | 1       | An array of zero or more ASCII tokens matching `[A-Za-z0-9./_-]{1,255}`; order is not identity-significant and duplicates are preserved.                                                                                                                                                                                                                                              |
 | `asn`                    | 1       | A strict JSON integer from 0 through 4294967295.                                                                                                                                                                                                                                                                                                                                      |
+| `boolean`                | 1       | A strict JSON `true` or `false`; the strings `"true"` and `"1"` and the number 1 are rejected.                                                                                                                                                                                                                                                                                        |
 | `bucket_name`            | 1       | The provider-global name of an object-storage bucket: 3 to 222 lowercase ASCII characters from letters, digits, hyphen, underscore and dot, starting and ending alphanumeric, without a doubled dot, and never a dotted-quad IPv4 address. Every provider is stricter than this union rule, and the declared provider fixes which of the narrower spellings is accepted.              |
 | `caa_parameters`         | 1       | An array of objects with name and value strings. Names start alphanumeric and continue alphanumeric or hyphen. Values are empty or use ASCII 0x21-0x3A and 0x3C-0x7E.                                                                                                                                                                                                                 |
 | `cidr`                   | 1       | Canonical strict IPv4 or IPv6 network with an explicit prefix length.                                                                                                                                                                                                                                                                                                                 |
@@ -209,11 +210,14 @@ Every declared property that is not an enum names one of these rules. The versio
 | `dns_or_explicit_empty`  | 1       | dns_name or the explicit empty string for no SNI offer; IP literals are rejected.                                                                                                                                                                                                                                                                                                     |
 | `email_address`          | 1       | A lowercase ASCII mailbox of at most 254 characters: an RFC 5322 dot-atom local part of at most 64 characters, one `@`, and a domain that satisfies dns_name. Quoted local parts, address literals and display names are rejected. A local part is case-sensitive on the wire; this rule requires the lowercase spelling anyway, so one mailbox is one node.                          |
 | `http_fingerprint_value` | 1       | Either a signed 32-bit decimal integer written in ASCII without a leading zero or a plus sign, for a MurmurHash3 favicon hash, or exactly 64 lowercase hexadecimal characters for a response digest. The declared kind fixes which one is accepted.                                                                                                                                   |
+| `http_status`            | 1       | A strict JSON integer HTTP status code from 100 through 599.                                                                                                                                                                                                                                                                                                                          |
 | `http_url`               | 1       | Canonical absolute ASCII http/https URL with lowercase host, mandatory path, no userinfo, fragment, whitespace, backslash, Unicode, default explicit port, dot path segment, or lowercase percent escape. A query string is removed before identity and storage, so one endpoint holds one path; parameter names belong to parameter nodes.                                           |
 | `ip`                     | 1       | Canonical IPv4Address.compressed or lowercase IPv6Address.compressed spelling, without scope or prefix.                                                                                                                                                                                                                                                                               |
 | `ip_version`             | 1       | A strict JSON integer equal to 4 or 6.                                                                                                                                                                                                                                                                                                                                                |
+| `media_type`             | 1       | A lowercase media type essence `type/subtype` of RFC 6838 restricted names, without parameters: `text/html`, never `text/html; charset=utf-8` or `Text/HTML`.                                                                                                                                                                                                                         |
 | `method`                 | 1       | One to 32 characters matching an uppercase HTTP method token.                                                                                                                                                                                                                                                                                                                         |
 | `mta_sts`                | 1       | Printable ASCII of at most 4096 characters beginning with 'v=STSv1' followed by a semicolon, a normal space, or end of text: the TXT record at `_mta-sts.<domain>`, not the policy file body.                                                                                                                                                                                         |
+| `mx_pattern_list`        | 1       | An array of RFC 8461 `mx` patterns, each a lowercase dns_name or `*.` followed by one, sorted ascending with no duplicate, so one policy has one spelling.                                                                                                                                                                                                                            |
 | `parameter_name`         | 1       | 1 to 128 printable ASCII characters without space, `&`, `=`, or `#`; one single parameter name, never a raw query string.                                                                                                                                                                                                                                                             |
 | `phone_e164`             | 1       | An E.164 number: `+`, a leading digit from 1 through 9, and in total 2 to 15 digits.                                                                                                                                                                                                                                                                                                  |
 | `printable_text_1024`    | 1       | A string of 1-1024 printable Unicode characters.                                                                                                                                                                                                                                                                                                                                      |
@@ -232,6 +236,8 @@ Every declared property that is not an enum names one of these rules. The versio
 | `tls_fingerprint_value`  | 1       | Exactly 32 lowercase hexadecimal characters for a JA3S MD5 digest, or exactly 62 for a JARM fingerprint. The declared kind fixes which length is accepted.                                                                                                                                                                                                                            |
 | `txt_value`              | 1       | 1 to 4096 printable ASCII characters, the concatenated and unquoted character-strings of one TXT RRset.                                                                                                                                                                                                                                                                               |
 | `uint16`                 | 1       | A strict JSON integer from 0 through 65535.                                                                                                                                                                                                                                                                                                                                           |
+| `uint32`                 | 1       | A strict JSON integer from 0 through 4294967295.                                                                                                                                                                                                                                                                                                                                      |
+| `uint63`                 | 1       | A strict JSON integer from 0 through 9223372036854775807.                                                                                                                                                                                                                                                                                                                             |
 | `uint8`                  | 1       | A strict JSON integer from 0 through 255.                                                                                                                                                                                                                                                                                                                                             |
 
 ## Node type details
@@ -258,9 +264,10 @@ A self edge through `issued_by` records a self-signed certificate. Absence of th
 
 **Identity:** `der_sha256`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
 
-| Property     | Required | Rule     | Meaning                                               |
-| ------------ | -------- | -------- | ----------------------------------------------------- |
-| `der_sha256` | yes      | `sha256` | Lowercase hex SHA-256 of the certificate's DER bytes. |
+| Property      | Required | Rule      | Meaning                                                                        |
+| ------------- | -------- | --------- | ------------------------------------------------------------------------------ |
+| `der_sha256`  | yes      | `sha256`  | Lowercase hex SHA-256 of the certificate's DER bytes.                          |
+| `self_signed` | no       | `boolean` | True when the subject signed itself; keep it beside the `issued_by` self edge. |
 
 ### `cve`
 
@@ -282,9 +289,10 @@ A CWE weakness class: the canonical spelling that joins findings from different 
 
 **Identity:** `value`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
 
-| Property | Required | Rule  | Meaning                                             |
-| -------- | -------- | ----- | --------------------------------------------------- |
-| `value`  | yes      | `cwe` | The CWE id as MITRE publishes it, such as `CWE-79`. |
+| Property | Required | Rule                 | Meaning                                                                            |
+| -------- | -------- | -------------------- | ---------------------------------------------------------------------------------- |
+| `value`  | yes      | `cwe`                | The CWE id as MITRE publishes it, such as `CWE-79`.                                |
+| `name`   | no       | `printable_text_200` | MITRE's name for the weakness class, fed by the CWE catalog rather than a scanner. |
 
 ### `dkim_record`
 
@@ -347,10 +355,15 @@ Response digests are pivots on `http_fingerprint` nodes, not endpoint attributes
 
 **Identity:** `url`, `method`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** `endpoint_url_drop_query.1`
 
-| Property | Required | Rule       | Meaning                                                                                 |
-| -------- | -------- | ---------- | --------------------------------------------------------------------------------------- |
-| `method` | yes      | `method`   | The uppercase HTTP method token.                                                        |
-| `url`    | yes      | `http_url` | Absolute canonical http/https URL; a submitted query string is removed before identity. |
+| Property         | Required | Rule                  | Meaning                                                                                 |
+| ---------------- | -------- | --------------------- | --------------------------------------------------------------------------------------- |
+| `method`         | yes      | `method`              | The uppercase HTTP method token.                                                        |
+| `url`            | yes      | `http_url`            | Absolute canonical http/https URL; a submitted query string is removed before identity. |
+| `content_length` | no       | `uint63`              | The body length in bytes of the latest response.                                        |
+| `content_type`   | no       | `media_type`          | The media type essence of the latest response, without parameters.                      |
+| `status`         | no       | `http_status`         | The status code of the latest response observed.                                        |
+| `title`          | no       | `printable_text_1024` | The HTML title of the latest response.                                                  |
+| `webserver`      | no       | `printable_text_200`  | The `Server` header value of the latest response.                                       |
 
 ### `finding`
 
@@ -440,9 +453,12 @@ Scoped because the TXT value is only a version pointer that unrelated tenants pu
 
 **Identity:** `value`<br>**Parent scope:** `has_mta_sts_policy` (source)<br>**Checks:** —<br>**Canonicalizations:** —
 
-| Property | Required | Rule      | Meaning                            |
-| -------- | -------- | --------- | ---------------------------------- |
-| `value`  | yes      | `mta_sts` | The TXT value beginning `v=STSv1`. |
+| Property  | Required | Rule                                | Meaning                                                         |
+| --------- | -------- | ----------------------------------- | --------------------------------------------------------------- |
+| `value`   | yes      | `mta_sts`                           | The TXT value beginning `v=STSv1`.                              |
+| `max_age` | no       | `uint32`                            | The policy file's `max_age`, in seconds.                        |
+| `mode`    | no       | one of `enforce`, `testing`, `none` | The policy file's `mode`.                                       |
+| `mx`      | no       | `mx_pattern_list`                   | The policy file's `mx` patterns, sorted and without duplicates. |
 
 ### `organization`
 
@@ -751,6 +767,10 @@ The name signs users in through the identity tenant.
 **Not modeled:** Not ownership of the tenant by the name's registrant.
 
 **Identity:** —<br>**Sources:** `domain`, `subdomain`<br>**Targets:** `identity_tenant`<br>**Self edge:** no<br>**Checks:** —<br>**Canonicalizations:** —
+
+| Property         | Required | Rule                          | Meaning                                                             |
+| ---------------- | -------- | ----------------------------- | ------------------------------------------------------------------- |
+| `namespace_type` | no       | one of `managed`, `federated` | How the realm lookup classifies the name: `managed` or `federated`. |
 
 ### `has_contact`
 

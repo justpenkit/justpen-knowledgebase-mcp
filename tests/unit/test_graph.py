@@ -455,7 +455,7 @@ def test_types_publish_what_each_type_models_and_the_rules_it_runs():
     endpoint = result["types"][0]
 
     assert set(endpoint["description"]) >= {"summary", "excludes", "properties"}
-    assert set(endpoint["description"]["properties"]) == set(endpoint["required"])
+    assert set(endpoint["description"]["properties"]) == {*endpoint["required"], *endpoint["optional"]}
     assert set(endpoint["check_descriptions"]) == {*endpoint["checks"], *endpoint["canonicalize"]}
     assert result["formats"]["http_url"]["version"] == 1
     assert result["formats"]["http_url"]["description"]
