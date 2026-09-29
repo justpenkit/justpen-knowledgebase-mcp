@@ -132,9 +132,9 @@ command is not an automatic dependency-management exemption. Follow the
 Core development works without host plugins. Use installed skills when useful;
 do not assume Claude plugins or LSP capabilities exist in Codex.
 
-Superpowers artifacts stay in the gitignored `.superpowers/` directory:
+Private working notes stay in the gitignored `.private/` directory:
 
-- Specs: `.superpowers/docs/specs/YYYY-MM-DD-topic-design.md`
-- Plans: `.superpowers/docs/plans/YYYY-MM-DD-topic-plan.md`
+- Specs: `.private/docs/specs/YYYY-MM-DD-topic-design.md`
+- Plans: `.private/docs/plans/YYYY-MM-DD-topic-plan.md`
 
 The tracked `docs/` tree is the public website, not a private planning area.

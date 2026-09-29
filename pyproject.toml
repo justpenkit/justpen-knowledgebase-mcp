@@ -95,7 +95,7 @@ markers = ["integration: real tool, release, documentation, and generated-projec
 [tool.ruff]
 line-length = 120
 src = ["src"]
-extend-exclude = [".superpowers"]
+extend-exclude = [".private"]
 
 [tool.ruff.lint]
 select = [
