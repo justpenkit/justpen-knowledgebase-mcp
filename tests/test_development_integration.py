@@ -185,7 +185,9 @@ def test_asset_formatters_check_then_rewrite_without_node(make_project, tmp_path
     shutil.copyfile(ROOT / ".gitignore", project / ".gitignore")
     asset = project / f"space name.{kind}"
     asset.write_text(content)
-    excluded = [project / folder / f"untouched.{kind}" for folder in (".private", "site", "template")]
+    excluded = [
+        project / folder / f"untouched.{kind}" for folder in (".private", "site", "template", ".compound-engineering")
+    ]
     excluded.append(tmp_path / f"linked.{kind}")
     for path in excluded:
         path.parent.mkdir(exist_ok=True)
