@@ -48,3 +48,6 @@ playwright/.cache/
 
 # Leftover dependency caches from older template versions
 node_modules/
+
+# Compound Engineering local scratch
+.context/compound-engineering/

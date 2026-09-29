@@ -13,10 +13,13 @@ SUFFIXES = {
     "html": {".html"},
     "css": {".css"},
 }
+# Sources whose bytes another tool owns: Copier template sources, and the
+# Compound Engineering tree, whose example config ce-setup compares byte for byte.
+UNFORMATTED_ROOTS = {"template", ".compound-engineering"}
 
 
 def project_files(kind: str) -> list[str]:
-    """Find existing files without traversing ignored caches or template sources."""
+    """Find existing files without traversing ignored caches or tool-owned sources."""
     result = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=ROOT,
@@ -27,7 +30,7 @@ def project_files(kind: str) -> list[str]:
     return [
         f"./{path.as_posix()}"
         for path in sorted(paths)
-        if path.parts[0] != "template"
+        if path.parts[0] not in UNFORMATTED_ROOTS
         and path.suffix in SUFFIXES[kind]
         and path.name != "uv.lock"
         and (ROOT / path).is_file()
