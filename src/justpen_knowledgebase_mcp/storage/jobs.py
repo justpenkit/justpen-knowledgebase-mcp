@@ -442,7 +442,7 @@ class JobStore:
 
     @staticmethod
     def admit_rejection(connection: apsw.Connection, job_id: str, node_id: str) -> None:
-        """Admit the purge of a rejected node's subtree inside the rejecting write (KTD5).
+        """Admit the purge of a rejected node's subtree inside the rejecting write.
 
         The caller's transaction has already marked the node's incident relations and scoped
         descendants `delete_pending` under `job_id`; the node itself stays ready.

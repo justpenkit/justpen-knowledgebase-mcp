@@ -71,8 +71,8 @@ _NO_STATE: Mapping[str, Any] = MappingProxyType(
         "state_root_uuid": None,
     }
 )
-_CLAIMS = frozenset(("owned", "dependency", "rejected", "in_scope", "out_of_scope"))
-# R23: an owned or dependency node relying on a candidate through one of these makes it a dependency,
+_CLAIMS = frozenset((*sql.OWNERSHIP_CLAIMS, *sql.AUTHORIZATION_CLAIMS))
+# An owned or dependency node relying on a candidate through one of these makes it a dependency,
 # so its rejection is refused. Containment and discovery relations are purged with the rejection.
 _RELIANCE_RELATIONS = json.dumps(
     sorted(
@@ -115,9 +115,9 @@ class _PreparedMutation:
     parent_id: str | None = None
     endpoints: tuple[dict[str, Any] | None, dict[str, Any] | None] = (None, None)
     match: MatchKind | None = None
-    # The observation time the write reports (R13), or None when it reports none.
+    # The observation time the write reports, or None when it reports none.
     observed: int | None = None
-    # Whether this write moves the node to `rejected`, which strips it and purges its subtree (KTD5).
+    # Whether this write moves the node to `rejected`, which strips it and purges its subtree.
     rejecting: bool = False
 
 
@@ -161,12 +161,12 @@ def require_ready(connection: apsw.Connection, kind: str, row: dict[str, Any]) -
 
 
 def _observation_time(mutation: Mutation) -> int:
-    """KTD6: a write observes at its `observed_at`, or at the current time when it omits one."""
+    """A write observes at its `observed_at`, or at the current time when it omits one."""
     return parse_timestamp(mutation.observed_at) if mutation.observed_at is not None else time.time_ns() // 1000
 
 
 def _reported(mutation: Mutation, existing: dict[str, Any] | None, observed: int) -> int | None:
-    """R13: a creation, a supplied `observed_at` or a property change reports an observation; nothing else does."""
+    """A creation, a supplied `observed_at` or a property change reports an observation; nothing else does."""
     if existing is None or mutation.observed_at is not None or mutation.properties or mutation.remove_properties:
         return observed
     return None
@@ -175,7 +175,7 @@ def _reported(mutation: Mutation, existing: dict[str, Any] | None, observed: int
 def _merge_observed(
     current: dict[str, Any], mutation: Mutation, stored: dict[str, Any] | None, observed: int
 ) -> dict[str, Any]:
-    """Merge a write onto a record; one observed before the record's last seen only adds what it lacks (R28)."""
+    """Merge a write onto a record; one observed before the record's last seen only adds what it lacks."""
     if stored is None or stored["last_seen"] is None or observed >= stored["last_seen"]:
         return merge_properties(current, mutation.properties, mutation.remove_properties)
     result = copy.deepcopy(current)
@@ -567,22 +567,28 @@ def _preflight_links(connection: apsw.Connection, plans: list[_PreparedMutation]
 
 
 def _refuse_rejected_identities(connection: apsw.Connection, plans: list[_PreparedMutation]) -> None:
-    """R10, R17, R26: collect every item that would re-create a rejected identity, then refuse once.
+    """Collect every item that would re-create a rejected identity, then refuse once.
 
     This runs before relation planning, so a scanner batch learns every rejected name in one error
     rather than first meeting an edge of one of them that a purge job has not yet removed.
     """
+    domains: dict[str, str | None] = {}
     hits = [
         {"item": f"nodes[{index}]", "rejected_record": rejected}
         for index, plan in enumerate(plans)
-        if (rejected := _rejected_identity(connection, plan)) is not None
+        if (rejected := _rejected_identity(connection, plan, domains)) is not None
     ]
     if hits:
         raise RejectedIdentityError(RejectedIdentityDetails.model_validate({"rejected_items": hits}))
 
 
-def _rejected_identity(connection: apsw.Connection, plan: _PreparedMutation) -> str | None:
-    """Name the rejected record an identity match hits, or the rejected domain a new subdomain sits under."""
+def _rejected_identity(
+    connection: apsw.Connection, plan: _PreparedMutation, domains: dict[str, str | None]
+) -> str | None:
+    """Name the rejected record an identity match hits, or the rejected domain a new subdomain sits under.
+
+    `domains` keeps each registrable domain's answer for the batch, so its subdomains share one lookup.
+    """
     if plan.match == "identity" and plan.existing is not None and plan.existing["ownership"] == "rejected":
         return cast("str", plan.existing["uuid"])
     if plan.match != "created" or plan.type_name != "subdomain":
@@ -590,10 +596,12 @@ def _rejected_identity(connection: apsw.Connection, plan: _PreparedMutation) -> 
     domain = registrable_domain(cast("str", plan.properties["value"]))
     if domain is None:
         return None
-    row = connection.execute(
-        sql.NODE_STATE_BY_KEY, ("domain", identity_key("nodes", "domain", {"value": domain}))
-    ).fetchone()
-    return cast("str", row[0]) if row is not None and row[1] == "rejected" else None
+    if domain not in domains:
+        row = connection.execute(
+            sql.NODE_STATE_BY_KEY, ("domain", identity_key("nodes", "domain", {"value": domain}))
+        ).fetchone()
+        domains[domain] = cast("str", row[0]) if row is not None and row[1] == "rejected" else None
+    return domains[domain]
 
 
 def _preflight_state(
@@ -630,15 +638,16 @@ def _refuse_rejected_subtrees(
     relation_plans: list[_PreparedMutation],
     planned: dict[str, dict[str, Any]],
 ) -> None:
-    """R24: a rejected node, planned or stored, keeps no scoped descendants and no relations."""
+    """A rejected node, planned or stored, keeps no scoped descendants and no relations."""
+    stored: dict[str, dict[str, Any] | None] = {}
     for index, plan in enumerate(plans):
-        if _scope(plan.type_name) is not None and _under_rejection(connection, plan.row, planned):
+        if _scope(plan.type_name) is not None and _under_rejection(connection, plan.row, planned, stored):
             raise ConflictError(
                 f"nodes[{index}]: the {plan.type_name} is scoped under a rejected record, which keeps no descendants"
             )
     for index, plan in enumerate(relation_plans):
         for side, endpoint in zip(("source", "target"), plan.endpoints, strict=True):
-            if endpoint is not None and _under_rejection(connection, endpoint, planned):
+            if endpoint is not None and _under_rejection(connection, endpoint, planned, stored):
                 raise ConflictError(
                     f"relations[{index}]: the {side} {endpoint['type']} is rejected or scoped under a rejected "
                     "record, which keeps no relations"
@@ -646,7 +655,7 @@ def _refuse_rejected_subtrees(
 
 
 def _plan_carried_state(address: str, plan: _PreparedMutation, mutation: NodeWrite) -> None:
-    """Apply creation state or the R20 transition table; an identity match keeps its stored state."""
+    """Apply creation state or the ownership transition table; an identity match keeps its stored state."""
     if plan.match == "identity":
         return
     row = plan.row
@@ -666,7 +675,7 @@ def _plan_carried_state(address: str, plan: _PreparedMutation, mutation: NodeWri
 
 
 def _plan_rejection(plan: _PreparedMutation) -> None:
-    """R9: keep the identity and the other required properties, and reset authorization.
+    """Keep the identity and the other required properties, and reset authorization.
 
     A rejection is not an observation, so first and last seen stay as they were.
     """
@@ -687,7 +696,7 @@ def _plan_rejection(plan: _PreparedMutation) -> None:
 def _refuse_relied_upon(
     connection: apsw.Connection, plan: _PreparedMutation, planned: dict[str, dict[str, Any]]
 ) -> None:
-    """R23: an owned or dependency node that relies on the candidate makes it a dependency; name the relation."""
+    """An owned or dependency node that relies on the candidate makes it a dependency; name the relation."""
     for relation, source, stored in connection.execute(sql.RELIANCE_SOURCES, (plan.row["id"], _RELIANCE_RELATIONS)):
         ownership = planned[source]["ownership"] if source in planned else stored
         if ownership in ("owned", "dependency"):
@@ -697,10 +706,22 @@ def _refuse_relied_upon(
             )
 
 
-def _under_rejection(connection: apsw.Connection, row: dict[str, Any], planned: dict[str, dict[str, Any]]) -> bool:
-    """Whether a node is rejected, or scoped under a root that is, in the planned post-write state (R24)."""
+def _under_rejection(
+    connection: apsw.Connection,
+    row: dict[str, Any],
+    planned: dict[str, dict[str, Any]],
+    stored: dict[str, dict[str, Any] | None],
+) -> bool:
+    """Whether a node is rejected, or scoped under a root that is, in the planned post-write state.
+
+    `stored` keeps the stored roots already read for the batch, which preflight does not change.
+    """
     root_id = cast("str", row["state_root_uuid"] or row["uuid"])
-    root = planned.get(root_id) or (row if root_id == row["uuid"] else row_by_id(connection, "nodes", root_id))
+    root = planned.get(root_id) or (row if root_id == row["uuid"] else None)
+    if root is None:
+        if root_id not in stored:
+            stored[root_id] = row_by_id(connection, "nodes", root_id)
+        root = stored[root_id]
     return root is not None and root["ownership"] == "rejected"
 
 
@@ -729,7 +750,7 @@ def _plan_root_authorization(address: str, plan: _PreparedMutation, mutation: No
 def _check_ownership_transition(
     address: str, type_name: str, current: str | None, target: str, *, evidenced: bool
 ) -> None:
-    """Refuse an ownership change the R20 table forbids, naming the current state."""
+    """Refuse an ownership change the transition table forbids, naming the current state."""
     if target == "rejected":
         if current is None:
             raise InvalidParamsError(f"{address}: a new {type_name} cannot be created as rejected")
@@ -785,7 +806,7 @@ def _require_allowlist_root(
 
 
 def _require_remaining_evidence(connection: apsw.Connection, address: str, plan: _PreparedMutation) -> None:
-    """Refuse a write that leaves a claim-holding node without a link to ready evidence (R21, KTD9)."""
+    """Refuse a write that leaves a claim-holding node without a link to ready evidence."""
     mutation = plan.mutation
     if not mutation.evidence_remove:
         return
@@ -983,7 +1004,7 @@ def _persist(
 
 
 def _metadata(kind: str, mutation: Mutation, row: dict[str, Any] | None, *, clear_label: bool) -> dict[str, Any]:
-    """Apply the write's source and label to the stored metadata; a rejection clears the label (R9)."""
+    """Apply the write's source and label to the stored metadata; a rejection clears the label."""
     metadata: dict[str, Any] = json.loads(row["metadata"]) if row else {"source": None}
     if kind == "nodes":
         metadata.setdefault("label", None)
@@ -996,7 +1017,7 @@ def _metadata(kind: str, mutation: Mutation, row: dict[str, Any] | None, *, clea
 
 
 def _seen(row: dict[str, Any] | None, observed: int | None) -> tuple[int | None, int | None]:
-    """R12: fold an observation into first seen as a minimum and into last seen as a maximum."""
+    """Fold an observation into first seen as a minimum and into last seen as a maximum."""
     first, last = (row["first_seen"], row["last_seen"]) if row is not None else (None, None)
     if observed is None:
         return first, last
@@ -1005,24 +1026,21 @@ def _seen(row: dict[str, Any] | None, observed: int | None) -> tuple[int | None,
 
 def _update_state(connection: apsw.Connection, row: dict[str, Any], state: Mapping[str, Any] | None) -> None:
     """Write the node state an ID write changed; the state root never changes after creation."""
-    changed = ("ownership", "authorization", "allowlist_scoped", "authorization_override")
-    if state is not None and any(state[column] != row[column] for column in changed):
-        connection.execute(sql.NODE_STATE_UPDATE, (*(state[column] for column in changed), row["id"]))
+    columns = sql.NODE_STATE_COLUMNS
+    if state is not None and any(state[column] != row[column] for column in columns):
+        connection.execute(sql.NODE_STATE_UPDATE, (*(state[column] for column in columns), row["id"]))
 
 
 def _mark_rejection(connection: apsw.Connection, row: dict[str, Any]) -> str:
-    """KTD5: hide a rejected node's relations and scoped descendants under one purge job's intent.
+    """Hide a rejected node's relations and scoped descendants under one purge job's intent.
 
     Records already pending under another deletion keep that job; the caller admits this one.
     """
     job_id = str(uuid4())
-    requested_at = time.time_ns() // 1000
-    for kind, query, bindings in (
-        ("nodes", sql.REJECTION_DESCENDANTS, (row["uuid"],)),
-        ("relations", sql.REJECTION_INCIDENT, (row["id"], row["id"])),
-    ):
-        for (identifier,) in list(connection.execute(query, bindings)):
-            connection.execute(sql.OWNER_PENDING[kind], (job_id, 1, requested_at, identifier))
+    intent = (job_id, 1, time.time_ns() // 1000)
+    connection.execute(sql.REJECTION_DESCENDANTS_PENDING, (*intent, row["uuid"]))
+    for query in sql.REJECTION_INCIDENT_PENDING:
+        connection.execute(query, (*intent, row["id"]))
     return job_id
 
 
@@ -1159,15 +1177,13 @@ def _record(connection: apsw.Connection, kind: str, row: dict[str, Any]) -> dict
 
 
 def _record_state(connection: apsw.Connection, record: dict[str, Any], row: dict[str, Any]) -> None:
-    """Add effective state (KTD7): a root's allowlist marker, or the root a scoped node inherits from."""
+    """Add effective state: a root's allowlist marker, or the root a scoped node inherits from."""
     state = effective_state(connection, row)
     if state is None:
         return
-    record.update(ownership=state.ownership, authorization=state.authorization)
+    record.update(state.fields())
     if state.root_id is None:
         record["allowlist_scoped"] = bool(row["allowlist_scoped"])
-    else:
-        record["state_root_id"] = state.root_id
 
 
 def _binding(

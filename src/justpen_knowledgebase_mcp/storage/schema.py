@@ -122,8 +122,6 @@ CREATE TABLE relations (
  UNIQUE(source_id,type,target_id,key)
 );
 CREATE INDEX nodes_type_ready ON nodes(type,lifecycle,id);
-CREATE INDEX nodes_ownership ON nodes(ownership,lifecycle,id);
-CREATE INDEX nodes_authorization ON nodes(authorization,lifecycle,id);
 CREATE INDEX nodes_state_root ON nodes(state_root_uuid,id) WHERE state_root_uuid IS NOT NULL;
 CREATE INDEX relations_type_ready ON relations(type,lifecycle,id);
 CREATE INDEX relations_outgoing ON relations(source_id,type,target_id,id);

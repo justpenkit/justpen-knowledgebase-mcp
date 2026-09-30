@@ -111,8 +111,6 @@ INVENTORY_NODE_COLUMNS = {
     "last_seen",
 }
 INVENTORY_INDEXES = {
-    "nodes_ownership": "ownership",
-    "nodes_authorization": "authorization",
     "nodes_state_root": "state_root_uuid",
 }
 

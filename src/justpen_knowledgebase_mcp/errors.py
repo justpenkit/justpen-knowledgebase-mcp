@@ -177,7 +177,7 @@ class RecordConflictError(ConflictError):
 
 
 class RejectedIdentityError(ConflictError):
-    """Atomic batch rejection naming every item that would re-create a rejected identity (R26)."""
+    """Atomic batch rejection naming every item that would re-create a rejected identity."""
 
     def __init__(self, details: "RejectedIdentityDetails") -> None:
         """Carry the server-selected item addresses and rejected record IDs."""

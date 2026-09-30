@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,8 @@ _REJECTION_NODE_BY_TYPE = (
     "SELECT id,uuid,delete_job_id,delete_cascade,delete_requested_at FROM nodes "
     "WHERE type=? AND lifecycle='delete_pending' AND delete_job_id=? ORDER BY id LIMIT 1"
 )
+# Each rejection intent query with its bindings and the record kind it selects, in purge order.
+_Probes = deque[tuple[str, tuple[str, ...], str]]
 _REJECTION_INTENT = {
     "nodes": "SELECT id,uuid,delete_job_id,delete_cascade,delete_requested_at FROM nodes "
     "WHERE lifecycle='delete_pending' AND delete_job_id=? ORDER BY id LIMIT 1",
@@ -36,16 +39,12 @@ _INCIDENT = (
     "SELECT id,uuid,delete_job_id FROM relations WHERE target_id=? ORDER BY id LIMIT 1",
 )
 # A ready node linked to this evidence that holds a claim and keeps no other link to ready evidence
-# outside the bound JSON array of deleted UUIDs (R21, KTD9). The claim values mirror the write path.
-_BARE_CLAIM = (
+# outside the bound JSON array of deleted UUIDs. The claims and the link test are the write path's.
+_BARE_CLAIM_SHAPE = (
     "SELECT n.uuid FROM node_evidence l JOIN nodes n ON n.id=l.node_id "
-    "WHERE l.evidence_id=? AND n.lifecycle='ready' "
-    "AND (n.ownership IN ('owned','dependency','rejected') OR n.authorization IN ('in_scope','out_of_scope') "
-    "OR n.authorization_override IN ('in_scope','out_of_scope')) "
-    "AND NOT EXISTS(SELECT 1 FROM node_evidence k JOIN evidence e ON e.id=k.evidence_id "
-    "WHERE k.node_id=n.id AND e.lifecycle='ready' AND e.uuid NOT IN (SELECT value FROM json_each(?))) "
-    "ORDER BY l.id LIMIT 1"
+    "WHERE l.evidence_id=? AND n.lifecycle='ready' AND {claim} AND NOT EXISTS({ready_link}) ORDER BY l.id LIMIT 1"
 )
+_BARE_CLAIM = _BARE_CLAIM_SHAPE.format(claim=sql.CLAIM_HELD, ready_link=sql.READY_LINK.format(node="n.id"))
 
 
 @dataclass(frozen=True)
@@ -120,7 +119,7 @@ def _reject_dependency(connection: apsw.Connection, kind: str, row: dict[str, An
 
 
 def _reject_bare_claim(connection: apsw.Connection, request: DeleteRequest, row: dict[str, Any]) -> None:
-    """Refuse deleting the last ready evidence of a node that holds a claim (R21, KTD9)."""
+    """Refuse deleting the last ready evidence of a node that holds a claim."""
     node = connection.execute(_BARE_CLAIM, (row["id"], json.dumps(request.ids))).get
     if node is not None:
         raise RecordConflictError(
@@ -198,9 +197,10 @@ def _delete_incident(
     deleted = 0
     purged: list[str] = []
     while deleted < row_budget:
-        relation = connection.execute(_INCIDENT[0], (owner_id,)).get
-        if relation is None:
-            relation = connection.execute(_INCIDENT[1], (owner_id,)).get
+        # The target probe runs only once no outgoing relation is left.
+        relation = next(
+            (found for query in _INCIDENT if (found := connection.execute(query, (owner_id,)).get) is not None), None
+        )
         if relation is None:
             break
         identifier, uuid, delete_job_id = relation
@@ -213,14 +213,30 @@ def _delete_incident(
     return deleted, tuple(purged)
 
 
-def _next_rejection_intent(connection: apsw.Connection, job_id: str) -> DeleteIntent | None:
-    """Select the deepest pending scoped node, then any other node, then a relation of this job."""
-    queries = [(_REJECTION_NODE_BY_TYPE, (type_name, job_id), "nodes") for type_name in _REJECTION_NODE_TYPES]
-    queries += [(_REJECTION_INTENT[kind], (job_id,), kind) for kind in ("nodes", "relations")]
-    for query, bindings, kind in queries:
+def _rejection_probes(job_id: str) -> _Probes:
+    """The intent queries of a rejection job in purge order, each with its bindings and record kind."""
+    probes: _Probes = deque(
+        (_REJECTION_NODE_BY_TYPE, (type_name, job_id), "nodes") for type_name in _REJECTION_NODE_TYPES
+    )
+    probes.extend((_REJECTION_INTENT[kind], (job_id,), kind) for kind in ("nodes", "relations"))
+    return probes
+
+
+def _next_rejection_intent(
+    connection: apsw.Connection, job_id: str, probes: _Probes | None = None
+) -> DeleteIntent | None:
+    """Select the deepest pending scoped node, then any other node, then a relation of this job.
+
+    A probe that finds nothing is dropped from `probes`. A purge only deletes, so within one step a
+    probe that came back empty stays empty, and the next selection starts at the first live one.
+    """
+    probes = _rejection_probes(job_id) if probes is None else probes
+    while probes:
+        query, bindings, kind = probes[0]
         row = connection.execute(query, bindings).fetchone()
         if row is not None:
             return DeleteIntent(kind, row[0], row[1], row[2], bool(row[3]), row[4])
+        probes.popleft()
     return None
 
 
@@ -294,7 +310,7 @@ class GraphDeletion:
 
     @staticmethod
     def purge_rejection(connection: apsw.Connection, job_id: str, row_budget: int = 100) -> RejectionStep:
-        """Spend at most 100 logical rows across a rejection job's intents, innermost first (KTD5).
+        """Spend at most 100 logical rows across a rejection job's intents, innermost first.
 
         The job owns the rejected node's pending scoped descendants and incident relations, never
         the node itself, so no `kb_delete` admission check applies to them.
@@ -303,8 +319,9 @@ class GraphDeletion:
             raise InvalidParamsError("invalid deletion row budget")
         deleted = 0
         purged: list[str] = []
+        probes = _rejection_probes(job_id)
         while deleted < row_budget:
-            intent = _next_rejection_intent(connection, job_id)
+            intent = _next_rejection_intent(connection, job_id, probes)
             if intent is None:
                 return RejectionStep(deleted, tuple(purged), done=True)
             step = GraphDeletion.step(connection, intent, row_budget - deleted)

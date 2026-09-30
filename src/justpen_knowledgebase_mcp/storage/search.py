@@ -188,7 +188,7 @@ def _builtin_filters(request: SearchRequest) -> tuple[list[str], list[Any]]:
 
 
 def _state_filters(request: SearchRequest, clauses: list[str], filters: list[Any]) -> None:
-    """Filter nodes on effective state (KTD4); a search that names no ownership leaves `rejected` out (R25)."""
+    """Filter nodes on effective state; a search that names no ownership leaves `rejected` out."""
     if request.kind != "nodes":
         return
     if request.ownership is None:

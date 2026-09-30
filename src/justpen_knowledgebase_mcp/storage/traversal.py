@@ -67,13 +67,11 @@ def _edges(
 
 
 def _node(connection: apsw.Connection, row: dict[str, Any]) -> dict[str, Any]:
-    """A node's identity and effective state; a type that carries no state reports none (KTD7)."""
+    """A node's identity and effective state; a type that carries no state reports none."""
     node: dict[str, Any] = {"id": row["uuid"], "type": row["type"]}
     state = effective_state(connection, row)
     if state is not None:
-        node.update(ownership=state.ownership, authorization=state.authorization)
-        if state.root_id is not None:
-            node["state_root_id"] = state.root_id
+        node.update(state.fields())
     return node
 
 

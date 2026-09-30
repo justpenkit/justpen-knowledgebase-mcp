@@ -16,7 +16,7 @@ SCOPED_CHILD_BY_PARENT = (
     "WHERE r.source_id=? AND r.type IN (SELECT value FROM json_each(?)) ORDER BY r.id LIMIT 1"
 )
 
-# KTD4 over a node row aliased `o`, so a search filters and projects many candidates in one statement;
+# Effective state over a node row aliased `o`, so a search filters and projects many candidates in one statement;
 # `storage/inventory.py` walks the same chain for one row. The chain is `o` and its scoped ancestors
 # below the state root, each reached through its scope relation. Every scope relation targets only its
 # own scoped type, so one `scope_relation` table serves every level; the statement defines it from the
@@ -51,33 +51,56 @@ OWNER_UPDATE = {
     "relations": "UPDATE relations SET properties=?,metadata=?,updated_at=?,first_seen=?,last_seen=? WHERE id=?",
 }
 
-# `state_root_uuid` is fixed at creation, so an ID write rewrites only the state it may change.
+# `state_root_uuid` is fixed at creation, so an ID write rewrites only the state it may change,
+# bound in `NODE_STATE_COLUMNS` order.
+NODE_STATE_COLUMNS = ("ownership", "authorization", "allowlist_scoped", "authorization_override")
 NODE_STATE_UPDATE = (
     "UPDATE nodes SET ownership=?,authorization=?,allowlist_scoped=?,authorization_override=? WHERE id=?"
 )
 
-# Whether a node keeps a link to `ready` evidence outside the bound JSON array of removed UUIDs.
-READY_LINK_KEPT = (
-    "SELECT EXISTS(SELECT 1 FROM node_evidence l JOIN evidence e ON e.id=l.evidence_id "
-    "WHERE l.node_id=? AND e.lifecycle='ready' AND e.uuid NOT IN (SELECT value FROM json_each(?)))"
+# The claims a node holds only while it keeps a link to ready evidence. The write path tests these
+# values in Python and the evidence delete in SQL, so both derive from this one declaration.
+OWNERSHIP_CLAIMS = ("owned", "dependency", "rejected")
+AUTHORIZATION_CLAIMS = ("in_scope", "out_of_scope")
+_OWNERSHIP_CLAIM_LIST = ",".join(f"'{value}'" for value in OWNERSHIP_CLAIMS)
+_AUTHORIZATION_CLAIM_LIST = ",".join(f"'{value}'" for value in AUTHORIZATION_CLAIMS)
+# Whether the node aliased `n` holds a claim.
+CLAIM_HELD = (
+    f"(n.ownership IN ({_OWNERSHIP_CLAIM_LIST}) OR n.authorization IN ({_AUTHORIZATION_CLAIM_LIST}) "
+    f"OR n.authorization_override IN ({_AUTHORIZATION_CLAIM_LIST}))"
 )
 
-# The state of the node an identity key names, for the rejected-identity checks (R10, R17).
+# A link from the node `{node}` names to `ready` evidence outside the bound JSON array of removed UUIDs.
+READY_LINK = (
+    "SELECT 1 FROM node_evidence k JOIN evidence e ON e.id=k.evidence_id "
+    "WHERE k.node_id={node} AND e.lifecycle='ready' AND e.uuid NOT IN (SELECT value FROM json_each(?))"
+)
+# Whether the bound node keeps such a link.
+READY_LINK_KEPT = f"SELECT EXISTS({READY_LINK.format(node='?')})"
+
+# The state of the node an identity key names, for the rejected-identity checks.
 NODE_STATE_BY_KEY = "SELECT uuid,ownership FROM nodes WHERE type=? AND key=?"
 
-# R23: ready relations of the bound JSON array of types into a node, with each source's stored ownership.
+# Ready relations of the bound JSON array of types into a node, with each source's stored ownership.
 RELIANCE_SOURCES = (
     "SELECT r.uuid,s.uuid,s.ownership FROM relations r JOIN nodes s ON s.id=r.source_id "
     "WHERE r.target_id=? AND r.type IN (SELECT value FROM json_each(?)) "
     "AND r.lifecycle='ready' AND s.lifecycle='ready' ORDER BY r.id"
 )
 
-# A rejection's purge intents (KTD5): the ready scoped descendants under its state root, and its
-# ready incident relations. Each branch of the union uses its own endpoint index.
-REJECTION_DESCENDANTS = "SELECT id FROM nodes WHERE state_root_uuid=? AND lifecycle='ready' ORDER BY id"
-REJECTION_INCIDENT = (
-    "SELECT id FROM relations WHERE source_id=? AND lifecycle='ready' "
-    "UNION SELECT id FROM relations WHERE target_id=? AND lifecycle='ready'"
+# A rejection's purge intents, bound as job ID, cascade, request time, then the rejected node: its ready
+# scoped descendants under its state root by UUID, and its ready incident relations by internal ID.
+# Each relation statement uses its own endpoint index; a self-loop the first marks is no longer ready
+# for the second, so it is marked once.
+REJECTION_DESCENDANTS_PENDING = (
+    "UPDATE nodes SET lifecycle='delete_pending',delete_job_id=?,delete_cascade=?,delete_requested_at=? "
+    "WHERE state_root_uuid=? AND lifecycle='ready'"
+)
+REJECTION_INCIDENT_PENDING = (
+    "UPDATE relations SET lifecycle='delete_pending',delete_job_id=?,delete_cascade=?,delete_requested_at=? "
+    "WHERE source_id=? AND lifecycle='ready'",
+    "UPDATE relations SET lifecycle='delete_pending',delete_job_id=?,delete_cascade=?,delete_requested_at=? "
+    "WHERE target_id=? AND lifecycle='ready'",
 )
 
 OWNER_PENDING = {

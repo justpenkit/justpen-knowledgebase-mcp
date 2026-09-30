@@ -16,8 +16,10 @@ if TYPE_CHECKING:
 _SCOPE_RELATIONS = scope_relations()
 # A scope chain never repeats a scoped type, so it is at most this many links above its node.
 _SCOPE_DEPTH = len(_SCOPE_RELATIONS)
+# Only the columns the walk reads: each hop's link and override, and the root's state.
 _SCOPE_PARENT = (
-    "SELECT parent.* FROM relations r JOIN nodes parent ON parent.id=r.source_id "
+    "SELECT parent.id,parent.uuid,parent.type,parent.ownership,parent.authorization,parent.allowlist_scoped,"
+    "parent.authorization_override FROM relations r JOIN nodes parent ON parent.id=r.source_id "
     "WHERE r.target_id=? AND r.type=? ORDER BY r.id LIMIT 1"
 )
 
@@ -30,9 +32,16 @@ class EffectiveState:
     authorization: str
     root_id: str | None
 
+    def fields(self) -> dict[str, str]:
+        """The state a read reports: ownership, authorization and, under a root, that root's ID."""
+        fields = {"ownership": self.ownership, "authorization": self.authorization}
+        if self.root_id is not None:
+            fields["state_root_id"] = self.root_id
+        return fields
+
 
 def effective_authorization(root: dict[str, Any], overrides: Sequence[str | None]) -> str:
-    """Resolve authorization from the root and the overrides of the scoped nodes below it (KTD4).
+    """Resolve authorization from the root and the overrides of the scoped nodes below it.
 
     `out_of_scope` anywhere on the chain wins. Under an allowlist-scoped root a scoped node is
     `in_scope` only when it or an ancestor below the root was widened; otherwise it takes the root's.

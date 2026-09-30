@@ -78,7 +78,7 @@ class RejectedItem(BaseModel):
 
 
 class RejectedIdentityDetails(BaseModel):
-    """Every item of a batch refused for a rejected identity, by address and record ID only (R26)."""
+    """Every item of a batch refused for a rejected identity, by address and record ID only."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     rejected_items: Annotated[list[RejectedItem], Field(min_length=1, max_length=100)]

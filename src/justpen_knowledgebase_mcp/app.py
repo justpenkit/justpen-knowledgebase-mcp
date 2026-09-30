@@ -20,7 +20,7 @@ from .workspace import WorkspacePaths
 __all__ = ["create_app", "get_service"]
 
 # Every client receives this at initialize, before it reads any tool. The testing rule is the
-# sentence `kb_types` publishes in its `inventory` block, so the two cannot drift (KTD8).
+# sentence `kb_types` publishes in its `inventory` block, so the two cannot drift.
 _INSTRUCTIONS = " ".join(
     (
         "One engagement's recon graph and evidence; the server performs no scanning.",

@@ -304,7 +304,7 @@ class JobRunner:
         return await self.wait(job_id, deadline, accepted)
 
     async def write(self, request: WriteRequest, deadline: float) -> dict[str, Any]:
-        """Commit a graph batch together with the purge job of each rejection it makes (KTD5)."""
+        """Commit a graph batch together with the purge job of each rejection it makes."""
 
         def accept(connection: apsw.Connection, token: OperationToken) -> dict[str, Any]:
             result = Graph.write(connection, token, request)
