@@ -19,7 +19,7 @@ from .helpers import EVIDENCE, NODE
 
 def facade():
     workers = Mock(read=AsyncMock(), write=AsyncMock())
-    runner = Mock(ingest=AsyncMock(), read=AsyncMock(), delete=AsyncMock(), control=AsyncMock())
+    runner = Mock(ingest=AsyncMock(), read=AsyncMock(), delete=AsyncMock(), control=AsyncMock(), write=AsyncMock())
     runner.io = AsyncMock(side_effect=lambda _lane, callback, _deadline: callback())
     maintenance, sampler = Mock(), Mock()
     kb = service.KnowledgeBase(
@@ -43,12 +43,6 @@ async def test_facade_rejects_unknown_fields_before_work(method):
 @pytest.mark.parametrize(
     ("method", "payload", "operation", "lane"),
     [
-        (
-            "write",
-            {"nodes": [{"type": "domain", "properties": {"name": "example.com"}, "ownership": "candidate"}]},
-            "write",
-            "write",
-        ),
         ("get", {"kind": "nodes", "ids": [NODE]}, "get", "read"),
         ("neighbors", {"seed_ids": [NODE]}, "neighbors", "read"),
         ("search", {"kind": "nodes"}, "search", "read"),
@@ -66,7 +60,7 @@ async def test_facade_maps_valid_request_and_one_deadline(monkeypatch, method, p
 
     getattr(workers, lane).side_effect = dispatch
     callback = Mock(return_value={"lane": "bulk"})
-    monkeypatch.setattr(service.Graph if operation in ("write", "get") else service, operation, callback)
+    monkeypatch.setattr(service.Graph if operation == "get" else service, operation, callback)
     assert await getattr(kb, method)(payload) == {"lane": "bulk"}
     assert len(seen) == 1
     assert seen[0].deadline > service.time.monotonic()
@@ -81,6 +75,11 @@ async def test_facade_maps_valid_request_and_one_deadline(monkeypatch, method, p
         ("read_evidence", {"evidence_id": EVIDENCE}, "read"),
         ("delete", {"kind": "nodes", "ids": [NODE]}, "delete"),
         ("jobs", {"action": "get", "job_id": NODE}, "control"),
+        (
+            "write",
+            {"nodes": [{"type": "domain", "properties": {"name": "example.com"}, "ownership": "candidate"}]},
+            "write",
+        ),
     ],
 )
 async def test_job_facade_passes_validated_model_and_absolute_budget(method, payload, target):

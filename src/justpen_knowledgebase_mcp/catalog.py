@@ -1991,6 +1991,13 @@ def _domain_label_start(labels: list[str]) -> int | None:
     return None
 
 
+def registrable_domain(name: str) -> str | None:
+    """Return the registrable domain a subdomain name sits under, as `subdomain` classification finds it."""
+    labels = name.split(".")
+    start = _domain_label_start(labels)
+    return None if start is None else ".".join(labels[start:])
+
+
 def _dns_kind(value: str) -> str | None:
     if not value.isascii() or not 1 <= len(value.encode("ascii")) <= 253 or value.endswith("."):
         return None

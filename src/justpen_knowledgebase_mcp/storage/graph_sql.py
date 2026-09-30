@@ -41,6 +41,24 @@ READY_LINK_KEPT = (
     "WHERE l.node_id=? AND e.lifecycle='ready' AND e.uuid NOT IN (SELECT value FROM json_each(?)))"
 )
 
+# The state of the node an identity key names, for the rejected-identity checks (R10, R17).
+NODE_STATE_BY_KEY = "SELECT uuid,ownership FROM nodes WHERE type=? AND key=?"
+
+# R23: ready relations of the bound JSON array of types into a node, with each source's stored ownership.
+RELIANCE_SOURCES = (
+    "SELECT r.uuid,s.uuid,s.ownership FROM relations r JOIN nodes s ON s.id=r.source_id "
+    "WHERE r.target_id=? AND r.type IN (SELECT value FROM json_each(?)) "
+    "AND r.lifecycle='ready' AND s.lifecycle='ready' ORDER BY r.id"
+)
+
+# A rejection's purge intents (KTD5): the ready scoped descendants under its state root, and its
+# ready incident relations. Each branch of the union uses its own endpoint index.
+REJECTION_DESCENDANTS = "SELECT id FROM nodes WHERE state_root_uuid=? AND lifecycle='ready' ORDER BY id"
+REJECTION_INCIDENT = (
+    "SELECT id FROM relations WHERE source_id=? AND lifecycle='ready' "
+    "UNION SELECT id FROM relations WHERE target_id=? AND lifecycle='ready'"
+)
+
 OWNER_PENDING = {
     "nodes": "UPDATE nodes SET lifecycle='delete_pending',delete_job_id=?,delete_cascade=?,delete_requested_at=? WHERE id=?",
     "relations": "UPDATE relations SET lifecycle='delete_pending',delete_job_id=?,delete_cascade=?,delete_requested_at=? WHERE id=?",

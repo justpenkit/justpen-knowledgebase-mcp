@@ -31,13 +31,13 @@ from .errors import (
     WalBusyError,
 )
 from .evidence import INLINE_LIMIT, IngestRequest, ReadEvidenceRequest
-from .models import ClosedModel, DeleteRequest, RecordID, RetentionPolicyView, RetentionStatus
+from .models import ClosedModel, DeleteRequest, RecordID, RetentionPolicyView, RetentionStatus, WriteRequest
 from .mutations import canonical_json
 from .reindex import index_evidence, reindex_step
 from .storage.evidence import EvidenceStore, StagedEvidence, job_bucket, stage_name
 from .storage.evidence_records import EvidenceRecords
 from .storage.fulltext import reconcile_coverage
-from .storage.graph import require_ready, row_by_id
+from .storage.graph import Graph, require_ready, row_by_id
 from .storage.job_ownership import failure_object, row_progress
 from .storage.job_recovery import StageScan, recover_intents, staging_disposable
 from .storage.job_retention import JobRetention
@@ -302,6 +302,21 @@ class JobRunner:
         accepted = await self.workers.write(accept, OperationToken(deadline))
         self.wake("short")
         return await self.wait(job_id, deadline, accepted)
+
+    async def write(self, request: WriteRequest, deadline: float) -> dict[str, Any]:
+        """Commit a graph batch together with the purge job of each rejection it makes (KTD5)."""
+
+        def accept(connection: apsw.Connection, token: OperationToken) -> dict[str, Any]:
+            result = Graph.write(connection, token, request)
+            for node in result["nodes"]:
+                if "rejection_job_id" in node:
+                    JobStore.admit_rejection(connection, node["rejection_job_id"], node["id"])
+            return result
+
+        result = await self.workers.write(accept, OperationToken(deadline))
+        if any("rejection_job_id" in node for node in result["nodes"]):
+            self.wake("short")
+        return result
 
     @contextlib.contextmanager
     def _completion(self, job_id: str) -> Generator[asyncio.Event]:

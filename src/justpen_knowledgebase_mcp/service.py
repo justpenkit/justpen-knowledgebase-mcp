@@ -145,9 +145,7 @@ class KnowledgeBase:
                     if isinstance(cause, ExpectedValidationError):
                         raise InvalidParamsError(cause.message) from None
             raise InvalidParamsError("invalid write request") from None
-        return await self.workers.write(
-            lambda connection, token: Graph.write(connection, token, validated), OperationToken(deadline)
-        )
+        return await self.job_runner.write(validated, deadline)
 
     async def get(self, request: GetRequest | dict[str, Any]) -> dict[str, Any]:
         """Read bounded canonical records in one guarded snapshot."""

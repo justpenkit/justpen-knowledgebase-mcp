@@ -16,9 +16,10 @@ from justpen_knowledgebase_mcp.errors import (
     InvalidParamsError,
     NotFoundError,
     RecordConflictError,
+    RejectedIdentityError,
 )
 from justpen_knowledgebase_mcp.identity import parse_timestamp
-from justpen_knowledgebase_mcp.models import GetRequest, TypesRequest, WriteRequest
+from justpen_knowledgebase_mcp.models import GetRequest, SearchRequest, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.graph import (
     _validate_endpoint_values,
@@ -1423,7 +1424,7 @@ async def test_an_identity_rescan_never_changes_a_stored_classification(tmp_path
 
 async def test_the_refused_transition_cells_name_the_current_state(tmp_path):
     """R20: owned cannot be rejected, rejected cannot return to candidate, and a rejected node's
-    authorization is frozen. Rejection itself is not yet enforced, so a candidate cannot be rejected."""
+    authorization is frozen, while a rejected node may still be attributed by ID with evidence."""
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         evidence = (await evidence_fixture(kb, 1))[0]
         created = await kb.write(
@@ -1443,13 +1444,10 @@ async def test_the_refused_transition_cells_name_the_current_state(tmp_path):
                     {"nodes": [{"id": acme, "ownership": "rejected", "evidence_add": [evidence]}]}
                 )
             )
-        with pytest.raises(InvalidParamsError, match=r"^nodes\[0\]: rejection is not supported yet"):
-            await kb.write(
-                WriteRequest.model_validate(
-                    {"nodes": [{"id": host, "ownership": "rejected", "evidence_add": [evidence]}]}
-                )
-            )
-        await kb.workers.write(lambda c, t: c.execute("update nodes set ownership='rejected' where uuid=?", (host,)))
+        rejected = await kb.write(
+            WriteRequest.model_validate({"nodes": [{"id": host, "ownership": "rejected", "evidence_add": [evidence]}]})
+        )
+        assert (rejected["nodes"][0]["ownership"], rejected["nodes"][0]["authorization"]) == ("rejected", "unknown")
         with pytest.raises(ConflictError, match=r"^nodes\[0\]: .*from rejected to candidate"):
             await kb.write(WriteRequest.model_validate({"nodes": [{"id": host, "ownership": "candidate"}]}))
         with pytest.raises(ConflictError, match=r"^nodes\[0\]: authorization cannot change on a rejected"):
@@ -1728,3 +1726,251 @@ async def test_a_property_patch_without_observed_at_is_observed_now(tmp_path):
         first_seen, last_seen = await seen(kb, "nodes", identifier)
         assert first_seen == T1_SEEN
         assert before <= parse_timestamp(last_seen) <= after
+
+
+# Rejection (R7-R10, R17, R23, R24, R26). The job runner stays live here, so a rejection's purge
+# job runs on its own; tests/storage/test_deletions.py drives it by hand where the steps matter.
+STAGING = {"type": "domain", "properties": {"value": "acme-staging.net"}}
+
+
+def subdomain(value: str) -> dict[str, object]:
+    return {"type": "subdomain", "properties": {"value": value}}
+
+
+def has_subdomain(source: int, target: int) -> dict[str, object]:
+    return {
+        "type": "has_subdomain",
+        "source_ref": {"node_index": source},
+        "target_ref": {"node_index": target},
+        "properties": {},
+    }
+
+
+async def reject(kb, identifier, evidence):
+    """Reject a node by ID and wait for its purge job; return the acknowledgement."""
+    result = await kb.write(
+        WriteRequest.model_validate(
+            {"nodes": [{"id": identifier, "ownership": "rejected", "evidence_add": [evidence]}]}
+        )
+    )
+    job = await kb.job_runner.wait(result["nodes"][0]["rejection_job_id"], time.monotonic() + 5)
+    assert job["state"] == "completed"
+    return result["nodes"][0]
+
+
+async def candidates(kb, *nodes):
+    result = await kb.write(
+        WriteRequest.model_validate({"nodes": [{**node, "ownership": "candidate"} for node in nodes]})
+    )
+    return [node["id"] for node in result["nodes"]]
+
+
+def rejected_items(error):
+    return [(item.item, str(item.rejected_record)) for item in error.value.details.rejected_items]
+
+
+async def test_rejecting_an_address_keeps_its_identity_required_properties_evidence_and_times(tmp_path):
+    """R9: the stripped record keeps value and version, its evidence, source and first/last seen,
+    loses its label and optional properties, resets authorization, and still validates."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence, contract = await evidence_fixture(kb, 2)
+        created = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {
+                            "type": "ip_address",
+                            "properties": {"value": "192.0.2.10", "version": 4, "cloud_provider": "strangercloud"},
+                            "ownership": "candidate",
+                            "authorization": "out_of_scope",
+                            "label": "stranger box",
+                            "source": "nmap",
+                            "observed_at": T1,
+                            "evidence_add": [contract],
+                        }
+                    ]
+                }
+            )
+        )
+        identifier = created["nodes"][0]["id"]
+        labelled = await kb.search(SearchRequest(kind="nodes", query="stranger box", include_evidence=False))
+        assert [item["id"] for item in labelled["items"]] == [identifier]
+        rejected = await reject(kb, identifier, evidence)
+        assert (rejected["ownership"], rejected["authorization"]) == ("rejected", "unknown")
+        record = await record_of(kb, "nodes", identifier)
+        assert record["properties"] == {"value": "192.0.2.10", "version": 4}
+        catalog_module.validate_record("nodes", "ip_address", record["properties"])
+        assert (record["label"], record["source"], record["link_count"]) == (None, "nmap", 2)
+        assert (record["first_seen"], record["last_seen"]) == (T1_SEEN, T1_SEEN)
+        assert await stored_state(kb, identifier) == ("rejected", "unknown", 0, None, None)
+        for query in ("stranger box", "strangercloud"):
+            found = await kb.search(SearchRequest(kind="nodes", query=query, include_evidence=False))
+            assert found["items"] == []
+
+
+async def test_rejection_needs_evidence_in_the_same_write(tmp_path):
+    """R8: the refusal names the item and leaves the candidate untouched."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        (identifier,) = await candidates(kb, STAGING)
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[0\]: moving ownership from candidate to rejected"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": identifier, "ownership": "rejected"}]}))
+        assert (await stored_state(kb, identifier))[0] == "candidate"
+
+
+async def test_a_rejected_identity_and_the_subdomains_under_it_cannot_be_re_created(tmp_path):
+    """AE4, AE9, R10, R17: an identity write of the rejected name or a new subdomain under it is
+    refused, and the error names the rejected record by ID."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        (staging,) = await candidates(kb, STAGING)
+        await reject(kb, staging, evidence)
+        before = await node_count(kb)
+        with pytest.raises(RejectedIdentityError, match=r"^REJECTED_IDENTITY$") as refused:
+            await kb.write(WriteRequest.model_validate({"nodes": [{**STAGING, "ownership": "candidate"}]}))
+        assert rejected_items(refused) == [("nodes[0]", staging)]
+        for name in ("www.acme-staging.net", "a.b.acme-staging.net"):
+            with pytest.raises(RejectedIdentityError, match=r"^REJECTED_IDENTITY$") as refused:
+                await kb.write(
+                    WriteRequest.model_validate(
+                        {"nodes": [{**ACME, "ownership": "candidate"}, {**subdomain(name), "ownership": "candidate"}]}
+                    )
+                )
+            assert rejected_items(refused) == [("nodes[1]", staging)]
+        assert await node_count(kb) == before
+
+
+async def test_a_scanner_batch_with_rejected_names_is_refused_once_listing_every_one(tmp_path):
+    """R26: both rejected names are reported in one error; without them the batch is accepted."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        first, second = await candidates(kb, subdomain("old1.acme.com"), subdomain("old2.acme.com"))
+        await reject(kb, first, evidence)
+        await reject(kb, second, evidence)
+        names = ("old1.acme.com", "new.acme.com", "old2.acme.com")
+        batch = [{**ACME, "ownership": "candidate"}, *({**subdomain(name), "ownership": "candidate"} for name in names)]
+        with pytest.raises(RejectedIdentityError, match=r"^REJECTED_IDENTITY$") as refused:
+            await kb.write(
+                WriteRequest.model_validate({"nodes": batch, "relations": [has_subdomain(0, i) for i in (1, 2, 3)]})
+            )
+        assert rejected_items(refused) == [("nodes[1]", first), ("nodes[3]", second)]
+        accepted = await kb.write(
+            WriteRequest.model_validate({"nodes": [batch[0], batch[2]], "relations": [has_subdomain(0, 1)]})
+        )
+        assert [node["created"] for node in accepted["nodes"]] == [True, True]
+
+
+async def test_rejecting_a_candidate_an_owned_name_relies_on_is_refused_naming_the_relation(tmp_path):
+    """AE10, R23: a cname_to from an owned name makes the candidate a dependency, not a stranger."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        written = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {**subdomain("shop.acme.com"), "ownership": "owned", "evidence_add": [evidence]},
+                        {**subdomain("shops.myshopify.com"), "ownership": "candidate"},
+                    ],
+                    "relations": [
+                        {
+                            "type": "cname_to",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 1},
+                            "properties": {},
+                        }
+                    ],
+                }
+            )
+        )
+        shopify, cname = written["nodes"][1]["id"], written["relations"][0]["id"]
+        with pytest.raises(RecordConflictError, match=r"^REJECTION_BLOCKED$") as refused:
+            await kb.write(
+                WriteRequest.model_validate(
+                    {"nodes": [{"id": shopify, "ownership": "rejected", "evidence_add": [evidence]}]}
+                )
+            )
+        blocker = refused.value.details.blocking_record
+        assert (blocker.kind, str(blocker.id)) == ("relations", cname)
+        assert (await stored_state(kb, shopify))[0] == "candidate"
+
+
+async def test_a_rejection_cannot_share_a_batch_with_its_relations_or_descendants(tmp_path):
+    """R24: rejecting X while adding a relation to X, or patching X's port by ID, writes nothing;
+    once X is rejected, a new relation to it or a new child under it is refused too."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        written = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [{**HOST, "ownership": "candidate"}, port(443)],
+                    "relations": [open_port({"node_index": 0}, 1)],
+                }
+            )
+        )
+        host, https = [node["id"] for node in written["nodes"]]
+        rejection = {"id": host, "ownership": "rejected", "evidence_add": [evidence]}
+
+        def resolution(source):
+            return {
+                "type": "resolves_to",
+                "source_ref": {"node_index": source},
+                "target_ref": {"id": host},
+                "properties": {},
+            }
+
+        before = await node_count(kb)
+        with pytest.raises(ConflictError, match=r"^relations\[0\]: .*rejected"):
+            await kb.write(
+                WriteRequest.model_validate(
+                    {"nodes": [rejection, {**ACME, "ownership": "candidate"}], "relations": [resolution(1)]}
+                )
+            )
+        with pytest.raises(ConflictError, match=r"^nodes\[1\]: .*rejected"):
+            await kb.write(
+                WriteRequest.model_validate({"nodes": [rejection, {"id": https, "properties": {"banner": "x"}}]})
+            )
+        assert await node_count(kb) == before
+        assert (await stored_state(kb, host))[0] == "candidate"
+        await reject(kb, host, evidence)
+        with pytest.raises(ConflictError, match=r"^relations\[0\]: .*rejected"):
+            await kb.write(
+                WriteRequest.model_validate(
+                    {"nodes": [{**ACME, "ownership": "candidate"}], "relations": [resolution(0)]}
+                )
+            )
+        with pytest.raises(ConflictError, match=r"^nodes\[0\]: .*rejected"):
+            await kb.write(
+                WriteRequest.model_validate({"nodes": [port(22)], "relations": [open_port({"id": host}, 0)]})
+            )
+
+
+async def test_a_rejected_node_reclassified_as_owned_gets_nothing_back(tmp_path):
+    """R20: rejected -> owned by ID with evidence succeeds; stripped properties and purged
+    relations and descendants stay gone."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        written = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {
+                            **HOST,
+                            "properties": {"value": "192.0.2.10", "version": 4, "cloud_provider": "aws"},
+                            "ownership": "candidate",
+                        },
+                        port(443),
+                    ],
+                    "relations": [open_port({"node_index": 0}, 1)],
+                }
+            )
+        )
+        host, https = [node["id"] for node in written["nodes"]]
+        await reject(kb, host, evidence)
+        owned = await kb.write(
+            WriteRequest.model_validate({"nodes": [{"id": host, "ownership": "owned", "evidence_add": [evidence]}]})
+        )
+        assert owned["nodes"][0]["ownership"] == "owned"
+        record = await record_of(kb, "nodes", host)
+        assert record["properties"] == HOST["properties"]
+        assert (await kb.get(GetRequest(kind="nodes", ids=[https])))["missing_ids"] == [https]
+        relations = await kb.search(SearchRequest(kind="relations", source_id=host))
+        assert relations["items"] == []
