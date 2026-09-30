@@ -17,7 +17,7 @@ from justpen_knowledgebase_mcp.errors import (
 from justpen_knowledgebase_mcp.models import GetRequest, NodeRef, NodeWrite, RelationWrite, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.mutations import canonical_json
 from justpen_knowledgebase_mcp.responses import TypesResult, success_response
-from justpen_knowledgebase_mcp.storage import graph
+from justpen_knowledgebase_mcp.storage import graph, inventory
 
 from .helpers import EVIDENCE, NODE, OTHER, cursor, database, owner
 
@@ -476,3 +476,38 @@ def test_types_publish_what_each_type_models_and_the_rules_it_runs():
     assert set(endpoint["check_descriptions"]) == {*endpoint["checks"], *endpoint["canonicalize"]}
     assert result["formats"]["http_url"]["version"] == 1
     assert result["formats"]["http_url"]["description"]
+
+
+@pytest.mark.parametrize(
+    ("authorization", "allowlist", "overrides", "expected"),
+    [
+        ("in_scope", 0, [], "in_scope"),
+        ("in_scope", 1, [], "in_scope"),
+        ("unknown", 0, [None, None], "unknown"),
+        ("in_scope", 0, [None, "out_of_scope"], "out_of_scope"),
+        ("out_of_scope", 0, ["in_scope"], "out_of_scope"),
+        ("in_scope", 0, ["in_scope"], "in_scope"),
+        ("in_scope", 1, [None], "out_of_scope"),
+        ("in_scope", 1, [None, "in_scope"], "in_scope"),
+        ("in_scope", 1, ["in_scope", "out_of_scope"], "out_of_scope"),
+    ],
+)
+def test_effective_authorization_narrows_along_the_chain_and_widens_only_under_an_allowlist(
+    authorization, allowlist, overrides, expected
+):
+    """KTD4, R16, R27: overrides are the scoped nodes below the root, node first."""
+    root = owner(authorization=authorization, allowlist_scoped=allowlist)
+    assert inventory.effective_authorization(root, overrides) == expected
+
+
+def test_effective_state_walks_the_scope_chain_to_its_root():
+    root = owner(ownership="owned", authorization="in_scope", allowlist_scoped=1)
+    port = owner(id=2, uuid=OTHER, type="port", ownership=None, authorization=None, state_root_uuid=NODE)
+    service = owner(id=3, uuid=EVIDENCE, type="service", ownership=None, authorization=None, state_root_uuid=NODE)
+    db = database(cursor(record=port), cursor(record=root))
+    state = inventory.effective_state(db, {**service, "authorization_override": "in_scope"})
+    assert state == inventory.EffectiveState("owned", "in_scope", NODE)
+    assert [call.args[1] for call in db.execute.call_args_list] == [(3, "has_service"), (2, "has_open_port")]
+    assert inventory.effective_state(database(), owner(type="cve", ownership=None)) is None
+    with pytest.raises(ConflictError, match="parent relation"):
+        inventory.effective_state(database(cursor()), port)

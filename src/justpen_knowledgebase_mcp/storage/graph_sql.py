@@ -30,6 +30,17 @@ OWNER_UPDATE = {
     "relations": "UPDATE relations SET properties=?,metadata=?,updated_at=?,observed_at=? WHERE id=?",
 }
 
+# `state_root_uuid` is fixed at creation, so an ID write rewrites only the state it may change.
+NODE_STATE_UPDATE = (
+    "UPDATE nodes SET ownership=?,authorization=?,allowlist_scoped=?,authorization_override=? WHERE id=?"
+)
+
+# Whether a node keeps a link to `ready` evidence outside the bound JSON array of removed UUIDs.
+READY_LINK_KEPT = (
+    "SELECT EXISTS(SELECT 1 FROM node_evidence l JOIN evidence e ON e.id=l.evidence_id "
+    "WHERE l.node_id=? AND e.lifecycle='ready' AND e.uuid NOT IN (SELECT value FROM json_each(?)))"
+)
+
 OWNER_PENDING = {
     "nodes": "UPDATE nodes SET lifecycle='delete_pending',delete_job_id=?,delete_cascade=?,delete_requested_at=? WHERE id=?",
     "relations": "UPDATE relations SET lifecycle='delete_pending',delete_job_id=?,delete_cascade=?,delete_requested_at=? WHERE id=?",

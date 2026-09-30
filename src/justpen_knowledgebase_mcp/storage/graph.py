@@ -6,7 +6,8 @@ import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
 from ..catalog import (
@@ -36,6 +37,7 @@ from ..models import GetRequest, Mutation, NodeRef, NodeWrite, RelationWrite, Wr
 from ..mutations import canonical_json, merge_properties
 from ..responses import BlockerDetails
 from . import fulltext, graph_sql as sql
+from .inventory import effective_state
 from .properties import refresh_properties
 
 if TYPE_CHECKING:
@@ -54,6 +56,19 @@ _SCOPED_NODE_ORDER = scope_order()
 # alone, leaving its remainder to carry the view key and a 4096-character `next_cursor`.
 RECORD_RESPONSE_BYTES = 250000
 ASSOCIATION_RESPONSE_BYTES = 245000
+# How preflight matched a node: a new row, the row an ID addresses, or a row an identity upsert hit.
+MatchKind = Literal["created", "id", "identity"]
+# The inventory columns of a node before any claim applies; `allowlist_scoped` is NOT NULL.
+_NO_STATE: Mapping[str, Any] = MappingProxyType(
+    {
+        "ownership": None,
+        "authorization": None,
+        "allowlist_scoped": 0,
+        "authorization_override": None,
+        "state_root_uuid": None,
+    }
+)
+_CLAIMS = frozenset(("owned", "dependency", "rejected", "in_scope", "out_of_scope"))
 
 
 def _member_bytes(member: object) -> int:
@@ -77,6 +92,7 @@ class _PreparedMutation:
     properties: dict[str, Any]
     parent_id: str | None = None
     endpoints: tuple[dict[str, Any] | None, dict[str, Any] | None] = (None, None)
+    match: MatchKind | None = None
 
 
 def row_by_id(connection: apsw.Connection, kind: str, identifier: str | int) -> dict[str, Any] | None:
@@ -298,9 +314,22 @@ def _prepare_node(
     properties = merge_properties(current, mutation.properties, mutation.remove_properties)
     validate_record("nodes", type_name, properties)
     key = identity_key("nodes", type_name, properties, parent_id)
+    addressed = existing is not None
     existing, properties = _deduplicate_node(connection, mutation, existing, type_name, properties, parent_id, key)
     row = _preflight_row(existing, type_name, key, properties, synthetic_id)
-    return _PreparedMutation(mutation, type_name, existing, row, properties, parent_id)
+    match: MatchKind = "id" if addressed else "identity" if existing is not None else "created"
+    if existing is None:
+        row.update(_NO_STATE, state_root_uuid=_state_root(parent))
+    return _PreparedMutation(mutation, type_name, existing, row, properties, parent_id, match=match)
+
+
+def _state_root(parent: dict[str, Any] | None) -> str | None:
+    """Fix a new scoped node's state root from its parent's planned row; nodes persist in request order."""
+    if parent is None:
+        return None
+    if catalog_view()["nodes"][parent["type"]]["inventory"] == "carries":
+        return cast("str", parent["uuid"])
+    return cast("str | None", parent["state_root_uuid"])
 
 
 def _scope_relation_for_node(node_index: int, type_name: str, relations: list[RelationWrite]) -> RelationWrite:
@@ -455,6 +484,154 @@ def _preflight_links(connection: apsw.Connection, plans: list[_PreparedMutation]
             require_ready(connection, "evidence", evidence)
 
 
+def _preflight_state(connection: apsw.Connection, plans: list[_PreparedMutation]) -> None:
+    """Apply the inventory rules to every node's planned post-write state before any row is written.
+
+    Refusals name the item address, because the rule concerns one item of a batch the agent built.
+    """
+    for index, plan in enumerate(plans):
+        address = f"nodes[{index}]"
+        mutation = cast("NodeWrite", plan.mutation)
+        inventory = catalog_view()["nodes"][plan.type_name]["inventory"]
+        if inventory == "carries":
+            _plan_carried_state(address, plan, mutation)
+        elif inventory == "inherits":
+            _plan_scoped_state(address, plan, mutation)
+        else:
+            for field in ("ownership", "authorization", "allowlist_scoped"):
+                if getattr(mutation, field) is not None:
+                    raise InvalidParamsError(f"{address}: {plan.type_name} carries no inventory state; omit {field}")
+        _require_remaining_evidence(connection, address, plan)
+    planned = {cast("str", plan.row["uuid"]): plan.row for plan in plans}
+    for index, plan in enumerate(plans):
+        _require_allowlist_root(connection, f"nodes[{index}]", plan, planned)
+
+
+def _plan_carried_state(address: str, plan: _PreparedMutation, mutation: NodeWrite) -> None:
+    """Apply creation state or the R20 transition table; an identity match keeps its stored state."""
+    if plan.match == "identity":
+        return
+    row = plan.row
+    evidenced = bool(mutation.evidence_add)
+    if plan.match == "created":
+        if mutation.ownership is None:
+            raise InvalidParamsError(
+                f"{address}: ownership is required to create a {plan.type_name}; give owned, dependency or candidate"
+            )
+        row["authorization"] = "unknown"
+    if mutation.ownership is not None and mutation.ownership != row["ownership"]:
+        _check_ownership_transition(address, plan.type_name, row["ownership"], mutation.ownership, evidenced=evidenced)
+        row["ownership"] = mutation.ownership
+    _plan_root_authorization(address, plan, mutation, evidenced=evidenced)
+
+
+def _plan_root_authorization(address: str, plan: _PreparedMutation, mutation: NodeWrite, *, evidenced: bool) -> None:
+    """Apply a carrying node's authorization and allowlist marker, which only an in_scope node may hold."""
+    row = plan.row
+    if mutation.authorization is not None and mutation.authorization != row["authorization"]:
+        if row["ownership"] == "rejected":
+            raise ConflictError(f"{address}: authorization cannot change on a rejected {plan.type_name}")
+        if mutation.authorization != "unknown" and not evidenced:
+            raise InvalidParamsError(
+                f"{address}: setting authorization to {mutation.authorization} requires evidence_add in the same write"
+            )
+        row["authorization"] = mutation.authorization
+    if mutation.allowlist_scoped is not None and mutation.allowlist_scoped != bool(row["allowlist_scoped"]):
+        if not evidenced:
+            raise InvalidParamsError(f"{address}: changing allowlist_scoped requires evidence_add in the same write")
+        row["allowlist_scoped"] = int(mutation.allowlist_scoped)
+    if row["allowlist_scoped"] and row["authorization"] != "in_scope":
+        raise ConflictError(
+            f"{address}: allowlist_scoped requires authorization in_scope, and the {plan.type_name} "
+            f"would be {row['authorization']}"
+        )
+
+
+def _check_ownership_transition(
+    address: str, type_name: str, current: str | None, target: str, *, evidenced: bool
+) -> None:
+    """Refuse an ownership change the R20 table forbids, naming the current state."""
+    if target == "rejected":
+        if current is None:
+            raise InvalidParamsError(f"{address}: a new {type_name} cannot be created as rejected")
+        if current != "candidate":
+            raise ConflictError(
+                f"{address}: ownership cannot move from {current} to rejected; withdraw to candidate first"
+            )
+        raise InvalidParamsError(f"{address}: rejection is not supported yet")
+    if target == "candidate":
+        if current == "rejected":
+            raise ConflictError(f"{address}: ownership cannot move from rejected to candidate")
+        return
+    if not evidenced:
+        change = (
+            f"creating a {type_name} as {target}" if current is None else f"moving ownership from {current} to {target}"
+        )
+        raise InvalidParamsError(f"{address}: {change} requires evidence_add in the same write")
+
+
+def _plan_scoped_state(address: str, plan: _PreparedMutation, mutation: NodeWrite) -> None:
+    """Refuse state a scoped child inherits, and apply its authorization override on creation or by ID."""
+    for field in ("ownership", "allowlist_scoped"):
+        if getattr(mutation, field) is not None:
+            raise InvalidParamsError(
+                f"{address}: a {plan.type_name} inherits its ownership and allowlist from its state root; omit {field}"
+            )
+    if plan.match == "identity" or mutation.authorization is None:
+        return
+    override = None if mutation.authorization == "unknown" else mutation.authorization
+    if override == plan.row["authorization_override"]:
+        return
+    if override is not None and not mutation.evidence_add:
+        raise InvalidParamsError(
+            f"{address}: overriding a {plan.type_name}'s authorization to {override} "
+            "requires evidence_add in the same write"
+        )
+    plan.row["authorization_override"] = override
+
+
+def _require_allowlist_root(
+    connection: apsw.Connection, address: str, plan: _PreparedMutation, planned: dict[str, dict[str, Any]]
+) -> None:
+    """Admit a newly set in_scope override only under a root whose planned state is allowlist-scoped."""
+    if plan.row["authorization_override"] != "in_scope":
+        return
+    if plan.existing is not None and plan.existing["authorization_override"] == "in_scope":
+        return
+    root_id = cast("str", plan.row["state_root_uuid"])
+    root = planned.get(root_id) or row_by_id(connection, "nodes", root_id)
+    if root is None or not root["allowlist_scoped"]:
+        raise ConflictError(
+            f"{address}: an in_scope override needs an allowlist-scoped root, and this {plan.type_name}'s root is not"
+        )
+
+
+def _require_remaining_evidence(connection: apsw.Connection, address: str, plan: _PreparedMutation) -> None:
+    """Refuse a write that leaves a claim-holding node without a link to ready evidence (R21, KTD9)."""
+    mutation = plan.mutation
+    if not mutation.evidence_remove:
+        return
+    row = plan.row
+    claim = next(
+        (
+            value
+            for value in (row["ownership"], row["authorization"], row["authorization_override"])
+            if value in _CLAIMS
+        ),
+        None,
+    )
+    if claim is None or set(mutation.evidence_add) - set(mutation.evidence_remove):
+        return
+    if (
+        plan.existing is not None
+        and connection.execute(sql.READY_LINK_KEPT, (row["id"], json.dumps(mutation.evidence_remove))).get
+    ):
+        return
+    raise ConflictError(
+        f"{address}: the {plan.type_name} holds a {claim} claim, and this write would remove its last ready evidence"
+    )
+
+
 def _store_node_plan(
     connection: apsw.Connection,
     token: OperationToken,
@@ -541,6 +718,7 @@ def _preflight(
     node_plans, node_rows = _prepare_node_plans(connection, token, request)
     relation_plans = _prepare_relation_plans(connection, token, request, node_rows)
     _preflight_links(connection, [*node_plans, *relation_plans])
+    _preflight_state(connection, node_plans)
     return node_plans, relation_plans
 
 
@@ -553,6 +731,7 @@ def _persist(
     endpoints: tuple[dict[str, Any] | None, dict[str, Any] | None],
     parent_id: str | None = None,
     planned_uuid: str | None = None,
+    state: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     source, target = endpoints
     type_name = row["type"] if row else mutation.type
@@ -571,8 +750,11 @@ def _persist(
     if row is None:
         identifier = planned_uuid or str(uuid4())
         if kind == "nodes":
+            planned = state or _NO_STATE
             connection.execute(
-                "INSERT INTO nodes(uuid,type,key,properties,metadata,created_at,updated_at,observed_at) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO nodes(uuid,type,key,properties,metadata,created_at,updated_at,observed_at,"
+                "ownership,authorization,allowlist_scoped,authorization_override,state_root_uuid) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     identifier,
                     type_name,
@@ -582,6 +764,7 @@ def _persist(
                     now,
                     now,
                     observed_at,
+                    *(planned[column] for column in _NO_STATE),
                 ),
             )
         else:
@@ -610,12 +793,20 @@ def _persist(
             sql.OWNER_UPDATE[kind],
             (canonical_json(properties), canonical_json(metadata), now, observed_at, row["id"]),
         )
+        _update_state(connection, row, state)
         row = row_by_id(connection, kind, row["id"])
         if row is None:
             raise NotFoundError("record disappeared")
     refresh_properties(connection, kind, row, properties)
     fulltext.refresh_record_text(connection, kind, row)
     return row, created
+
+
+def _update_state(connection: apsw.Connection, row: dict[str, Any], state: Mapping[str, Any] | None) -> None:
+    """Write the node state an ID write changed; the state root never changes after creation."""
+    changed = ("ownership", "authorization", "allowlist_scoped", "authorization_override")
+    if state is not None and any(state[column] != row[column] for column in changed):
+        connection.execute(sql.NODE_STATE_UPDATE, (*(state[column] for column in changed), row["id"]))
 
 
 def _links(connection: apsw.Connection, kind: str, row: dict[str, Any], mutation: Mutation) -> tuple[int, int]:
@@ -656,6 +847,7 @@ class Graph:
                         plan.endpoints,
                         plan.parent_id,
                         cast("str", plan.row["uuid"]),
+                        {column: plan.row[column] for column in _NO_STATE} if kind == "nodes" else None,
                     )
                     plan.row.clear()
                     plan.row.update(row)
@@ -670,6 +862,11 @@ class Graph:
                             "property_index": json.loads(row["metadata"])["property_index"],
                         }
                     )
+            # After every row and scope relation exists: the acknowledgement reports effective state.
+            for plan, item in zip(node_plans, output["nodes"], strict=True):
+                state = effective_state(connection, plan.row)
+                if state is not None:
+                    item.update(ownership=state.ownership, authorization=state.authorization)
         except ExpectedValidationError as exc:
             raise InvalidParamsError(exc.message) from None
         except ValueError:

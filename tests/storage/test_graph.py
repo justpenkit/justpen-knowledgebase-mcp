@@ -19,7 +19,13 @@ from justpen_knowledgebase_mcp.errors import (
 )
 from justpen_knowledgebase_mcp.models import GetRequest, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
-from justpen_knowledgebase_mcp.storage.graph import _validate_endpoint_values, _validate_endpoints, graph_types
+from justpen_knowledgebase_mcp.storage.graph import (
+    _validate_endpoint_values,
+    _validate_endpoints,
+    graph_types,
+    row_by_id,
+)
+from justpen_knowledgebase_mcp.storage.inventory import effective_state
 
 from .graph_fixtures import admit, evidence_fixture, graph_node, scoped_stack, stated
 
@@ -1270,3 +1276,344 @@ async def test_the_widened_endpoint_whitelists_accept_the_writes_they_were_widen
                     }
                 )
             )
+
+
+# Inventory state. These writes build the request directly: `write()` would state `candidate` for
+# every creating carrying node, which hides the missing-ownership refusals under test.
+ACME = {"type": "domain", "properties": {"value": "acme.com"}}
+HOST = {"type": "ip_address", "properties": {"value": "192.0.2.10", "version": 4}}
+
+
+def port(number: int) -> dict[str, object]:
+    return {"type": "port", "properties": {"transport": "tcp", "number": number}}
+
+
+def open_port(parent: dict[str, object], child: int) -> dict[str, object]:
+    return {"type": "has_open_port", "source_ref": parent, "target_ref": {"node_index": child}, "properties": {}}
+
+
+async def stored_state(kb, identifier):
+    return await kb.workers.read(
+        lambda c, t: c.execute(
+            "select ownership,authorization,allowlist_scoped,authorization_override,state_root_uuid from nodes where uuid=?",
+            (identifier,),
+        ).fetchone()
+    )
+
+
+async def effective_authorizations(kb, *identifiers):
+    def read(connection, token):
+        rows = [row_by_id(connection, "nodes", identifier) or {} for identifier in identifiers]
+        states = [effective_state(connection, row) for row in rows]
+        return [state.authorization if state is not None else None for state in states]
+
+    return await kb.workers.read(read)
+
+
+async def node_count(kb):
+    return await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes").get)
+
+
+async def classified_host(kb, evidence, *ports):
+    """Write an owned, in_scope address with the given ports under it; return the address and port IDs."""
+    host = {**HOST, "ownership": "owned", "authorization": "in_scope", "evidence_add": [evidence]}
+    result = await kb.write(
+        WriteRequest.model_validate(
+            {
+                "nodes": [host, *(port(number) for number in ports)],
+                "relations": [open_port({"node_index": 0}, index + 1) for index in range(len(ports))],
+            }
+        )
+    )
+    return [node["id"] for node in result["nodes"]]
+
+
+@pytest.mark.parametrize(
+    ("node", "message"),
+    [
+        ({"type": "subdomain", "properties": {"value": "api.acme.com"}}, r"^nodes\[1\]: ownership is required"),
+        ({**ACME, "ownership": "rejected"}, r"^nodes\[1\]: .*cannot be created as rejected"),
+        ({**ACME, "ownership": "owned"}, r"^nodes\[1\]: .*requires evidence_add"),
+        ({**ACME, "ownership": "candidate", "authorization": "in_scope"}, r"^nodes\[1\]: .*requires evidence_add"),
+        ({"type": "cve", "properties": {"value": "CVE-2026-1234"}, "ownership": "owned"}, r"^nodes\[1\]: cve carries"),
+    ],
+)
+async def test_a_creation_without_a_valid_state_claim_is_refused_with_zero_rows(tmp_path, node, message):
+    """AE1, R1, R5, R6: the state pass refuses the whole batch before any row is written."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        with pytest.raises(InvalidParamsError, match=message):
+            await kb.write(WriteRequest.model_validate({"nodes": [{**HOST, "ownership": "candidate"}, node]}))
+        assert await node_count(kb) == 0
+
+
+async def test_a_creation_defaults_authorization_to_unknown_and_echoes_it(tmp_path):
+    """R3: a candidate creation needs no evidence and reads back as candidate and unknown."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        result = await kb.write(WriteRequest.model_validate({"nodes": [{**ACME, "ownership": "candidate"}]}))
+        node = result["nodes"][0]
+        assert (node["ownership"], node["authorization"]) == ("candidate", "unknown")
+        assert await stored_state(kb, node["id"]) == ("candidate", "unknown", 0, None, None)
+
+
+async def test_promotion_by_id_needs_evidence_named_in_the_same_write(tmp_path):
+    """AE2, R6, KTD9: already-linked evidence counts once it is named again in `evidence_add`."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        created = await kb.write(
+            WriteRequest.model_validate({"nodes": [{**ACME, "ownership": "candidate", "evidence_add": [evidence]}]})
+        )
+        identifier = created["nodes"][0]["id"]
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[0\]: moving ownership from candidate to owned"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": identifier, "ownership": "owned"}]}))
+        assert (await stored_state(kb, identifier))[0] == "candidate"
+        promoted = await kb.write(
+            WriteRequest.model_validate(
+                {"nodes": [{"id": identifier, "ownership": "owned", "evidence_add": [evidence]}]}
+            )
+        )
+        assert promoted["nodes"][0]["ownership"] == "owned"
+        assert promoted["nodes"][0]["links_added"] == 0
+
+
+async def test_pending_index_evidence_counts_and_deleting_evidence_is_refused(tmp_path):
+    """KTD9: evidence whose index is still pending counts; delete_pending evidence stays RECORD_DELETING."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        pending, deleting = await evidence_fixture(kb, 2)
+        assert (
+            await kb.workers.read(
+                lambda c, t: c.execute("select index_state from evidence where uuid=?", (pending,)).get
+            )
+            == "pending"
+        )
+        created = await kb.write(
+            WriteRequest.model_validate(
+                {"nodes": [{**ACME, "ownership": "candidate"}, {**HOST, "ownership": "candidate"}]}
+            )
+        )
+        acme, host = [node["id"] for node in created["nodes"]]
+        promoted = await kb.write(
+            WriteRequest.model_validate({"nodes": [{"id": acme, "ownership": "dependency", "evidence_add": [pending]}]})
+        )
+        assert promoted["nodes"][0]["ownership"] == "dependency"
+        await admit(kb, "evidence", [deleting])
+        with pytest.raises(RecordConflictError, match=r"^RECORD_DELETING$"):
+            await kb.write(
+                WriteRequest.model_validate({"nodes": [{"id": host, "ownership": "owned", "evidence_add": [deleting]}]})
+            )
+
+
+async def test_an_identity_rescan_never_changes_a_stored_classification(tmp_path):
+    """AE8, R19: carried state applies only on creation, and the acknowledgement echoes stored state."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        created = await kb.write(
+            WriteRequest.model_validate(
+                {"nodes": [{**ACME, "ownership": "owned", "authorization": "in_scope", "evidence_add": [evidence]}]}
+            )
+        )
+        identifier = created["nodes"][0]["id"]
+        rescan = await kb.write(WriteRequest.model_validate({"nodes": [{**ACME, "ownership": "candidate"}]}))
+        node = rescan["nodes"][0]
+        assert (node["id"], node["ownership"], node["authorization"]) == (identifier, "owned", "in_scope")
+        await kb.write(
+            WriteRequest.model_validate({"nodes": [{**ACME, "ownership": "rejected", "evidence_add": [evidence]}]})
+        )
+        await kb.write(WriteRequest.model_validate({"nodes": [ACME]}))
+        assert await stored_state(kb, identifier) == ("owned", "in_scope", 0, None, None)
+
+
+async def test_the_refused_transition_cells_name_the_current_state(tmp_path):
+    """R20: owned cannot be rejected, rejected cannot return to candidate, and a rejected node's
+    authorization is frozen. Rejection itself is not yet enforced, so a candidate cannot be rejected."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        created = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {**ACME, "ownership": "owned", "evidence_add": [evidence]},
+                        {**HOST, "ownership": "candidate"},
+                    ]
+                }
+            )
+        )
+        acme, host = [node["id"] for node in created["nodes"]]
+        with pytest.raises(ConflictError, match=r"^nodes\[0\]: .*owned .*to rejected.*withdraw to candidate first"):
+            await kb.write(
+                WriteRequest.model_validate(
+                    {"nodes": [{"id": acme, "ownership": "rejected", "evidence_add": [evidence]}]}
+                )
+            )
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[0\]: rejection is not supported yet"):
+            await kb.write(
+                WriteRequest.model_validate(
+                    {"nodes": [{"id": host, "ownership": "rejected", "evidence_add": [evidence]}]}
+                )
+            )
+        await kb.workers.write(lambda c, t: c.execute("update nodes set ownership='rejected' where uuid=?", (host,)))
+        with pytest.raises(ConflictError, match=r"^nodes\[0\]: .*from rejected to candidate"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": host, "ownership": "candidate"}]}))
+        with pytest.raises(ConflictError, match=r"^nodes\[0\]: authorization cannot change on a rejected"):
+            await kb.write(
+                WriteRequest.model_validate(
+                    {"nodes": [{"id": host, "authorization": "out_of_scope", "evidence_add": [evidence]}]}
+                )
+            )
+        restored = await kb.write(
+            WriteRequest.model_validate(
+                {"nodes": [{"id": host, "ownership": "dependency", "evidence_add": [evidence]}]}
+            )
+        )
+        assert restored["nodes"][0]["ownership"] == "dependency"
+        withdrawn = await kb.write(WriteRequest.model_validate({"nodes": [{"id": acme, "ownership": "candidate"}]}))
+        assert withdrawn["nodes"][0]["ownership"] == "candidate"
+
+
+async def test_a_scoped_child_inherits_its_roots_state_and_cannot_state_ownership(tmp_path):
+    """AE5, R5, KTD4: the state root is the carrying root's planned UUID, even two levels down."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        request = scoped_stack(("service", "port", "ip_address"))
+        request["nodes"][2].update(ownership="owned", authorization="in_scope", evidence_add=[evidence])
+        result = await kb.write(WriteRequest.model_validate(request))
+        service, child, host = result["nodes"]
+        assert [(node["ownership"], node["authorization"]) for node in result["nodes"]] == [("owned", "in_scope")] * 3
+        assert (await stored_state(kb, child["id"])) == (None, None, 0, None, host["id"])
+        assert (await stored_state(kb, service["id"])) == (None, None, 0, None, host["id"])
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[1\]: a port inherits its ownership"):
+            await kb.write(
+                WriteRequest.model_validate(
+                    {
+                        "nodes": [HOST, {**port(22), "ownership": "owned"}],
+                        "relations": [open_port({"node_index": 0}, 1)],
+                    }
+                )
+            )
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[0\]: a port inherits its ownership"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": child["id"], "allowlist_scoped": True}]}))
+
+
+async def test_a_scoped_child_narrows_to_out_of_scope_with_evidence(tmp_path):
+    """AE7, R16: the narrowing reaches the service under the port, and in_scope needs an allowlist root."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        host, ssh, https = await classified_host(kb, evidence, 22, 443)
+        service = (
+            await kb.write(
+                WriteRequest.model_validate(
+                    {
+                        "nodes": [{"type": "service", "properties": {"name": "ssh"}}],
+                        "relations": [
+                            {
+                                "type": "has_service",
+                                "source_ref": {"id": ssh},
+                                "target_ref": {"node_index": 0},
+                                "properties": {},
+                            }
+                        ],
+                    }
+                )
+            )
+        )["nodes"][0]
+        assert service["authorization"] == "in_scope"
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[0\]: .*out_of_scope requires evidence_add"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": ssh, "authorization": "out_of_scope"}]}))
+        narrowed = await kb.write(
+            WriteRequest.model_validate(
+                {"nodes": [{"id": ssh, "authorization": "out_of_scope", "evidence_add": [evidence]}]}
+            )
+        )
+        assert (narrowed["nodes"][0]["ownership"], narrowed["nodes"][0]["authorization"]) == ("owned", "out_of_scope")
+        effective = await effective_authorizations(kb, host, ssh, service["id"], https)
+        assert effective == ["in_scope", "out_of_scope", "out_of_scope", "in_scope"]
+        with pytest.raises(ConflictError, match=r"^nodes\[0\]: an in_scope override needs an allowlist-scoped root"):
+            await kb.write(
+                WriteRequest.model_validate(
+                    {"nodes": [{"id": https, "authorization": "in_scope", "evidence_add": [evidence]}]}
+                )
+            )
+        cleared = await kb.write(WriteRequest.model_validate({"nodes": [{"id": ssh, "authorization": "unknown"}]}))
+        assert cleared["nodes"][0]["authorization"] == "in_scope"
+        assert (await stored_state(kb, ssh))[3] is None
+
+
+async def test_the_allowlist_marker_needs_in_scope_and_evidence_and_gates_its_children(tmp_path):
+    """R27, AE11: an allowlist root leaves unlisted children out_of_scope until an ID write widens them."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        host, https, alternate = await classified_host(kb, evidence, 443, 8080)
+        candidate = (await kb.write(WriteRequest.model_validate({"nodes": [{**ACME, "ownership": "candidate"}]})))[
+            "nodes"
+        ][0]["id"]
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[0\]: .*allowlist_scoped requires evidence_add"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": host, "allowlist_scoped": True}]}))
+        with pytest.raises(ConflictError, match=r"^nodes\[0\]: allowlist_scoped requires authorization in_scope"):
+            await kb.write(
+                WriteRequest.model_validate(
+                    {"nodes": [{"id": candidate, "allowlist_scoped": True, "evidence_add": [evidence]}]}
+                )
+            )
+        marked = await kb.write(
+            WriteRequest.model_validate({"nodes": [{"id": host, "allowlist_scoped": True, "evidence_add": [evidence]}]})
+        )
+        assert marked["nodes"][0]["authorization"] == "in_scope"
+        widened = await kb.write(
+            WriteRequest.model_validate(
+                {"nodes": [{"id": https, "authorization": "in_scope", "evidence_add": [evidence]}]}
+            )
+        )
+        assert widened["nodes"][0]["authorization"] == "in_scope"
+        effective = await effective_authorizations(kb, host, https, alternate)
+        assert effective == ["in_scope", "in_scope", "out_of_scope"]
+        with pytest.raises(ConflictError, match=r"^nodes\[0\]: allowlist_scoped requires authorization in_scope"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": host, "authorization": "unknown"}]}))
+
+
+async def test_an_allowlist_root_in_the_same_batch_admits_an_earlier_in_scope_child(tmp_path):
+    """KTD3: the state pass reads the root's planned state, whatever the request order."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        result = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {**port(443), "authorization": "in_scope", "evidence_add": [evidence]},
+                        port(8080),
+                        {
+                            **HOST,
+                            "ownership": "owned",
+                            "authorization": "in_scope",
+                            "allowlist_scoped": True,
+                            "evidence_add": [evidence],
+                        },
+                    ],
+                    "relations": [open_port({"node_index": 2}, 0), open_port({"node_index": 2}, 1)],
+                }
+            )
+        )
+        assert [node["authorization"] for node in result["nodes"]] == ["in_scope", "out_of_scope", "in_scope"]
+
+
+async def test_removing_the_last_ready_evidence_of_a_claim_is_refused(tmp_path):
+    """R21, KTD9: a delete_pending evidence item no longer counts as a remaining link."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        first, second, third = await evidence_fixture(kb, 3)
+        created = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {**ACME, "ownership": "owned", "evidence_add": [first, second]},
+                        {**HOST, "ownership": "owned", "evidence_add": [first, third]},
+                    ]
+                }
+            )
+        )
+        acme, host = [node["id"] for node in created["nodes"]]
+        removed = await kb.write(WriteRequest.model_validate({"nodes": [{"id": acme, "evidence_remove": [first]}]}))
+        assert removed["nodes"][0]["links_removed"] == 1
+        with pytest.raises(ConflictError, match=r"^nodes\[0\]: .*last ready evidence"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": acme, "evidence_remove": [second]}]}))
+        await admit(kb, "evidence", [third])
+        with pytest.raises(ConflictError, match=r"^nodes\[0\]: .*last ready evidence"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": host, "evidence_remove": [first]}]}))
+        assert await kb.workers.read(lambda c, t: c.execute("select count(*) from node_evidence").get) == 3
