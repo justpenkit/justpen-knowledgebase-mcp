@@ -111,6 +111,7 @@ async def test_status_samples_aggregate_coverage_and_property_fallback(kb):
             "nodes": [
                 {
                     "type": "domain",
+                    "ownership": "candidate",
                     "properties": {"value": "wide.example", **{f"key{index}": index for index in range(600)}},
                 }
             ]

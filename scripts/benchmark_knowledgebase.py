@@ -243,7 +243,7 @@ class Measurements:
         for first in range(prior_nodes, self.nodes, 100):
             self.check()
             batch = [
-                {"type": "endpoint", "properties": node_properties(index)}
+                {"type": "endpoint", "properties": node_properties(index), "ownership": "candidate"}
                 for index in range(first, min(first + 100, self.nodes))
             ]
             result = await self.write_batch(kb, {"nodes": batch}, "node_batch_attempt")

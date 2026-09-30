@@ -9,6 +9,7 @@
             "provider": "entra_id",
             "tenant_id": "11111111-2222-4333-8444-555555555555"
           },
+          "ownership": "owned",
           "source": "entra_realm"
         }
       ],
@@ -24,6 +25,7 @@
           "properties": {
             "value": "example.com"
           },
+          "ownership": "owned",
           "source": "entra_realm"
         },
         {
@@ -31,6 +33,7 @@
           "properties": {
             "value": "sts.example.com"
           },
+          "ownership": "owned",
           "source": "entra_realm"
         }
       ],

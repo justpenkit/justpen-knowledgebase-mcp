@@ -7,14 +7,14 @@ import pytest
 
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import InvalidParamsError, LimitError
-from justpen_knowledgebase_mcp.models import NeighborsRequest, SearchRequest, WriteRequest
+from justpen_knowledgebase_mcp.models import NeighborsRequest, SearchRequest
 from justpen_knowledgebase_mcp.mutations import canonical_json
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage import traversal
 from justpen_knowledgebase_mcp.storage.traversal import _member_bytes, neighbors
 from justpen_knowledgebase_mcp.storage.worker import OperationToken
 
-from .graph_fixtures import admit
+from .graph_fixtures import admit, stated_request
 
 pytestmark = pytest.mark.integration
 
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.integration
 async def test_depth_direction_and_node_budget(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "nodes": [
                         {"type": "domain", "properties": {"value": "example.com"}},
@@ -35,7 +35,7 @@ async def test_depth_direction_and_node_budget(tmp_path):
         )
         ids = [item["id"] for item in result["nodes"]]
         await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "relations": [
                         {
@@ -66,13 +66,13 @@ async def test_depth_direction_and_node_budget(tmp_path):
 async def test_cycles_multiple_seeds_types_and_edge_budget(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {"nodes": [{"type": "subdomain", "properties": {"value": f"h{i}.example.com"}} for i in range(3)]}
             )
         )
         ids = [item["id"] for item in result["nodes"]]
         await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "relations": [
                         {
@@ -98,7 +98,7 @@ async def test_cycles_multiple_seeds_types_and_edge_budget(tmp_path):
         assert len(selected["edges"]) == 2
         with pytest.raises(InvalidParamsError):
             await kb.write(
-                WriteRequest.model_validate(
+                stated_request(
                     {
                         "relations": [
                             {
@@ -116,13 +116,13 @@ async def test_cycles_multiple_seeds_types_and_edge_budget(tmp_path):
 async def test_high_degree_reads_bounded_adjacency_and_deadlines(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {"nodes": [{"type": "subdomain", "properties": {"value": f"h{i}.example.com"}} for i in range(100)]}
             )
         )
         ids = [item["id"] for item in result["nodes"]]
         await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "relations": [
                         {
@@ -195,7 +195,7 @@ async def test_response_budget_keeps_frontier_and_visited_bounded(tmp_path):
         ids = []
         for start in range(0, 400, 100):
             result = await kb.write(
-                WriteRequest.model_validate(
+                stated_request(
                     {
                         "nodes": [
                             {"type": "subdomain", "properties": {"value": f"h{i}.example.com"}}
@@ -216,7 +216,7 @@ async def test_response_budget_keeps_frontier_and_visited_bounded(tmp_path):
             for vantage in range(3)
         ]
         for start in range(0, len(relations), 100):
-            await kb.write(WriteRequest.model_validate({"relations": relations[start : start + 100]}))
+            await kb.write(stated_request({"relations": relations[start : start + 100]}))
         result = await kb.neighbors(NeighborsRequest(seed_ids=ids[:1], depth=3, max_nodes=1000, max_edges=3000))
         assert result["truncated"]
         assert result["reason"] == "response_bytes"
@@ -235,13 +235,13 @@ async def test_response_budget_keeps_frontier_and_visited_bounded(tmp_path):
 async def test_pending_visibility_matches_graph_readiness(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {"nodes": [{"type": "subdomain", "properties": {"value": f"h{i}.example.com"}} for i in range(3)]}
             )
         )
         ids = [item["id"] for item in result["nodes"]]
         created = await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "relations": [
                         {
@@ -286,7 +286,7 @@ async def test_edge_budget_serializes_each_appended_item_once(tmp_path, monkeypa
         ids = []
         for start in range(0, 200, 100):
             written = await kb.write(
-                WriteRequest.model_validate(
+                stated_request(
                     {
                         "nodes": [
                             {"type": "subdomain", "properties": {"value": f"h{index}.example.com"}}
@@ -307,7 +307,7 @@ async def test_edge_budget_serializes_each_appended_item_once(tmp_path, monkeypa
             for preference in range(3)
         ]
         for start in range(0, len(relations), 100):
-            await kb.write(WriteRequest.model_validate({"relations": relations[start : start + 100]}))
+            await kb.write(stated_request({"relations": relations[start : start + 100]}))
         volumes, results = {}, {}
         for max_edges in (100, 300):
             serialized = serialization_counter(monkeypatch, traversal)

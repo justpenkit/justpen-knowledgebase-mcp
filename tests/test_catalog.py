@@ -1439,9 +1439,13 @@ async def test_catalog_view_is_byte_identical_after_two_full_write_paths(kb) -> 
         result = await kb.write(
             {
                 "nodes": [
-                    {"type": "ip_address", "properties": {"value": f"192.0.2.{iteration + 1}", "version": 4}},
+                    {
+                        "type": "ip_address",
+                        "properties": {"value": f"192.0.2.{iteration + 1}", "version": 4},
+                        "ownership": "candidate",
+                    },
                     {"type": "port", "properties": {"transport": "tcp", "number": 443}},
-                    {"type": "domain", "properties": {"value": f"example{iteration}.com"}},
+                    {"type": "domain", "properties": {"value": f"example{iteration}.com"}, "ownership": "candidate"},
                 ],
                 "relations": [
                     {

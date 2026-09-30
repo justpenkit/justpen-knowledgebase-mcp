@@ -7,18 +7,18 @@ import pytest
 from justpen_knowledgebase_mcp.catalog import scope_relations
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import ConflictError, MissingRecordsError, NotFoundError, RecordConflictError
-from justpen_knowledgebase_mcp.models import GetRequest, WriteRequest
+from justpen_knowledgebase_mcp.models import GetRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.deletions import GraphDeletion
 
-from .graph_fixtures import admit, evidence_fixture
+from .graph_fixtures import admit, evidence_fixture, stated_request
 
 pytestmark = pytest.mark.integration
 
 
 async def graph(kb):
     return await kb.write(
-        WriteRequest.model_validate(
+        stated_request(
             {
                 "nodes": [
                     {"type": "domain", "properties": {"value": "example.com"}},
@@ -179,7 +179,7 @@ async def scoped_graph(kb, relation_type):
     }
     assert set(definitions) == set(scope_relations().values()), "a scope relation has no delete fixture"
     nodes, relations, parent_index, child_index, relation_index = definitions[relation_type]
-    result = await kb.write(WriteRequest.model_validate({"nodes": nodes, "relations": relations}))
+    result = await kb.write(stated_request({"nodes": nodes, "relations": relations}))
     return (
         result["nodes"][parent_index]["id"],
         result["nodes"][child_index]["id"],
@@ -237,9 +237,9 @@ async def test_atomic_missing_pending_and_dependency_admission(tmp_path):
         record = (await kb.get(GetRequest(kind="relations", ids=[relation])))["records"][0]
         assert record["lifecycle"] == "delete_pending"
         assert record["delete_job_id"] == intents[0].job_id
-        await kb.write(WriteRequest.model_validate({"nodes": [{"id": c, "label": "still ready"}]}))
+        await kb.write(stated_request({"nodes": [{"id": c, "label": "still ready"}]}))
         with pytest.raises(ConflictError, match="RECORD_DELETING"):
-            await kb.write(WriteRequest.model_validate({"nodes": [{"id": a}]}))
+            await kb.write(stated_request({"nodes": [{"id": a}]}))
         while True:
             step = await kb.workers.write(
                 lambda connection, token: GraphDeletion.step(connection, intents[0], row_budget=1)
@@ -256,7 +256,7 @@ async def test_relation_without_evidence_does_not_require_cascade(tmp_path):
         result = await graph(kb)
         relation = result["relations"][0]["id"]
         intents = await admit(kb, "relations", [relation], cascade=False)
-        await kb.write(WriteRequest.model_validate({"nodes": [{"id": result["nodes"][0]["id"], "label": "editable"}]}))
+        await kb.write(stated_request({"nodes": [{"id": result["nodes"][0]["id"], "label": "editable"}]}))
         step = await kb.workers.write(lambda c, t: GraphDeletion.step(c, intents[0]))
         assert step.done
         assert step.rows_deleted == 1
@@ -295,8 +295,8 @@ async def test_many_link_derived_rows_budget_and_evidence_file_handoff(tmp_path)
         result = await graph(kb)
         relation = result["relations"][0]["id"]
         evidence = await evidence_fixture(kb, 150)
-        await kb.write(WriteRequest.model_validate({"relations": [{"id": relation, "evidence_add": evidence[:100]}]}))
-        await kb.write(WriteRequest.model_validate({"relations": [{"id": relation, "evidence_add": evidence[100:]}]}))
+        await kb.write(stated_request({"relations": [{"id": relation, "evidence_add": evidence[:100]}]}))
+        await kb.write(stated_request({"relations": [{"id": relation, "evidence_add": evidence[100:]}]}))
 
         def derived(connection, token):
             identifier = connection.execute("select id from relations where uuid=?", (relation,)).get
@@ -352,7 +352,7 @@ async def test_cascade_false_evidence_link_matrix_and_atomic_hundred_ids(tmp_pat
         evidence = (await evidence_fixture(kb, 1))[0]
         node, relation = result["nodes"][0]["id"], result["relations"][0]["id"]
         await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "nodes": [{"id": node, "evidence_add": [evidence]}],
                     "relations": [{"id": relation, "evidence_add": [evidence]}],
@@ -376,7 +376,7 @@ async def test_cascade_false_evidence_link_matrix_and_atomic_hundred_ids(tmp_pat
 async def test_hundred_target_pending_batch_has_no_partial_admission(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {"nodes": [{"type": "subdomain", "properties": {"value": f"h{i}.example.com"}} for i in range(100)]}
             )
         )
@@ -398,7 +398,7 @@ async def test_a_scoped_child_of_a_scoped_child_is_deleted_innermost_first(tmp_p
     still refuses to go while the level below it exists."""
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         written = await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "nodes": [
                         {"type": "endpoint", "properties": {"url": "https://example.com/search", "method": "GET"}},

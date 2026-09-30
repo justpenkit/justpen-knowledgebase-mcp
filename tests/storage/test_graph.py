@@ -21,7 +21,7 @@ from justpen_knowledgebase_mcp.models import GetRequest, TypesRequest, WriteRequ
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.graph import _validate_endpoint_values, _validate_endpoints, graph_types
 
-from .graph_fixtures import admit, evidence_fixture, graph_node, scoped_stack
+from .graph_fixtures import admit, evidence_fixture, graph_node, scoped_stack, stated
 
 pytestmark = pytest.mark.integration
 
@@ -112,7 +112,7 @@ def test_structural_endpoints_reject_invalid_relationships(
 
 
 def write(value):
-    return WriteRequest.model_validate(value)
+    return WriteRequest.model_validate(stated(value))
 
 
 async def test_scoped_batch_order_independent_and_same_parent_deduplicates(tmp_path):
@@ -587,6 +587,7 @@ asyncio.run(run())
                     }
                     for digit in ("a", "b")
                 ]
+                payloads = [stated(payload) for payload in payloads]
             if mode == "same":
                 payloads = [
                     {"nodes": [{"id": identifier, "properties": {"same": value}, "observed_at": timestamp}]}

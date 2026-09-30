@@ -10,10 +10,12 @@ import pytest
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import InvalidParamsError, LimitError
 from justpen_knowledgebase_mcp.evidence import IngestRequest
-from justpen_knowledgebase_mcp.models import GetRequest, SearchRequest, WriteRequest
+from justpen_knowledgebase_mcp.models import GetRequest, SearchRequest
 from justpen_knowledgebase_mcp.query import evaluate
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage import search as search_storage
+
+from .graph_fixtures import stated_request
 
 pytestmark = pytest.mark.integration
 
@@ -21,7 +23,7 @@ pytestmark = pytest.mark.integration
 async def test_search_partial_index_and_refresh(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "nodes": [
                         {
@@ -44,7 +46,7 @@ async def test_search_partial_index_and_refresh(tmp_path):
         record = (await kb.get(GetRequest(kind="nodes", ids=[identifier])))["records"][0]
         assert len(record["properties"]["ports"]) == 600
         assert not record["property_index"]["complete"]
-        await kb.write(WriteRequest.model_validate({"nodes": [{"id": identifier, "remove_properties": ["/status"]}]}))
+        await kb.write(stated_request({"nodes": [{"id": identifier, "remove_properties": ["/status"]}]}))
         assert not (
             await kb.search(SearchRequest(kind="nodes", properties={"path": "/status", "op": "exists", "value": True}))
         )["items"]
@@ -104,9 +106,7 @@ async def test_sql_matches_canonical_oracle_matrix(tmp_path):
     ]
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         result = await kb.write(
-            WriteRequest.model_validate(
-                {"nodes": [{"type": "domain", "properties": document} for document in documents]}
-            )
+            stated_request({"nodes": [{"type": "domain", "properties": document} for document in documents]})
         )
         ids = [item["id"] for item in result["nodes"]]
         for predicate in predicates:
@@ -120,7 +120,7 @@ async def test_sql_matches_canonical_oracle_matrix(tmp_path):
 async def test_storage_classes_sentinels_and_negative_affinity(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "nodes": [
                         {
@@ -157,14 +157,12 @@ async def test_storage_classes_sentinels_and_negative_affinity(tmp_path):
 async def test_cursor_write_stability_and_filter_binding(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {"nodes": [{"type": "domain", "properties": {"value": name + ".example"}} for name in ["a", "b", "c"]]}
             )
         )
         first = await kb.search(SearchRequest(kind="nodes", limit=1))
-        await kb.write(
-            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "d.example"}}]})
-        )
+        await kb.write(stated_request({"nodes": [{"type": "domain", "properties": {"value": "d.example"}}]}))
         second = await kb.search(SearchRequest(kind="nodes", cursor=first["cursor"]))
         assert len(second["items"]) == 3
         with pytest.raises(InvalidParamsError):
@@ -197,9 +195,7 @@ async def test_numeric_sql_precision_and_no_canonical_read_short_circuit(tmp_pat
             for index, value in enumerate([True, 1, 1.0, 2**53 + 1, float(2**53), None, "1", {}, -0.0])
         ]
         created = await kb.write(
-            WriteRequest.model_validate(
-                {"nodes": [{"type": "certificate", "properties": document} for document in documents]}
-            )
+            stated_request({"nodes": [{"type": "certificate", "properties": document} for document in documents]})
         )
         ids = [item["id"] for item in created["nodes"]]
         for operand in [True, 1, 1.0, 2**53 + 1, float(2**53), None, "1", 0]:
@@ -237,9 +233,7 @@ async def test_service_raw_mapping_presence_validation(tmp_path):
 async def test_fallback_expiry_is_limit_and_never_advances_cursor(tmp_path, monkeypatch):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         await kb.write(
-            WriteRequest.model_validate(
-                {"nodes": [{"type": "domain", "properties": {"value": "a.example", "large": "x" * 1025}}]}
-            )
+            stated_request({"nodes": [{"type": "domain", "properties": {"value": "a.example", "large": "x" * 1025}}]})
         )
         predicate = {"path": "/large", "op": "eq", "value": "x" * 1025}
 
@@ -259,7 +253,7 @@ async def test_fallback_expiry_is_limit_and_never_advances_cursor(tmp_path, monk
 async def test_partial_materialized_predicate_does_not_read_canonical_body(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "nodes": [
                         {
@@ -301,7 +295,7 @@ async def test_canonical_depth16_exists_depth17_is_missing(tmp_path):
     properties["value"] = "a.example"
     path = "/child" * 15 + "/leaf"
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
-        await kb.write(WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": properties}]}))
+        await kb.write(stated_request({"nodes": [{"type": "domain", "properties": properties}]}))
         present = await kb.search(SearchRequest(kind="nodes", properties={"path": path, "op": "eq", "value": 42}))
         assert len(present["items"]) == 1
         missing = await kb.search(
@@ -313,9 +307,7 @@ async def test_canonical_depth16_exists_depth17_is_missing(tmp_path):
 
 async def test_property_check_constraints_distinguish_null_and_sentinel(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
-        await kb.write(
-            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "a.example"}}]})
-        )
+        await kb.write(stated_request({"nodes": [{"type": "domain", "properties": {"value": "a.example"}}]}))
         for category, materialized, value in [
             ("null", 0, None),
             ("string", 1, 403),
@@ -336,7 +328,7 @@ async def test_property_check_constraints_distinguish_null_and_sentinel(tmp_path
 async def test_relation_properties_refresh_and_builtin_filters(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         written = await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "nodes": [
                         {"type": "domain", "properties": {"value": "a.example"}},
@@ -370,9 +362,7 @@ async def test_relation_properties_refresh_and_builtin_filters(tmp_path):
         )
         assert [item["id"] for item in result["items"]] == [identifier]
         assert result["canonical_scan_count"] == 0
-        await kb.write(
-            WriteRequest.model_validate({"relations": [{"id": identifier, "remove_properties": ["/status"]}]})
-        )
+        await kb.write(stated_request({"relations": [{"id": identifier, "remove_properties": ["/status"]}]}))
         assert not (
             await kb.search(
                 SearchRequest(kind="relations", properties={"path": "/status", "op": "exists", "value": True})
@@ -383,7 +373,7 @@ async def test_relation_properties_refresh_and_builtin_filters(tmp_path):
 async def test_relation_words_intersect_direct_and_single_linked_evidence_units(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         written = await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "nodes": [
                         {"type": "domain", "properties": {"value": "first.example"}},
@@ -426,9 +416,7 @@ async def test_maximum_accepted_ast_executes_with_exact_result(tmp_path):
             {"der_sha256": "b" * 64, "name": "b.example", "value": "42"},
         ]
         written = await kb.write(
-            WriteRequest.model_validate(
-                {"nodes": [{"type": "certificate", "properties": document} for document in documents]}
-            )
+            stated_request({"nodes": [{"type": "certificate", "properties": document} for document in documents]})
         )
         result = await kb.search(SearchRequest(kind="nodes", properties=predicate))
         assert [item["id"] for item in result["items"]] == [
@@ -441,9 +429,7 @@ async def test_maximum_accepted_ast_executes_with_exact_result(tmp_path):
 
 async def test_empty_cursor_is_invalid_while_omitted_or_null_starts_first_page(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
-        written = await kb.write(
-            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "a.example"}}]})
-        )
+        written = await kb.write(stated_request({"nodes": [{"type": "domain", "properties": {"value": "a.example"}}]}))
         expected_ids = [written["nodes"][0]["id"]]
         for request in ({"kind": "nodes"}, {"kind": "nodes", "cursor": None}):
             result = await kb.search(request)

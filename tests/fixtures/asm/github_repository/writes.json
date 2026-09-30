@@ -15,6 +15,7 @@
             "archived": false,
             "fork": false
           },
+          "ownership": "owned",
           "source": "github"
         }
       ]

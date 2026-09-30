@@ -57,6 +57,7 @@ async def test_disjoint_writes_same_key_merges_and_readers(tmp_path, count):
                         "nodes": [
                             {
                                 "type": "subdomain",
+                                "ownership": "candidate",
                                 "properties": {"value": "shared.example.test", f"writer{index}": index},
                             }
                         ]
@@ -66,7 +67,15 @@ async def test_disjoint_writes_same_key_merges_and_readers(tmp_path, count):
             own = envelope(
                 await client.call_tool(
                     "kb_write",
-                    {"nodes": [{"type": "subdomain", "properties": {"value": f"client{index}.example.test"}}]},
+                    {
+                        "nodes": [
+                            {
+                                "type": "subdomain",
+                                "ownership": "candidate",
+                                "properties": {"value": f"client{index}.example.test"},
+                            }
+                        ]
+                    },
                 )
             )["data"]["nodes"][0]["id"]
             read = envelope(await client.call_tool("kb_get", {"kind": "nodes", "ids": [shared, own]}))["data"]

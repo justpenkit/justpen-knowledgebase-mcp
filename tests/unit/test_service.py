@@ -43,7 +43,12 @@ async def test_facade_rejects_unknown_fields_before_work(method):
 @pytest.mark.parametrize(
     ("method", "payload", "operation", "lane"),
     [
-        ("write", {"nodes": [{"type": "domain", "properties": {"name": "example.com"}}]}, "write", "write"),
+        (
+            "write",
+            {"nodes": [{"type": "domain", "properties": {"name": "example.com"}, "ownership": "candidate"}]},
+            "write",
+            "write",
+        ),
         ("get", {"kind": "nodes", "ids": [NODE]}, "get", "read"),
         ("neighbors", {"seed_ids": [NODE]}, "neighbors", "read"),
         ("search", {"kind": "nodes"}, "search", "read"),
@@ -215,7 +220,13 @@ async def test_reindex_captures_context_before_worker_thread(monkeypatch):
 async def test_write_preserves_typed_property_rule_at_model_boundary():
     kb, _workers, _runner, _maintenance, _sampler = facade()
     with pytest.raises(InvalidParamsError, match="integer outside signed64"):
-        await kb.write({"nodes": [{"type": "domain", "properties": {"name": "example.com", "extra": 2**64}}]})
+        await kb.write(
+            {
+                "nodes": [
+                    {"type": "domain", "properties": {"name": "example.com", "extra": 2**64}, "ownership": "candidate"}
+                ]
+            }
+        )
 
 
 async def test_write_sanitizes_unexpected_validator_exception(monkeypatch):

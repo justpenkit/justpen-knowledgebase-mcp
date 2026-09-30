@@ -138,7 +138,7 @@ def test_endpoint_constraints(relation, source_type, source, target_type, target
 def test_node_preparation_merge_identity_and_duplicate_boundaries(monkeypatch):
     plan = graph._prepare_node(
         database(cursor(value=None)),
-        NodeWrite(type="domain", properties={"value": "example.com", "extra": 2}),
+        NodeWrite(type="domain", ownership="candidate", properties={"value": "example.com", "extra": 2}),
         None,
         "domain",
         None,
@@ -155,7 +155,9 @@ def test_node_preparation_merge_identity_and_duplicate_boundaries(monkeypatch):
     monkeypatch.setattr(graph, "row_by_id", Mock(return_value=existing))
     with pytest.raises(ConflictError, match="type"):
         graph._node_header(database(), NodeWrite(id=NODE, type="subdomain", properties={}))
-    request = WriteRequest(nodes=[NodeWrite(type="domain", properties={"value": "example.com"})] * 2)
+    request = WriteRequest(
+        nodes=[NodeWrite(type="domain", ownership="candidate", properties={"value": "example.com"})] * 2
+    )
     with pytest.raises(InvalidParamsError, match="duplicate"):
         graph._prepare_node_plans(database(cursor(value=None), cursor(value=None)), Mock(), request)
     monkeypatch.setattr(graph, "row_by_id", Mock(return_value=None))
@@ -179,7 +181,7 @@ def test_persist_preserves_metadata_presence_and_refreshes_indexes(monkeypatch, 
     monkeypatch.setattr(graph, "refresh_properties", properties)
     monkeypatch.setattr(graph.fulltext, "refresh_record_text", text)
     previous = owner(metadata='{"label":"old","source":"original"}') if existing else None
-    mutation = NodeWrite(type="domain", properties={"value": "example.com"}, label=None)
+    mutation = NodeWrite(type="domain", ownership="candidate", properties={"value": "example.com"}, label=None)
     result, created = graph._persist(db, "nodes", mutation, previous, mutation.properties, (None, None))
     assert result is readback
     assert created != existing
@@ -203,7 +205,7 @@ def test_links_counts_actual_changes_and_rejects_missing(monkeypatch):
 
 
 def test_write_materializes_results_and_maps_validation(monkeypatch):
-    mutation = NodeWrite(type="domain", properties={"value": "example.com"})
+    mutation = NodeWrite(type="domain", ownership="candidate", properties={"value": "example.com"})
     plan = graph._PreparedMutation(
         mutation,
         "domain",
@@ -328,7 +330,7 @@ def test_relation_references_batch_and_existing_endpoints_are_immutable(monkeypa
 
 
 def test_dedup_uses_canonical_identity_to_reject_hash_collision(monkeypatch):
-    mutation = NodeWrite(type="domain", properties={"value": "example.com"})
+    mutation = NodeWrite(type="domain", ownership="candidate", properties={"value": "example.com"})
     properties = {"value": "example.com"}
     lookup = Mock(return_value=owner(properties='{"value":"example.com"}'))
     monkeypatch.setattr(graph, "row_by_id", lookup)
@@ -423,7 +425,9 @@ def test_evidence_record_projects_current_bounded_coverage(state, incomplete):
 
 
 def test_catalog_validation_preserves_authored_field_rule():
-    request = WriteRequest(nodes=[NodeWrite(type="domain", properties={"value": "SECRET-MARKER"})])
+    request = WriteRequest(
+        nodes=[NodeWrite(type="domain", ownership="candidate", properties={"value": "SECRET-MARKER"})]
+    )
     with pytest.raises(InvalidParamsError, match="/properties/value: expected dns_name"):
         graph.Graph.write(database(cursor(value=None)), Mock(), request)
 

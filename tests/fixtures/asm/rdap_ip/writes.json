@@ -12,6 +12,7 @@
             "country": "US",
             "rir": "arin"
           },
+          "ownership": "dependency",
           "source": "rdap_ip"
         },
         {
@@ -21,6 +22,7 @@
             "handle": "EXNET-1",
             "name": "Example Networks"
           },
+          "ownership": "dependency",
           "source": "rdap_ip"
         },
         {
@@ -28,6 +30,7 @@
           "properties": {
             "value": "noc@example.net"
           },
+          "ownership": "dependency",
           "source": "rdap_ip"
         },
         {
@@ -35,6 +38,7 @@
           "properties": {
             "value": "+17035550100"
           },
+          "ownership": "dependency",
           "source": "rdap_ip"
         }
       ],
