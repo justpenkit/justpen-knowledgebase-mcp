@@ -10,6 +10,7 @@
             "version": 4,
             "cdn_provider": "cloudfront"
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:20:11.204918Z",
           "source": "naabu"
         },
@@ -27,6 +28,7 @@
           "properties": {
             "value": "www.example.com"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:20:11.204918Z",
           "source": "naabu"
         }
@@ -65,6 +67,7 @@
             "value": "192.0.2.10",
             "version": 4
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:20:11.518772Z",
           "source": "naabu"
         },
@@ -102,6 +105,7 @@
             "value": "192.0.2.10",
             "version": 4
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:20:11.519003Z",
           "source": "naabu"
         },

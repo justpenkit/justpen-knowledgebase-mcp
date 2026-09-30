@@ -6,7 +6,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.tools import ToolResult
 from pydantic import Field
 
-from ..models import Kind, MediaType, NeighborsResult, RecordID, SearchResult
+from ..models import Authorization, Kind, MediaType, NeighborsResult, Ownership, RecordID, SearchResult
 from ..responses import tool_output_schema
 from .request_presence import invoke
 
@@ -38,13 +38,17 @@ def register(mcp: FastMCP) -> None:
         source: str | None = None,
         source_id: RecordID | None = None,
         target_id: RecordID | None = None,
-        observed_at_min: str | None = None,
-        observed_at_max: str | None = None,
+        first_seen_min: str | None = None,
+        first_seen_max: str | None = None,
+        last_seen_min: str | None = None,
+        last_seen_max: str | None = None,
+        ownership: Ownership | None = None,
+        authorization: Authorization | None = None,
         properties: dict[str, Any] | None = None,
         limit: Annotated[int, Field(ge=1, le=100)] = 20,
         cursor: str | None = None,
     ) -> ToolResult:
-        """Search ready summaries using exact property filters and literal/words text. Include linked evidence only for graph searches; omit include_evidence for kind=evidence. Canonical fallback preserves unindexed property correctness. Coverage reports pending/failed/incomplete text indexes; use kb_get/kb_read_evidence for full content."""
+        """Search ready summaries using exact property filters and literal/words text. Include linked evidence only for graph searches; omit include_evidence for kind=evidence. Canonical fallback preserves unindexed property correctness. Coverage reports pending/failed/incomplete text indexes; use kb_get/kb_read_evidence for full content. Graph searches bound `first_seen`/`last_seen`; node searches filter on effective `ownership`/`authorization` and leave out `rejected` records unless `ownership=rejected` asks for them."""
         return await invoke(ctx, "search", locals())
 
     @mcp.tool(
@@ -61,5 +65,5 @@ def register(mcp: FastMCP) -> None:
         max_nodes: Annotated[int, Field(ge=1, le=1000)] = 100,
         max_edges: Annotated[int, Field(ge=0, le=3000)] = 300,
     ) -> ToolResult:
-        """Traverse stored ready relations from seed_ids within depth/node/edge/response/deadline budgets. Returns explicit truncation and frontier; pending deletion may temporarily disconnect the graph. No inferred relations are created."""
+        """Traverse stored ready relations from seed_ids within depth/node/edge/response/deadline budgets. Returns explicit truncation and frontier; pending deletion may temporarily disconnect the graph. No inferred relations are created. Nodes carry their effective `ownership`/`authorization`."""
         return await invoke(ctx, "neighbors", locals())

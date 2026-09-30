@@ -17,7 +17,18 @@ async def test_nested_omitted_null_and_property_values(tmp_path):
     async with Client(create_app(ServerConfig(workspace_dir=tmp_path))) as client:
         props = {"value": "exact.example", "nested": {"null": None, "float": 1.5, "array": [True, 2, "Ä"]}}
         created = await client.call_tool(
-            "kb_write", {"nodes": [{"type": "domain", "properties": props, "label": "keep", "source": "source"}]}
+            "kb_write",
+            {
+                "nodes": [
+                    {
+                        "type": "domain",
+                        "ownership": "candidate",
+                        "properties": props,
+                        "label": "keep",
+                        "source": "source",
+                    }
+                ]
+            },
         )
         identifier = envelope(created)["data"]["nodes"][0]["id"]
         await client.call_tool("kb_write", {"nodes": [{"id": identifier}]})
@@ -65,7 +76,13 @@ async def test_nested_omitted_null_and_property_values(tmp_path):
 
 
 async def test_direct_facade_preserves_raw_mapping_fields(kb):
-    result = await kb.write({"nodes": [{"type": "domain", "properties": {"value": "direct.example"}, "label": "keep"}]})
+    result = await kb.write(
+        {
+            "nodes": [
+                {"type": "domain", "ownership": "candidate", "properties": {"value": "direct.example"}, "label": "keep"}
+            ]
+        }
+    )
     identifier = result["nodes"][0]["id"]
     await kb.write({"nodes": [{"id": identifier}]})
     record = (await kb.get({"kind": "nodes", "ids": [identifier]}))["records"][0]

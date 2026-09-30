@@ -6,12 +6,13 @@ import pytest
 from pydantic import ValidationError
 
 from justpen_knowledgebase_mcp import errors
-from justpen_knowledgebase_mcp.errors import MissingRecordsError, RecordConflictError
+from justpen_knowledgebase_mcp.errors import MissingRecordsError, RecordConflictError, RejectedIdentityError
 from justpen_knowledgebase_mcp.responses import (
     BlockerDetails,
     BlockingRecord,
     ErrorResult,
     MissingDetails,
+    RejectedIdentityDetails,
     error_response,
     exception_response,
     success_response,
@@ -134,3 +135,42 @@ def test_a_blocker_kind_and_id_that_disagree_are_refused(kind, identifier):
 def test_a_blocker_kind_and_id_that_agree_are_accepted(kind, identifier):
     """The check refuses a disagreement without narrowing what a real blocker may carry."""
     assert str(BlockingRecord(kind=kind, id=identifier).id) == identifier
+
+
+def test_a_rejected_identity_refusal_names_every_item_and_its_rejected_record():
+    """R26, KTD8: one refusal lists each item address with the rejected record's ID, never a value."""
+    first, second = uuid4(), uuid4()
+    details = RejectedIdentityDetails.model_validate(
+        {
+            "rejected_items": [
+                {"item": "nodes[1]", "rejected_record": first},
+                {"item": "nodes[3]", "rejected_record": second},
+            ]
+        }
+    )
+    assert exception_response(RejectedIdentityError(details)) == {
+        "status": "error",
+        "error": "CONFLICT: REJECTED_IDENTITY",
+        "details": {
+            "rejected_items": [
+                {"item": "nodes[1]", "rejected_record": str(first)},
+                {"item": "nodes[3]", "rejected_record": str(second)},
+            ]
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        [],
+        [{"item": "nodes[0]", "rejected_record": str(uuid4())}] * 101,
+        [{"item": "acme-staging.net", "rejected_record": str(uuid4())}],
+        [{"item": "nodes[0]", "rejected_record": EVIDENCE}],
+        [{"item": "nodes[0]", "rejected_record": str(uuid4()), "value": "acme-staging.net"}],
+    ],
+    ids=["empty", "over-100", "value-as-address", "evidence-id", "extra-field"],
+)
+def test_a_rejected_identity_detail_is_bounded_to_item_addresses_and_record_ids(items):
+    with pytest.raises(ValidationError):
+        ErrorResult.model_validate({"error": "CONFLICT: REJECTED_IDENTITY", "details": {"rejected_items": items}})

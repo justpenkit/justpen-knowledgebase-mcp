@@ -161,9 +161,13 @@ async def test_traversal_streams_each_selective_adjacency_once(tmp_path):
                 {
                     "nodes": [
                         (
-                            {"type": "domain", "properties": {"value": "example.com"}}
+                            {"type": "domain", "properties": {"value": "example.com"}, "ownership": "candidate"}
                             if i == 0
-                            else {"type": "subdomain", "properties": {"value": f"h{i}.example.com"}}
+                            else {
+                                "type": "subdomain",
+                                "properties": {"value": f"h{i}.example.com"},
+                                "ownership": "candidate",
+                            }
                         )
                         for i in range(11)
                     ]

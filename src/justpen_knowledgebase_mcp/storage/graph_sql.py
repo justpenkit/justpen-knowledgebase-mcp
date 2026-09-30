@@ -16,6 +16,33 @@ SCOPED_CHILD_BY_PARENT = (
     "WHERE r.source_id=? AND r.type IN (SELECT value FROM json_each(?)) ORDER BY r.id LIMIT 1"
 )
 
+# Effective state over a node row aliased `o`, so a search filters and projects many candidates in one statement;
+# `storage/inventory.py` walks the same chain for one row. The chain is `o` and its scoped ancestors
+# below the state root, each reached through its scope relation. Every scope relation targets only its
+# own scoped type, so one `scope_relation` table serves every level; the statement defines it from the
+# bound `SCOPED_CHILD_RELATIONS`. UNION drops a repeated row, so even a corrupt cycle ends.
+EFFECTIVE_OWNERSHIP = (
+    "(CASE WHEN o.state_root_uuid IS NULL THEN o.ownership "
+    "ELSE (SELECT root.ownership FROM nodes root WHERE root.uuid=o.state_root_uuid) END)"
+)
+# Only an override can move a scoped node off its root's authorization, and only under an allowlist
+# does a missing one matter, so the chain is walked only below an allowlist-scoped root or a root
+# that some scoped node overrides. The partial `nodes_override_root` index answers that per row with
+# one lookup, so a first page pays no statement-wide scan.
+EFFECTIVE_AUTHORIZATION = (
+    "(CASE WHEN o.state_root_uuid IS NULL THEN o.authorization ELSE (SELECT CASE "
+    "WHEN root.authorization='out_of_scope' THEN 'out_of_scope' "
+    "WHEN root.allowlist_scoped=0 AND NOT EXISTS(SELECT 1 FROM nodes s "
+    "WHERE s.state_root_uuid=o.state_root_uuid AND s.authorization_override IS NOT NULL) THEN root.authorization "
+    "ELSE (WITH RECURSIVE chain(id,override) AS (SELECT o.id,o.authorization_override UNION "
+    "SELECT parent.id,parent.authorization_override FROM chain "
+    "JOIN relations r ON r.target_id=chain.id AND r.type IN scope_relation "
+    "JOIN nodes parent ON parent.id=r.source_id WHERE parent.uuid<>o.state_root_uuid) "
+    "SELECT CASE WHEN total(chain.override='out_of_scope')>0 THEN 'out_of_scope' WHEN root.allowlist_scoped=1 "
+    "THEN iif(total(chain.override='in_scope')>0,'in_scope','out_of_scope') ELSE root.authorization END "
+    "FROM chain) END FROM nodes root WHERE root.uuid=o.state_root_uuid) END)"
+)
+
 OWNER_LOOKUP = {
     ("nodes", "id"): "SELECT * FROM nodes WHERE id=?",
     ("nodes", "uuid"): "SELECT * FROM nodes WHERE uuid=?",
@@ -26,9 +53,61 @@ OWNER_LOOKUP = {
 }
 
 OWNER_UPDATE = {
-    "nodes": "UPDATE nodes SET properties=?,metadata=?,updated_at=?,observed_at=? WHERE id=?",
-    "relations": "UPDATE relations SET properties=?,metadata=?,updated_at=?,observed_at=? WHERE id=?",
+    "nodes": "UPDATE nodes SET properties=?,metadata=?,updated_at=?,first_seen=?,last_seen=? WHERE id=?",
+    "relations": "UPDATE relations SET properties=?,metadata=?,updated_at=?,first_seen=?,last_seen=? WHERE id=?",
 }
+
+# `state_root_uuid` is fixed at creation, so an ID write rewrites only the state it may change,
+# bound in `NODE_STATE_COLUMNS` order.
+NODE_STATE_COLUMNS = ("ownership", "authorization", "allowlist_scoped", "authorization_override")
+NODE_STATE_UPDATE = (
+    "UPDATE nodes SET ownership=?,authorization=?,allowlist_scoped=?,authorization_override=? WHERE id=?"
+)
+
+# The claims a node holds only while it keeps a link to ready evidence. The write path tests these
+# values in Python and the evidence delete in SQL, so both derive from this one declaration.
+OWNERSHIP_CLAIMS = ("owned", "dependency", "rejected")
+AUTHORIZATION_CLAIMS = ("in_scope", "out_of_scope")
+_OWNERSHIP_CLAIM_LIST = ",".join(f"'{value}'" for value in OWNERSHIP_CLAIMS)
+_AUTHORIZATION_CLAIM_LIST = ",".join(f"'{value}'" for value in AUTHORIZATION_CLAIMS)
+# Whether the node aliased `n` holds a claim.
+CLAIM_HELD = (
+    f"(n.ownership IN ({_OWNERSHIP_CLAIM_LIST}) OR n.authorization IN ({_AUTHORIZATION_CLAIM_LIST}) "
+    f"OR n.authorization_override IN ({_AUTHORIZATION_CLAIM_LIST}))"
+)
+
+# A link from the node `{node}` names to `ready` evidence outside the bound JSON array of removed UUIDs.
+READY_LINK = (
+    "SELECT 1 FROM node_evidence k JOIN evidence e ON e.id=k.evidence_id "
+    "WHERE k.node_id={node} AND e.lifecycle='ready' AND e.uuid NOT IN (SELECT value FROM json_each(?))"
+)
+# Whether the bound node keeps such a link.
+READY_LINK_KEPT = f"SELECT EXISTS({READY_LINK.format(node='?')})"
+
+# The state of the node an identity key names, for the rejected-identity checks.
+NODE_STATE_BY_KEY = "SELECT uuid,ownership FROM nodes WHERE type=? AND key=?"
+
+# Ready relations of the bound JSON array of types into a node, with each source's stored ownership.
+RELIANCE_SOURCES = (
+    "SELECT r.uuid,s.uuid,s.ownership FROM relations r JOIN nodes s ON s.id=r.source_id "
+    "WHERE r.target_id=? AND r.type IN (SELECT value FROM json_each(?)) "
+    "AND r.lifecycle='ready' AND s.lifecycle='ready' ORDER BY r.id"
+)
+
+# A rejection's purge intents, bound as job ID, cascade, request time, then the rejected node: its ready
+# scoped descendants under its state root by UUID, and its ready incident relations by internal ID.
+# Each relation statement uses its own endpoint index; a self-loop the first marks is no longer ready
+# for the second, so it is marked once.
+REJECTION_DESCENDANTS_PENDING = (
+    "UPDATE nodes SET lifecycle='delete_pending',delete_job_id=?,delete_cascade=?,delete_requested_at=? "
+    "WHERE state_root_uuid=? AND lifecycle='ready'"
+)
+REJECTION_INCIDENT_PENDING = (
+    "UPDATE relations SET lifecycle='delete_pending',delete_job_id=?,delete_cascade=?,delete_requested_at=? "
+    "WHERE source_id=? AND lifecycle='ready'",
+    "UPDATE relations SET lifecycle='delete_pending',delete_job_id=?,delete_cascade=?,delete_requested_at=? "
+    "WHERE target_id=? AND lifecycle='ready'",
+)
 
 OWNER_PENDING = {
     "nodes": "UPDATE nodes SET lifecycle='delete_pending',delete_job_id=?,delete_cascade=?,delete_requested_at=? WHERE id=?",
@@ -146,9 +225,11 @@ PROPERTY_BODY = {
     "nodes": "SELECT properties FROM nodes WHERE id=?",
     "relations": "SELECT properties FROM relations WHERE id=?",
 }
+# The last three columns are a node's effective ownership, effective authorization and state root. The
+# node statement opens with the `scope_relation` table, so its first binding is `SCOPED_CHILD_RELATIONS`.
 SEARCH_CANDIDATE = {
-    "nodes": "SELECT o.id,o.uuid,o.type,o.key,o.metadata,({expression}) FROM nodes o WHERE {conditions} ORDER BY o.id",
-    "relations": "SELECT o.id,o.uuid,o.type,o.key,o.metadata,({expression}) FROM relations o WHERE {conditions} ORDER BY o.id",
+    "nodes": "WITH scope_relation(type) AS (SELECT value FROM json_each(?)) SELECT o.id,o.uuid,o.type,o.key,o.metadata,({expression}),{ownership},{authorization},o.state_root_uuid FROM nodes o WHERE {conditions} ORDER BY o.id",
+    "relations": "SELECT o.id,o.uuid,o.type,o.key,o.metadata,({expression}),NULL,NULL,NULL FROM relations o WHERE {conditions} ORDER BY o.id",
 }
 READY = {
     "nodes": "o.lifecycle='ready'",

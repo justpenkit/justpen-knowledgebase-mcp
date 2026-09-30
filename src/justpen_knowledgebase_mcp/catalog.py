@@ -1,4 +1,4 @@
-"""Catalog v3 manifest, discovery schema, and strict record validators."""
+"""Catalog v4 manifest, discovery schema, and strict record validators."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from .service_names import is_service_name, registry_digest, secure_required
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-CATALOG_VERSION = 3
+CATALOG_VERSION = 4
 
 _COMMON = {
     "additional_properties": True,
@@ -178,12 +178,14 @@ _ALPN_ORDER: dict[str, object] = {
 
 _NODES: dict[str, dict[str, Any]] = {
     "asn": {
+        "inventory": "carries",
         "identity": _identity(["value"]),
         "required": {"value": "asn"},
         "checks": ["asn_assigned.1"],
         "optional": {"name": "printable_text_200", "country": "iso3166_alpha2", "rir": _RIRS},
     },
     "certificate": {
+        "inventory": "carries",
         "identity": _identity(["der_sha256"]),
         "required": {"der_sha256": "sha256"},
         "optional": {
@@ -196,11 +198,13 @@ _NODES: dict[str, dict[str, Any]] = {
         },
     },
     "cloud_account": {
+        "inventory": "carries",
         "identity": _identity(["provider", "account_id"]),
         "required": {"provider": ["aws", "gcp", "azure"], "account_id": "cloud_account_id"},
         "checks": ["cloud_account_spelling.1"],
     },
     "cloud_resource": {
+        "inventory": "carries",
         "identity": _identity(["hostname"]),
         "required": {
             "service": [
@@ -225,6 +229,7 @@ _NODES: dict[str, dict[str, Any]] = {
         "checks": ["cloud_resource_hostname.1"],
     },
     "cve": {
+        "inventory": "none",
         "identity": _identity(["value"]),
         "required": {"value": "cve"},
         "optional": {
@@ -236,20 +241,28 @@ _NODES: dict[str, dict[str, Any]] = {
             "published": "utc_timestamp",
         },
     },
-    "cwe": {"identity": _identity(["value"]), "required": {"value": "cwe"}, "optional": {"name": "printable_text_200"}},
+    "cwe": {
+        "inventory": "none",
+        "identity": _identity(["value"]),
+        "required": {"value": "cwe"},
+        "optional": {"name": "printable_text_200"},
+    },
     "dkim_record": {
+        "inventory": "inherits",
         "identity": _identity(["selector"], scope=_SCOPE_DKIM),
         "required": {"selector": "dkim_selector", "value": "txt_value"},
     },
-    "dmarc_record": {"identity": _identity(["value"]), "required": {"value": "dmarc"}},
+    "dmarc_record": {"inventory": "none", "identity": _identity(["value"]), "required": {"value": "dmarc"}},
     "domain": {
+        "inventory": "carries",
         "identity": _identity(["value"]),
         "required": {"value": "dns_name"},
         "optional": {"wildcard": "boolean"},
         "checks": ["dns_name_kind.1"],
     },
-    "email_address": {"identity": _identity(["value"]), "required": {"value": "email_address"}},
+    "email_address": {"inventory": "carries", "identity": _identity(["value"]), "required": {"value": "email_address"}},
     "endpoint": {
+        "inventory": "carries",
         "identity": _identity(["url", "method"]),
         "required": {"url": "http_url", "method": "method"},
         "optional": {
@@ -262,6 +275,7 @@ _NODES: dict[str, dict[str, Any]] = {
         "canonicalize": ["endpoint_url_drop_query.1"],
     },
     "finding": {
+        "inventory": "inherits",
         "identity": _identity(["rule", "matcher"], scope=_SCOPE_FINDING),
         "required": {
             "rule": "finding_rule",
@@ -279,6 +293,7 @@ _NODES: dict[str, dict[str, Any]] = {
         },
     },
     "host_key": {
+        "inventory": "carries",
         "identity": _identity(["algorithm", "fingerprint_sha256"]),
         "required": {
             "algorithm": [
@@ -295,6 +310,7 @@ _NODES: dict[str, dict[str, Any]] = {
         },
     },
     "http_fingerprint": {
+        "inventory": "none",
         "identity": _identity(["kind", "value"]),
         "required": {
             "kind": ["favicon_mmh3", "body_sha256", "header_sha256"],
@@ -303,51 +319,60 @@ _NODES: dict[str, dict[str, Any]] = {
         "checks": ["http_fingerprint_value_kind.1"],
     },
     "identity_tenant": {
+        "inventory": "carries",
         "identity": _identity(["provider", "tenant_id"]),
         "required": {"provider": ["entra_id", "okta"], "tenant_id": "tenant_id"},
         "checks": ["tenant_id_spelling.1"],
     },
     "ip_address": {
+        "inventory": "carries",
         "identity": _identity(["value"]),
         "required": {"value": "ip", "version": "ip_version"},
         "optional": {"cdn_provider": "tech_token", "waf_provider": "tech_token", "cloud_provider": "tech_token"},
         "checks": ["ip_address_version.1"],
     },
     "ip_cidr": {
+        "inventory": "carries",
         "identity": _identity(["value"]),
         "required": {"value": "cidr", "version": "ip_version"},
         "optional": {"netname": "printable_text_200", "country": "iso3166_alpha2", "rir": _RIRS},
         "checks": ["ip_cidr_version.1"],
     },
     "mta_sts_policy": {
+        "inventory": "inherits",
         "identity": _identity(["value"], scope=_SCOPE_MTA_STS),
         "required": {"value": "mta_sts"},
         "optional": {"mode": ["enforce", "testing", "none"], "max_age": "uint32", "mx": "mx_pattern_list"},
     },
     "organization": {
+        "inventory": "carries",
         "identity": _identity(["registry", "handle"]),
         "required": {"registry": _RIRS, "handle": "rir_handle"},
         "optional": {"name": "printable_text_200"},
     },
     "parameter": {
+        "inventory": "inherits",
         "identity": _identity(["name", "location"], scope=_SCOPE_PARAMETER),
         "required": {
             "name": "parameter_name",
             "location": ["query", "body", "header", "cookie", "path"],
         },
     },
-    "phone": {"identity": _identity(["value"]), "required": {"value": "phone_e164"}},
+    "phone": {"inventory": "carries", "identity": _identity(["value"]), "required": {"value": "phone_e164"}},
     "port": {
+        "inventory": "inherits",
         "identity": _identity(["transport", "number"], scope=_SCOPE_OPEN_PORT),
         "required": {"number": "uint16", "transport": ["tcp", "udp", "sctp"]},
         "checks": ["port_number_assigned.1"],
     },
     "registrar": {
+        "inventory": "none",
         "identity": _identity(["iana_id"]),
         "required": {"iana_id": "uint16", "name": "printable_text_200"},
         "checks": ["registrar_iana_assigned.1"],
     },
     "repository": {
+        "inventory": "carries",
         "identity": _identity(["host", "owner", "name"]),
         "required": {
             "platform": ["github", "gitlab", "bitbucket", "gitea"],
@@ -364,6 +389,7 @@ _NODES: dict[str, dict[str, Any]] = {
         "checks": ["repository_owner_spelling.1"],
     },
     "secret": {
+        "inventory": "carries",
         "identity": _identity(["value_sha256"]),
         "required": {"value_sha256": "sha256"},
         "optional": {
@@ -385,30 +411,35 @@ _NODES: dict[str, dict[str, Any]] = {
         "checks": ["secret_plaintext_keys.1"],
     },
     "service": {
+        "inventory": "inherits",
         "identity": _identity(["name"], scope=_SCOPE_SERVICE),
         "required": {"name": "service_name"},
         "optional": {"product": "printable_text_200", "version": "tech_version", "secure": "boolean"},
         "checks": ["service_secure_flag.1"],
     },
-    "spf_record": {"identity": _identity(["value"]), "required": {"value": "spf"}},
+    "spf_record": {"inventory": "none", "identity": _identity(["value"]), "required": {"value": "spf"}},
     "storage_bucket": {
+        "inventory": "carries",
         "identity": _identity(["provider", "name"]),
         "required": {"provider": ["aws_s3", "gcp_gcs", "azure_blob"], "name": "bucket_name"},
         "checks": ["bucket_name_spelling.1"],
     },
     "subdomain": {
+        "inventory": "carries",
         "identity": _identity(["value"]),
         "required": {"value": "dns_name"},
         "optional": {"wildcard": "boolean", "wildcard_answer": "boolean"},
         "checks": ["dns_name_kind.1"],
     },
     "technology": {
+        "inventory": "none",
         "identity": _identity(["name"]),
         "required": {"name": "tech_token"},
         "optional": {"cpe": "cpe23"},
         "checks": ["cpe_product_level.1"],
     },
     "tls_cipher_suite": {
+        "inventory": "none",
         "identity": _identity(["version", "name"]),
         "required": {
             "version": ["ssl30", "tls10", "tls11", "tls12", "tls13", "dtls10", "dtls12", "dtls13"],
@@ -416,11 +447,13 @@ _NODES: dict[str, dict[str, Any]] = {
         },
     },
     "tls_fingerprint": {
+        "inventory": "none",
         "identity": _identity(["kind", "value"]),
         "required": {"kind": ["jarm", "ja3s"], "value": "tls_fingerprint_value"},
         "checks": ["tls_fingerprint_length.1"],
     },
     "whois_registration": {
+        "inventory": "inherits",
         "identity": _identity(["registry", "registry_domain_id"], scope=_SCOPE_REGISTRATION),
         "required": {"registry": "public_suffix", "registry_domain_id": "registry_domain_id"},
         "optional": {
@@ -434,6 +467,7 @@ _NODES: dict[str, dict[str, Any]] = {
         "checks": ["registry_domain_id_assigned.1"],
     },
     "txt_record": {
+        "inventory": "none",
         "identity": _identity(["value"]),
         "required": {"value": "txt_value"},
         "checks": ["txt_record_diversion.1"],
@@ -666,6 +700,39 @@ def _ensure_scope_contract() -> None:
 
 
 _ensure_scope_contract()
+
+# The inventory vocabularies every state-bearing node draws from. They are fingerprinted with the
+# per-type `inventory` declarations: `carries` holds its own state, `inherits` takes it from the
+# root of its parent-scope chain, `none` marks vocabulary and shared records, which hold no state.
+_INVENTORY: dict[str, list[str]] = {
+    "ownership": ["owned", "dependency", "candidate", "rejected"],
+    "authorization": ["in_scope", "out_of_scope", "unknown"],
+}
+_INVENTORY_DECLARATIONS = ("carries", "inherits", "none")
+
+
+def _ensure_inventory_contract() -> None:
+    """Fail at import if a node type's inventory declaration leaves its state unresolvable.
+
+    A parent-scoped child has no state of its own, so it must inherit; an unscoped type has no
+    parent to inherit from; and every scope chain must end at a root that carries the state.
+    """
+    scoped = scope_relations()
+    for name, definition in _NODES.items():
+        value = definition.get("inventory")
+        if value not in _INVENTORY_DECLARATIONS:
+            raise RuntimeError(f"{name} declares no known inventory value")
+        if name in scoped and value != "inherits":
+            raise RuntimeError(f"{name} is parent-scoped and must be declared inherits")
+        if name not in scoped and value == "inherits":
+            raise RuntimeError(f"{name} is not parent-scoped and cannot be declared inherits")
+    for child, relation in scoped.items():
+        for parent in cast("list[str]", _RELATIONS[relation]["sources"]):
+            if parent not in scoped and _NODES[parent]["inventory"] != "carries":
+                raise RuntimeError(f"scope chain of {child} ends at {parent}, which does not carry inventory state")
+
+
+_ensure_inventory_contract()
 
 
 # Declared rewrites of a non-canonical spelling, applied before validation, identity and storage.
@@ -1273,6 +1340,7 @@ def _build_catalog(
     built: dict[str, Any] = {
         "common": _COMMON,
         "formats": dict(formats),
+        "inventory": {name: list(values) for name, values in _INVENTORY.items()},
         "registries": dict(registries),
         "version": CATALOG_VERSION,
     }
@@ -1368,6 +1436,15 @@ def common_descriptions() -> dict[str, str]:
     return dict(_DOCS["common"])
 
 
+def inventory_description() -> dict[str, Any]:
+    """Publish the inventory vocabularies, what each per-type declaration means, and the testing rule."""
+    return {
+        **copy.deepcopy(_INVENTORY),
+        "declarations": {value: _DOCS["inventory"][value] for value in _INVENTORY_DECLARATIONS},
+        "testing": _DOCS["inventory"]["testing"],
+    }
+
+
 def type_description(kind: str, type_name: str) -> dict[str, Any]:
     """Say what one type models and excludes, why it is shaped so, and what each property means."""
     return copy.deepcopy(cast("dict[str, Any]", _DOCS[kind][type_name]))
@@ -1388,6 +1465,7 @@ def _ensure_docs_contract() -> None:
         ("checks", {*_CHECKS, *_ENDPOINT_CHECKS}, set(_DOCS["checks"])),
         ("canonicalizations", set(_CANONICALIZATIONS), set(_DOCS["canonicalizations"])),
         ("common", set(_COMMON), set(_DOCS["common"])),
+        ("inventory", {*_INVENTORY_DECLARATIONS, "testing"}, set(_DOCS["inventory"])),
         ("nodes", set(_CATALOG["nodes"]), set(_DOCS["nodes"])),
         ("relations", set(_CATALOG["relations"]), set(_DOCS["relations"])),
     ]
@@ -1398,6 +1476,7 @@ def _ensure_docs_contract() -> None:
         *(("format", name, text) for name, text in _DOCS["formats"].items()),
         *(("rule", name, text) for name, text in rule_descriptions().items()),
         *(("common", name, text) for name, text in _DOCS["common"].items()),
+        *(("rule", f"inventory.{name}", text) for name, text in _DOCS["inventory"].items()),
     ]
     for kind in ("nodes", "relations"):
         for type_name, definition in cast("dict[str, dict[str, Any]]", _CATALOG[kind]).items():
@@ -1910,6 +1989,13 @@ def _domain_label_start(labels: list[str]) -> int | None:
         except ExpectedValidationError:
             continue
     return None
+
+
+def registrable_domain(name: str) -> str | None:
+    """Return the registrable domain a subdomain name sits under, as `subdomain` classification finds it."""
+    labels = name.split(".")
+    start = _domain_label_start(labels)
+    return None if start is None else ".".join(labels[start:])
 
 
 def _dns_kind(value: str) -> str | None:

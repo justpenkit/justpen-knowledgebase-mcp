@@ -8,6 +8,7 @@
           "properties": {
             "value": "www.example.com"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:22:40.118273Z",
           "source": "cdncheck"
         },
@@ -17,6 +18,7 @@
             "value": "198.51.100.20",
             "version": 4
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:22:40.118273Z",
           "source": "cdncheck"
         },
@@ -66,6 +68,7 @@
             "version": 4,
             "cdn_provider": "cloudfront"
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:22:40.201938Z",
           "source": "cdncheck"
         }
@@ -83,6 +86,7 @@
             "version": 4,
             "waf_provider": "sucuri"
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:22:40.309112Z",
           "source": "cdncheck"
         }
@@ -100,6 +104,7 @@
             "version": 4,
             "cloud_provider": "aws"
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:22:40.417203Z",
           "source": "cdncheck"
         }

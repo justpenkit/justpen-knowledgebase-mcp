@@ -10,11 +10,13 @@ from justpen_knowledgebase_mcp.errors import InvalidParamsError, NotFoundError
 from justpen_knowledgebase_mcp.models import NeighborsRequest, SearchRequest
 from justpen_knowledgebase_mcp.mutations import canonical_json
 from justpen_knowledgebase_mcp.query import TextQuery
-from justpen_knowledgebase_mcp.storage import graph, traversal
+from justpen_knowledgebase_mcp.storage import graph, graph_sql, traversal
 
 from .helpers import NODE, OTHER, cursor, database, owner
 
 search = importlib.import_module("justpen_knowledgebase_mcp.storage.search")
+# A candidate row ends with effective ownership, authorization and state root; these scripted rows have none.
+NO_STATE = (None, None, None)
 COVERAGE = {"ready": 2, "pending": 0, "failed": 0, "incomplete": 0, "not_applicable": 0}
 
 
@@ -22,7 +24,9 @@ def test_search_canonical_fallback_resolves_before_advancing(monkeypatch):
     monkeypatch.setattr(search, "coverage", Mock(return_value=COVERAGE))
     db = database(
         cursor(value=(NODE, 1)),
-        cursor(rows=[(1, NODE, "domain", "key", "{}", None), (2, OTHER, "domain", "key", "{}", None)]),
+        cursor(
+            rows=[(1, NODE, "domain", "key", "{}", None, *NO_STATE), (2, OTHER, "domain", "key", "{}", None, *NO_STATE)]
+        ),
         cursor(value='{"name":"miss"}'),
         cursor(value='{"name":"hit"}'),
         cursor(),
@@ -40,14 +44,16 @@ def test_search_pages_only_after_returned_match(monkeypatch):
     monkeypatch.setattr(search, "coverage", Mock(return_value=COVERAGE))
     db = database(
         cursor(value=(NODE, 1)),
-        cursor(rows=[(1, NODE, "domain", "key", "{}", True), (2, OTHER, "domain", "key", "{}", True)]),
+        cursor(
+            rows=[(1, NODE, "domain", "key", "{}", True, *NO_STATE), (2, OTHER, "domain", "key", "{}", True, *NO_STATE)]
+        ),
     )
     first = search.search(db, Mock(), SearchRequest(kind="nodes", limit=1))
     assert first["has_more"]
     assert first["cursor"]
     db = database(cursor(value=(NODE, 1)), cursor())
     search.search(db, Mock(), SearchRequest(kind="nodes", limit=1, cursor=first["cursor"]))
-    assert db.execute.call_args.args[1] == [1]
+    assert db.execute.call_args.args[1] == [graph_sql.SCOPED_CHILD_RELATIONS, 1]
     with pytest.raises(InvalidParamsError):
         search.search(database(cursor(value=(OTHER, 1))), Mock(), SearchRequest(kind="nodes", cursor=first["cursor"]))
 
@@ -62,9 +68,9 @@ def test_relevance_best_bounded_results_and_unverified_candidate(monkeypatch):
         cursor(value=(NODE, 1)),
         cursor(
             rows=[
-                (1, NODE, "domain", "key", "{}", 1),
-                (2, OTHER, "domain", "key", "{}", 1),
-                (3, NODE, "domain", "key", "{}", 1),
+                (1, NODE, "domain", "key", "{}", 1, *NO_STATE),
+                (2, OTHER, "domain", "key", "{}", 1, *NO_STATE),
+                (3, NODE, "domain", "key", "{}", 1, *NO_STATE),
             ]
         ),
         cursor(),
@@ -87,13 +93,16 @@ def test_builtin_filters_parameterize_all_user_values():
         source="unsafe'",
         source_id=NODE,
         target_id=OTHER,
-        observed_at_min="2026-01-01T00:00:00Z",
-        observed_at_max="2026-01-02T00:00:00Z",
+        first_seen_min="2026-01-01T00:00:00Z",
+        first_seen_max="2026-01-02T00:00:00Z",
+        last_seen_min="2026-01-03T00:00:00Z",
+        last_seen_max="2026-01-04T00:00:00Z",
     )
     clauses, values = search._builtin_filters(request)
     assert "unsafe'" not in " ".join(clauses)
     assert values.count("unsafe'") == 2
-    assert values[-1] > values[-2]
+    assert values[-4:] == sorted(values[-4:])
+    assert clauses[-4:] == ["o.first_seen>=?", "o.first_seen<=?", "o.last_seen>=?", "o.last_seen<=?"]
     request = SearchRequest(
         kind="evidence",
         source="source",
@@ -107,6 +116,22 @@ def test_builtin_filters_parameterize_all_user_values():
     clauses, values = search._builtin_filters(request)
     assert len(values) == 7
     assert "evidence_sources" in " ".join(clauses)
+
+
+def test_state_filters_bind_effective_values_and_leave_rejected_out_by_default():
+    """R14, R25: state predicates apply to nodes only, bind their values, and a node search that
+    names no ownership excludes `rejected`."""
+    clauses, values = search._builtin_filters(SearchRequest(kind="nodes"))
+    assert clauses[-1] == f"{search.EFFECTIVE_OWNERSHIP} IS NOT 'rejected'"
+    assert values == []
+    clauses, values = search._builtin_filters(
+        SearchRequest(kind="nodes", ownership="rejected", authorization="in_scope")
+    )
+    assert clauses[-2:] == [f"{search.EFFECTIVE_OWNERSHIP}=?", f"{search.EFFECTIVE_AUTHORIZATION}=?"]
+    assert values == ["rejected", "in_scope"]
+    for kind in ("relations", "evidence"):
+        clauses, _ = search._builtin_filters(SearchRequest(kind=kind))
+        assert search.EFFECTIVE_OWNERSHIP not in " ".join(clauses)
 
 
 @pytest.mark.parametrize(
@@ -198,7 +223,7 @@ def test_search_budget_serializes_each_returned_item_once(monkeypatch):
     the running counter from that shape; the call count is identical under both."""
     monkeypatch.setattr(search, "coverage", Mock(return_value=COVERAGE))
     metadata = json.dumps({"label": "l" * 1024, "source": None})
-    rows = [(index, NODE, "domain", "key", metadata, True) for index in range(1, 101)]
+    rows = [(index, NODE, "domain", "key", metadata, True, *NO_STATE) for index in range(1, 101)]
     db = database(cursor(value=(NODE, 1)), cursor(rows=rows))
     serialized = serialization_counter(monkeypatch, search)
     result = search.search(db, Mock(), SearchRequest(kind="nodes", limit=100))
@@ -226,7 +251,7 @@ def test_search_page_breaks_within_one_item_of_the_declared_budget(monkeypatch):
     the one item it refused plus the separator the accounting adds."""
     monkeypatch.setattr(search, "coverage", Mock(return_value=COVERAGE))
     metadata = json.dumps({"label": "l" * 16384, "source": None})
-    rows = [(index, NODE, "domain", "key", metadata, True) for index in range(1, 101)]
+    rows = [(index, NODE, "domain", "key", metadata, True, *NO_STATE) for index in range(1, 101)]
     result = search.search(
         database(cursor(value=(NODE, 1)), cursor(rows=rows)), Mock(), SearchRequest(kind="nodes", limit=100)
     )
@@ -246,7 +271,7 @@ def test_relevance_retains_the_best_matches_and_breaks_score_ties_by_identifier(
     )
     scores = [-1.0, -5.0, -3.0, -5.0, -2.0]
     monkeypatch.setattr(search, "owner_match", Mock(side_effect=[{"score": score} for score in scores]))
-    rows = [(index, NODE, "domain", "key", json.dumps({"label": f"n{index}"}), 1) for index in range(1, 6)]
+    rows = [(index, NODE, "domain", "key", json.dumps({"label": f"n{index}"}), 1, *NO_STATE) for index in range(1, 6)]
     result = search.search(
         database(cursor(value=(NODE, 1)), cursor(rows=rows), cursor()),
         Mock(),

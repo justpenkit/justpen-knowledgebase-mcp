@@ -23,12 +23,14 @@ from justpen_knowledgebase_mcp.errors import (
 )
 from justpen_knowledgebase_mcp.evidence import IngestRequest, ReadEvidenceRequest
 from justpen_knowledgebase_mcp.identity import identity_key
-from justpen_knowledgebase_mcp.models import DeleteRequest, GetRequest, WriteRequest
+from justpen_knowledgebase_mcp.models import DeleteRequest, GetRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage import jobs
 from justpen_knowledgebase_mcp.storage.evidence import EvidenceStore, stage_name
 from justpen_knowledgebase_mcp.storage.job_recovery import recover_intents, staging_disposable
 from justpen_knowledgebase_mcp.workspace import WorkspacePaths
+
+from .graph_fixtures import stated_request
 
 pytestmark = pytest.mark.integration
 
@@ -78,9 +80,7 @@ async def test_binary_ingest_read_dedup_sources_and_delete(kb):
 
 async def test_delete_atomic_admission_cancel_boundary_and_recovery(kb):
     await kb.job_runner.close()
-    output = await kb.write(
-        WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "pending.example"}}]})
-    )
+    output = await kb.write(stated_request({"nodes": [{"type": "domain", "properties": {"value": "pending.example"}}]}))
     identifier = output["nodes"][0]["id"]
     job = str(uuid4())
     request = DeleteRequest(kind="nodes", ids=[identifier])
@@ -326,7 +326,7 @@ async def test_pending_evidence_rejects_new_read_import_link_and_delete(kb, monk
     assert caught.value.details.blocking_record.id == identifier
     with pytest.raises(RecordConflictError, match="RECORD_DELETING"):
         await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "nodes": [
                         {
@@ -371,7 +371,7 @@ async def test_bulk_barrier_allows_short_ingest_and_batched_cleanup_fairness(kb,
         assert small["state"] == "completed"
         async with asyncio.timeout(5):
             graph = await kb.write(
-                WriteRequest.model_validate(
+                stated_request(
                     {
                         "nodes": [
                             {"type": "domain", "properties": {"value": "hub.example"}},
@@ -641,9 +641,7 @@ async def test_failed_delete_retains_intent_requires_attention_and_retries(kb, m
 
 
 async def test_delete_request_cancel_before_admission_commit_rolls_back_every_owner(kb, monkeypatch):
-    output = await kb.write(
-        WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "atomic.example"}}]})
-    )
+    output = await kb.write(stated_request({"nodes": [{"type": "domain", "properties": {"value": "atomic.example"}}]}))
     identifier = output["nodes"][0]["id"]
     entered, release = threading.Event(), threading.Event()
     original = jobs.JobStore.admit_delete

@@ -8,6 +8,7 @@
           "properties": {
             "value": "example.com"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:00:00.104215Z",
           "source": "bbot"
         },
@@ -17,6 +18,7 @@
             "value": "192.0.2.10",
             "version": 4
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:00:00.104215Z",
           "source": "bbot"
         }
@@ -45,6 +47,7 @@
             "value": "example.org",
             "wildcard": true
           },
+          "ownership": "candidate",
           "observed_at": "2026-09-20T12:00:41.52Z",
           "source": "bbot"
         }
@@ -60,6 +63,7 @@
           "properties": {
             "value": "dev.example.com"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:00:42.018Z",
           "source": "bbot"
         },
@@ -69,6 +73,7 @@
             "value": "192.0.2.50",
             "version": 4
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:00:42.018Z",
           "source": "bbot"
         }
@@ -97,6 +102,7 @@
             "value": "dev.example.com",
             "wildcard": true
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:01:03.77Z",
           "source": "bbot"
         }
@@ -113,6 +119,7 @@
             "value": "api.dev.example.com",
             "wildcard_answer": false
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:01:04.105Z",
           "source": "bbot"
         },
@@ -122,6 +129,7 @@
             "value": "192.0.2.52",
             "version": 4
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:01:04.105Z",
           "source": "bbot"
         }
@@ -150,6 +158,7 @@
             "value": "shop.example.org",
             "wildcard_answer": true
           },
+          "ownership": "candidate",
           "observed_at": "2026-09-20T12:00:12.9Z",
           "source": "bbot"
         },
@@ -159,6 +168,7 @@
             "value": "198.51.100.7",
             "version": 4
           },
+          "ownership": "candidate",
           "observed_at": "2026-09-20T12:00:12.9Z",
           "source": "bbot"
         }
@@ -186,6 +196,7 @@
           "properties": {
             "value": "www.example.com"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:00:13.4Z",
           "source": "bbot"
         },
@@ -195,6 +206,7 @@
             "value": "192.0.2.10",
             "version": 4
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:00:13.4Z",
           "source": "bbot"
         }
@@ -222,6 +234,7 @@
           "properties": {
             "value": "www.example.com"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:01:20.25Z",
           "source": "bbot"
         },
@@ -231,6 +244,7 @@
             "value": "192.0.2.10",
             "version": 4
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:01:20.25Z",
           "source": "bbot"
         },
@@ -280,6 +294,7 @@
             "status": 200,
             "title": "Example Domain"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:01:21.6Z",
           "source": "bbot"
         },
@@ -337,6 +352,7 @@
             "method": "GET",
             "status": 200
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:01:22.31Z",
           "source": "bbot"
         },
@@ -407,6 +423,7 @@
             "status": 200,
             "title": "Sign in"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T12:01:22.47Z",
           "source": "bbot"
         },

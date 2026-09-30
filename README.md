@@ -8,11 +8,15 @@ and local files, without an LLM, embedding service, or separate database server.
 
 ## Features
 
-- **Catalog v3 recon graph:** domains, subdomains, IP addresses and CIDRs, ASNs,
+- **Catalog v4 recon graph:** domains, subdomains, IP addresses and CIDRs, ASNs,
     DNS records, technologies, TLS cipher suites and fingerprints, registrars, organizations, weaknesses,
     parent-scoped
     ports/services/findings/DKIM selectors/parameters, certificates, endpoints,
     and CVEs with server-generated identities and strict required properties.
+- **Inventory state:** every asset node is `owned`, `dependency`, `candidate`
+    or `rejected`, with a separate `in_scope`/`out_of_scope`/`unknown`
+    authorization. Only `in_scope` authorizes active testing, and claims need
+    evidence.
 - **Raw evidence:** store exact file, text, or base64 content and link it to
     graph records; read evidence back in bounded byte ranges.
 - **Search and traversal:** full-text search across records and eligible text
@@ -59,8 +63,9 @@ Call `kb_types` to discover the available schemas. Start with the [graph workflo
 for concurrency, backups, and upgrades, and [telemetry](docs/guides/telemetry.md)
 for exporter configuration.
 
-Catalog v3 rejects catalog v1 and v2 workspaces at startup. Create a new
-workspace rather than pointing this version at older data.
+Catalog v4 and schema version 4 reject workspaces created with catalog v1, v2
+or v3 at startup. Create a new workspace rather than pointing this version at
+older data.
 
 ## Development
 

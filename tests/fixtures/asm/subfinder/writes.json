@@ -8,6 +8,7 @@
           "properties": {
             "value": "example.com"
           },
+          "ownership": "owned",
           "source": "subfinder"
         },
         {
@@ -15,6 +16,7 @@
           "properties": {
             "value": "www.example.com"
           },
+          "ownership": "owned",
           "source": "subfinder"
         },
         {
@@ -23,6 +25,7 @@
             "value": "198.51.100.20",
             "version": 4
           },
+          "ownership": "dependency",
           "source": "subfinder"
         },
         {
@@ -30,6 +33,7 @@
           "properties": {
             "value": "api.example.com"
           },
+          "ownership": "owned",
           "source": "subfinder"
         },
         {
@@ -38,6 +42,7 @@
             "value": "203.0.113.5",
             "version": 4
           },
+          "ownership": "owned",
           "source": "subfinder"
         },
         {
@@ -45,6 +50,7 @@
           "properties": {
             "value": "legacy.example.com"
           },
+          "ownership": "owned",
           "source": "subfinder"
         },
         {
@@ -53,6 +59,7 @@
             "value": "192.0.2.44",
             "version": 4
           },
+          "ownership": "owned",
           "source": "subfinder"
         }
       ],
@@ -129,6 +136,7 @@
           "properties": {
             "value": "example.com"
           },
+          "ownership": "owned",
           "source": "subfinder"
         },
         {
@@ -136,6 +144,7 @@
           "properties": {
             "value": "www.example.com"
           },
+          "ownership": "owned",
           "source": "subfinder"
         },
         {
@@ -143,6 +152,7 @@
           "properties": {
             "value": "mail.example.com"
           },
+          "ownership": "owned",
           "source": "subfinder"
         }
       ],

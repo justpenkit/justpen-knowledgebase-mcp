@@ -79,9 +79,11 @@ async def test_eight_rolling_get_processes_drain_for_restart_and_status_is_sql_f
         return native(self, dbname, mode)
 
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb, AsyncExitStack() as stack:
-        owner = (await kb.write({"nodes": [{"type": "domain", "properties": {"value": "rolling.example"}}]}))["nodes"][
-            0
-        ]["id"]
+        owner = (
+            await kb.write(
+                {"nodes": [{"type": "domain", "ownership": "candidate", "properties": {"value": "rolling.example"}}]}
+            )
+        )["nodes"][0]["id"]
         clients = [
             await stack.enter_async_context(wire_client(tmp_path, "stdio", probe=STATUS_PROBE)) for _ in range(8)
         ]

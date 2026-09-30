@@ -13,6 +13,7 @@
             "content_type": "text/html",
             "webserver": "nginx/1.18.0"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T11:00:00.101234Z",
           "source": "katana"
         },
@@ -26,6 +27,7 @@
             "content_type": "text/html",
             "webserver": "nginx/1.18.0"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T11:00:01.2Z",
           "source": "katana"
         },
@@ -39,6 +41,7 @@
             "content_type": "application/javascript",
             "webserver": "nginx/1.18.0"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T11:00:01.734Z",
           "source": "katana"
         },
@@ -52,6 +55,7 @@
             "content_type": "application/json",
             "webserver": "nginx/1.18.0"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T11:00:02.05Z",
           "source": "katana"
         },
@@ -65,6 +69,7 @@
             "content_type": "text/html",
             "webserver": "nginx/1.18.0"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T11:00:02.5Z",
           "source": "katana"
         },
@@ -74,6 +79,7 @@
             "url": "https://www.example.com/robots.txt",
             "method": "GET"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T11:00:03.9Z",
           "source": "katana"
         },
@@ -87,6 +93,7 @@
             "content_type": "text/html",
             "webserver": "nginx/1.18.0"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T11:00:03.9Z",
           "source": "katana"
         },
@@ -96,6 +103,7 @@
             "url": "https://www.example.net/partner",
             "method": "GET"
           },
+          "ownership": "candidate",
           "observed_at": "2026-09-20T11:00:04.25Z",
           "source": "katana"
         },
