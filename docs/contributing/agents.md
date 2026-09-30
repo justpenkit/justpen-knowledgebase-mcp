@@ -155,8 +155,9 @@ sandbox through `sandbox.excludedCommands`: the uv dependency and version
 commands, `make format`, `make format-project-text`, `make format-toml`, the
 `make bump-*` targets, and the Git commands that update the worktree or
 `.git/config` (`switch`, `checkout`, `pull`, `merge`, `rebase`, `restore`,
-`stash`, `reset`, `cherry-pick`, `push`, `branch`). Run each as a standalone
-command from the repository root. A chain, a `cd` prefix, a redirect or a
+`stash`, `reset`, `cherry-pick`, `push`, `branch`, `worktree`), together with
+`gh pr checkout`, which switches branches and records upstream tracking. Run
+each as a standalone command from the repository root. A chain, a `cd` prefix, a redirect or a
 subshell keeps the command in the sandbox, where a metadata update fails.
 Because unsandboxed Git can restore a file from any ref, `git checkout` and
 `git restore` commands naming a protected file ask for approval, and so does any
