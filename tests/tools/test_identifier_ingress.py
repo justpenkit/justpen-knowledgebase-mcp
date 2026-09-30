@@ -105,7 +105,9 @@ async def test_an_existing_record_is_refused_rather_than_reported_missing(client
 
 async def test_the_service_layer_answers_with_the_public_invalid_code(kb):
     """Below the tool signatures the same refusal carries the documented `INVALID` envelope."""
-    written = await kb.write({"nodes": [{"type": "domain", "properties": {"value": "service.example"}}]})
+    written = await kb.write(
+        {"nodes": [{"type": "domain", "ownership": "candidate", "properties": {"value": "service.example"}}]}
+    )
     canonical = written["nodes"][0]["id"]
 
     assert (await kb.get({"kind": "nodes", "ids": [canonical]}))["records"][0]["id"] == canonical
@@ -115,6 +117,9 @@ async def test_the_service_layer_answers_with_the_public_invalid_code(kb):
 
 async def _one_stored_node(client) -> str:
     result = envelope(
-        await client.call_tool("kb_write", {"nodes": [{"type": "domain", "properties": {"value": "one.example"}}]})
+        await client.call_tool(
+            "kb_write",
+            {"nodes": [{"type": "domain", "ownership": "candidate", "properties": {"value": "one.example"}}]},
+        )
     )
     return str(result["data"]["nodes"][0]["id"])

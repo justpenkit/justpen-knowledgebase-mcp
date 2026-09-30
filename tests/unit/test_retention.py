@@ -163,7 +163,8 @@ def test_retention_snapshot_reconciles_state_groups():
 def test_recovery_reuses_immutable_job_id_and_cascade(monkeypatch):
     insert = Mock()
     monkeypatch.setattr(job_recovery.JobStore, "insert", insert)
-    db = database(cursor(rows=[(1, NODE, OTHER, 1, 10)]), cursor(), cursor(rows=[(1, NODE, OTHER, 1, 10)]))
+    # Pending owners, the missing job row, no rejected endpoint, then the job's intents.
+    db = database(cursor(rows=[(1, NODE, OTHER, 1, 10)]), cursor(), cursor(), cursor(rows=[(1, NODE, OTHER, 1, 10)]))
     assert job_recovery.recover_intents(db, "nodes", 0) == {"after_id": 0, "repaired": 1}
     assert insert.call_args.args[1:] == (OTHER, "delete", "short", {"kind": "nodes", "ids": [NODE], "cascade": True})
 

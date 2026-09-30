@@ -48,7 +48,8 @@ def test_documentation_deploy_checks_credentials_head_and_pages_project():
     assert "CLOUDFLARE_API_TOKEN" in rendered
     assert "make docs-build" in rendered
     assert "git rev-parse FETCH_HEAD" in rendered
-    publish = next(step for step in steps if step.get("uses") == "cloudflare/wrangler-action@v4.0.0")
+    # Match the action, not its pinned version, so a Dependabot bump does not break the check.
+    publish = next(step for step in steps if step.get("uses", "").startswith("cloudflare/wrangler-action@"))
     assert publish["with"]["command"] == (
         "pages deploy site --project-name=justpen-knowledgebase-mcp --branch=main --commit-hash=${{ github.sha }}"
     )

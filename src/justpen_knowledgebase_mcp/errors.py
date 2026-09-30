@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from .responses import BlockerDetails, MissingDetails
+    from .responses import BlockerDetails, MissingDetails, RejectedIdentityDetails
 
 WalBusyReason = Literal["WAL_PRESSURE", "RESET_PENDING", "RESET_IN_PROGRESS", "WAL_RESET_BLOCKED"]
 
@@ -174,6 +174,15 @@ class RecordConflictError(ConflictError):
         """Carry typed details; the response boundary validates their shape."""
         self.details = details
         super().__init__(reason)
+
+
+class RejectedIdentityError(ConflictError):
+    """Atomic batch rejection naming every item that would re-create a rejected identity."""
+
+    def __init__(self, details: "RejectedIdentityDetails") -> None:
+        """Carry the server-selected item addresses and rejected record IDs."""
+        self.details = details
+        super().__init__("REJECTED_IDENTITY")
 
 
 class MissingRecordsError(NotFoundError):

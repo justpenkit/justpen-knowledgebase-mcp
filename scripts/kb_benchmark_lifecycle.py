@@ -176,7 +176,15 @@ async def hub(measure: Measurements, root: Path) -> None:
     async with KnowledgeBase.open(ServerConfig(workspace_dir=root)) as kb:
         setup_started = time.perf_counter()
         nodes = await kb.write(
-            {"nodes": [{"type": "endpoint", "properties": {"url": "https://hub.example/", "method": "GET"}}]}
+            {
+                "nodes": [
+                    {
+                        "type": "endpoint",
+                        "properties": {"url": "https://hub.example/", "method": "GET"},
+                        "ownership": "candidate",
+                    }
+                ]
+            }
         )
         owner = nodes["nodes"][0]["id"]
         relation_key = identity_key("relations", "redirects_to", {"context": "hub-fixture"})

@@ -8,6 +8,7 @@
           "properties": {
             "value": "example.com"
           },
+          "ownership": "owned",
           "source": "mta_sts"
         },
         {

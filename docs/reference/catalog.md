@@ -1,6 +1,6 @@
 # Catalog reference
 
-Every table below is generated from catalog v3, the same manifest the server validates writes against. `kb_types` returns the identical contract and the same descriptions at runtime and is the source to read from a client; this page exists so the contract is reviewable without a running server. Regenerate it with `make docs-catalog`.
+Every table below is generated from catalog v4, the same manifest the server validates writes against. `kb_types` returns the identical contract and the same descriptions at runtime and is the source to read from a client; this page exists so the contract is reviewable without a running server. Regenerate it with `make docs-catalog`.
 
 The catalog declares **34 node types** and **49 relation types**. Conventions that the catalog does not enforce, and the longer reasoning behind each type, live in [Graph and search](../tools/graph.md).
 
@@ -13,6 +13,7 @@ The catalog declares **34 node types** and **49 relation types**. Conventions th
 | Optional properties | `optional` map                                     | A declared optional property that is null or whose value fails its rule. An absent one is accepted, and properties outside both maps are stored as submitted and are not validated. |
 | Format rule         | `formats`, the validator, and the discovery schema | A value that does not match the published spelling. A rule missing from any of the three places would silently weaken the contract, so a test pins all three.                       |
 | Identity            | `identity.properties`                              | A later write that changes an identity property of an existing record.                                                                                                              |
+| Inventory           | `inventory` per node type                          | A new node of a `carries` type without an ownership state, and inventory state on a type whose declaration does not allow it.                                                       |
 | Parent scope        | `identity.scope`                                   | A new scoped node without exactly one scope relation in the same write, a re-parenting attempt, and a parent or scope-relation delete while the child exists.                       |
 | Endpoint types      | `sources`, `targets`, `self_edge`                  | A relation between node types it does not connect, and a self edge where none is allowed.                                                                                           |
 | Checks              | `checks` ids per type                              | Two properties that individually pass but disagree, and a relation whose endpoints' stored values do not actually stand in it.                                                      |
@@ -31,6 +32,16 @@ The catalog declares **34 node types** and **49 relation types**. Conventions th
 | `properties_bytes`      | 65536           | Maximum size of one canonical properties object, in UTF-8 bytes.                               |
 | `required_nonnull`      | true            | A required property may not be null or absent.                                                 |
 
+## Inventory state
+
+Every node type declares `inventory`, which says whether its nodes hold ownership and authorization. Both are server-managed fields outside `properties`. Ownership is one of `owned`, `dependency`, `candidate`, `rejected`, and authorization is one of `in_scope`, `out_of_scope`, `unknown`. Only `in_scope` authorizes active testing; `owned` and `unknown` do not. The server performs no testing, so the agent enforces this rule.
+
+| Declaration | Meaning                                                                                                                                 |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `carries`   | The node holds its own ownership and authorization.                                                                                     |
+| `inherits`  | The node is parent-scoped and inherits ownership and authorization from its parent-scope chain, which ends at a node that carries them. |
+| `none`      | A vocabulary or shared record: the node holds no ownership or authorization.                                                            |
+
 ## Bundled registries
 
 `dns_name` classifies names against the bundled ICANN public suffix list, and `service_name` accepts the bundled service whitelist. The SHA-256 of each registry's parsed content is part of the fingerprinted contract, so refreshing either refuses workspaces written under the old one.
@@ -44,42 +55,42 @@ The catalog declares **34 node types** and **49 relation types**. Conventions th
 
 Identity is what makes two writes the same node. A parent scope adds the parent's UUID to that identity, so the same properties under two parents are two nodes.
 
-| Node                 | Identity                          | Parent scope                  | Required properties                                                                                                                                                                                                                                                                                                                      |
-| -------------------- | --------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `asn`                | `value`                           | —                             | `value`: `asn`                                                                                                                                                                                                                                                                                                                           |
-| `certificate`        | `der_sha256`                      | —                             | `der_sha256`: `sha256`                                                                                                                                                                                                                                                                                                                   |
-| `cloud_account`      | `provider`, `account_id`          | —                             | `account_id`: `cloud_account_id`<br>`provider`: one of `aws`, `gcp`, `azure`                                                                                                                                                                                                                                                             |
-| `cloud_resource`     | `hostname`                        | —                             | `hostname`: `dns_name`<br>`service`: one of `aws_cloudfront`, `aws_api_gateway`, `aws_lambda_url`, `aws_elastic_beanstalk`, `aws_elb`, `azure_app_service`, `azure_cloud_service`, `azure_public_ip`, `azure_traffic_manager`, `azure_front_door`, `azure_api_management`, `gcp_app_engine`, `gcp_firebase_hosting`, `gcp_firebase_rtdb` |
-| `cve`                | `value`                           | —                             | `value`: `cve`                                                                                                                                                                                                                                                                                                                           |
-| `cwe`                | `value`                           | —                             | `value`: `cwe`                                                                                                                                                                                                                                                                                                                           |
-| `dkim_record`        | `selector`                        | `has_dkim_selector` (source)  | `selector`: `dkim_selector`<br>`value`: `txt_value`                                                                                                                                                                                                                                                                                      |
-| `dmarc_record`       | `value`                           | —                             | `value`: `dmarc`                                                                                                                                                                                                                                                                                                                         |
-| `domain`             | `value`                           | —                             | `value`: `dns_name`                                                                                                                                                                                                                                                                                                                      |
-| `email_address`      | `value`                           | —                             | `value`: `email_address`                                                                                                                                                                                                                                                                                                                 |
-| `endpoint`           | `url`, `method`                   | —                             | `method`: `method`<br>`url`: `http_url`                                                                                                                                                                                                                                                                                                  |
-| `finding`            | `rule`, `matcher`                 | `has_finding` (source)        | `matcher`: `finding_matcher_or_empty`<br>`rule`: `finding_rule`<br>`severity`: one of `info`, `low`, `medium`, `high`, `critical`, `unknown`<br>`title`: `printable_text_200`                                                                                                                                                            |
-| `host_key`           | `algorithm`, `fingerprint_sha256` | —                             | `algorithm`: one of `ssh-rsa`, `ssh-dss`, `ssh-ed25519`, `ecdsa-sha2-nistp256`, `ecdsa-sha2-nistp384`, `ecdsa-sha2-nistp521`, `sk-ssh-ed25519@openssh.com`, `sk-ecdsa-sha2-nistp256@openssh.com`<br>`fingerprint_sha256`: `sha256`                                                                                                       |
-| `http_fingerprint`   | `kind`, `value`                   | —                             | `kind`: one of `favicon_mmh3`, `body_sha256`, `header_sha256`<br>`value`: `http_fingerprint_value`                                                                                                                                                                                                                                       |
-| `identity_tenant`    | `provider`, `tenant_id`           | —                             | `provider`: one of `entra_id`, `okta`<br>`tenant_id`: `tenant_id`                                                                                                                                                                                                                                                                        |
-| `ip_address`         | `value`                           | —                             | `value`: `ip`<br>`version`: `ip_version`                                                                                                                                                                                                                                                                                                 |
-| `ip_cidr`            | `value`                           | —                             | `value`: `cidr`<br>`version`: `ip_version`                                                                                                                                                                                                                                                                                               |
-| `mta_sts_policy`     | `value`                           | `has_mta_sts_policy` (source) | `value`: `mta_sts`                                                                                                                                                                                                                                                                                                                       |
-| `organization`       | `registry`, `handle`              | —                             | `handle`: `rir_handle`<br>`registry`: one of `arin`, `ripe`, `apnic`, `lacnic`, `afrinic`                                                                                                                                                                                                                                                |
-| `parameter`          | `name`, `location`                | `has_parameter` (source)      | `location`: one of `query`, `body`, `header`, `cookie`, `path`<br>`name`: `parameter_name`                                                                                                                                                                                                                                               |
-| `phone`              | `value`                           | —                             | `value`: `phone_e164`                                                                                                                                                                                                                                                                                                                    |
-| `port`               | `transport`, `number`             | `has_open_port` (source)      | `number`: `uint16`<br>`transport`: one of `tcp`, `udp`, `sctp`                                                                                                                                                                                                                                                                           |
-| `registrar`          | `iana_id`                         | —                             | `iana_id`: `uint16`<br>`name`: `printable_text_200`                                                                                                                                                                                                                                                                                      |
-| `repository`         | `host`, `owner`, `name`           | —                             | `host`: `dns_name`<br>`name`: `repo_name`<br>`owner`: `repo_owner`<br>`platform`: one of `github`, `gitlab`, `bitbucket`, `gitea`                                                                                                                                                                                                        |
-| `secret`             | `value_sha256`                    | —                             | `value_sha256`: `sha256`                                                                                                                                                                                                                                                                                                                 |
-| `service`            | `name`                            | `has_service` (source)        | `name`: `service_name`                                                                                                                                                                                                                                                                                                                   |
-| `spf_record`         | `value`                           | —                             | `value`: `spf`                                                                                                                                                                                                                                                                                                                           |
-| `storage_bucket`     | `provider`, `name`                | —                             | `name`: `bucket_name`<br>`provider`: one of `aws_s3`, `gcp_gcs`, `azure_blob`                                                                                                                                                                                                                                                            |
-| `subdomain`          | `value`                           | —                             | `value`: `dns_name`                                                                                                                                                                                                                                                                                                                      |
-| `technology`         | `name`                            | —                             | `name`: `tech_token`                                                                                                                                                                                                                                                                                                                     |
-| `tls_cipher_suite`   | `version`, `name`                 | —                             | `name`: `tls_cipher_name`<br>`version`: one of `ssl30`, `tls10`, `tls11`, `tls12`, `tls13`, `dtls10`, `dtls12`, `dtls13`                                                                                                                                                                                                                 |
-| `tls_fingerprint`    | `kind`, `value`                   | —                             | `kind`: one of `jarm`, `ja3s`<br>`value`: `tls_fingerprint_value`                                                                                                                                                                                                                                                                        |
-| `txt_record`         | `value`                           | —                             | `value`: `txt_value`                                                                                                                                                                                                                                                                                                                     |
-| `whois_registration` | `registry`, `registry_domain_id`  | `has_registration` (source)   | `registry`: `public_suffix`<br>`registry_domain_id`: `registry_domain_id`                                                                                                                                                                                                                                                                |
+| Node                 | Identity                          | Parent scope                  | Inventory  | Required properties                                                                                                                                                                                                                                                                                                                      |
+| -------------------- | --------------------------------- | ----------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `asn`                | `value`                           | —                             | `carries`  | `value`: `asn`                                                                                                                                                                                                                                                                                                                           |
+| `certificate`        | `der_sha256`                      | —                             | `carries`  | `der_sha256`: `sha256`                                                                                                                                                                                                                                                                                                                   |
+| `cloud_account`      | `provider`, `account_id`          | —                             | `carries`  | `account_id`: `cloud_account_id`<br>`provider`: one of `aws`, `gcp`, `azure`                                                                                                                                                                                                                                                             |
+| `cloud_resource`     | `hostname`                        | —                             | `carries`  | `hostname`: `dns_name`<br>`service`: one of `aws_cloudfront`, `aws_api_gateway`, `aws_lambda_url`, `aws_elastic_beanstalk`, `aws_elb`, `azure_app_service`, `azure_cloud_service`, `azure_public_ip`, `azure_traffic_manager`, `azure_front_door`, `azure_api_management`, `gcp_app_engine`, `gcp_firebase_hosting`, `gcp_firebase_rtdb` |
+| `cve`                | `value`                           | —                             | `none`     | `value`: `cve`                                                                                                                                                                                                                                                                                                                           |
+| `cwe`                | `value`                           | —                             | `none`     | `value`: `cwe`                                                                                                                                                                                                                                                                                                                           |
+| `dkim_record`        | `selector`                        | `has_dkim_selector` (source)  | `inherits` | `selector`: `dkim_selector`<br>`value`: `txt_value`                                                                                                                                                                                                                                                                                      |
+| `dmarc_record`       | `value`                           | —                             | `none`     | `value`: `dmarc`                                                                                                                                                                                                                                                                                                                         |
+| `domain`             | `value`                           | —                             | `carries`  | `value`: `dns_name`                                                                                                                                                                                                                                                                                                                      |
+| `email_address`      | `value`                           | —                             | `carries`  | `value`: `email_address`                                                                                                                                                                                                                                                                                                                 |
+| `endpoint`           | `url`, `method`                   | —                             | `carries`  | `method`: `method`<br>`url`: `http_url`                                                                                                                                                                                                                                                                                                  |
+| `finding`            | `rule`, `matcher`                 | `has_finding` (source)        | `inherits` | `matcher`: `finding_matcher_or_empty`<br>`rule`: `finding_rule`<br>`severity`: one of `info`, `low`, `medium`, `high`, `critical`, `unknown`<br>`title`: `printable_text_200`                                                                                                                                                            |
+| `host_key`           | `algorithm`, `fingerprint_sha256` | —                             | `carries`  | `algorithm`: one of `ssh-rsa`, `ssh-dss`, `ssh-ed25519`, `ecdsa-sha2-nistp256`, `ecdsa-sha2-nistp384`, `ecdsa-sha2-nistp521`, `sk-ssh-ed25519@openssh.com`, `sk-ecdsa-sha2-nistp256@openssh.com`<br>`fingerprint_sha256`: `sha256`                                                                                                       |
+| `http_fingerprint`   | `kind`, `value`                   | —                             | `none`     | `kind`: one of `favicon_mmh3`, `body_sha256`, `header_sha256`<br>`value`: `http_fingerprint_value`                                                                                                                                                                                                                                       |
+| `identity_tenant`    | `provider`, `tenant_id`           | —                             | `carries`  | `provider`: one of `entra_id`, `okta`<br>`tenant_id`: `tenant_id`                                                                                                                                                                                                                                                                        |
+| `ip_address`         | `value`                           | —                             | `carries`  | `value`: `ip`<br>`version`: `ip_version`                                                                                                                                                                                                                                                                                                 |
+| `ip_cidr`            | `value`                           | —                             | `carries`  | `value`: `cidr`<br>`version`: `ip_version`                                                                                                                                                                                                                                                                                               |
+| `mta_sts_policy`     | `value`                           | `has_mta_sts_policy` (source) | `inherits` | `value`: `mta_sts`                                                                                                                                                                                                                                                                                                                       |
+| `organization`       | `registry`, `handle`              | —                             | `carries`  | `handle`: `rir_handle`<br>`registry`: one of `arin`, `ripe`, `apnic`, `lacnic`, `afrinic`                                                                                                                                                                                                                                                |
+| `parameter`          | `name`, `location`                | `has_parameter` (source)      | `inherits` | `location`: one of `query`, `body`, `header`, `cookie`, `path`<br>`name`: `parameter_name`                                                                                                                                                                                                                                               |
+| `phone`              | `value`                           | —                             | `carries`  | `value`: `phone_e164`                                                                                                                                                                                                                                                                                                                    |
+| `port`               | `transport`, `number`             | `has_open_port` (source)      | `inherits` | `number`: `uint16`<br>`transport`: one of `tcp`, `udp`, `sctp`                                                                                                                                                                                                                                                                           |
+| `registrar`          | `iana_id`                         | —                             | `none`     | `iana_id`: `uint16`<br>`name`: `printable_text_200`                                                                                                                                                                                                                                                                                      |
+| `repository`         | `host`, `owner`, `name`           | —                             | `carries`  | `host`: `dns_name`<br>`name`: `repo_name`<br>`owner`: `repo_owner`<br>`platform`: one of `github`, `gitlab`, `bitbucket`, `gitea`                                                                                                                                                                                                        |
+| `secret`             | `value_sha256`                    | —                             | `carries`  | `value_sha256`: `sha256`                                                                                                                                                                                                                                                                                                                 |
+| `service`            | `name`                            | `has_service` (source)        | `inherits` | `name`: `service_name`                                                                                                                                                                                                                                                                                                                   |
+| `spf_record`         | `value`                           | —                             | `none`     | `value`: `spf`                                                                                                                                                                                                                                                                                                                           |
+| `storage_bucket`     | `provider`, `name`                | —                             | `carries`  | `name`: `bucket_name`<br>`provider`: one of `aws_s3`, `gcp_gcs`, `azure_blob`                                                                                                                                                                                                                                                            |
+| `subdomain`          | `value`                           | —                             | `carries`  | `value`: `dns_name`                                                                                                                                                                                                                                                                                                                      |
+| `technology`         | `name`                            | —                             | `none`     | `name`: `tech_token`                                                                                                                                                                                                                                                                                                                     |
+| `tls_cipher_suite`   | `version`, `name`                 | —                             | `none`     | `name`: `tls_cipher_name`<br>`version`: one of `ssl30`, `tls10`, `tls11`, `tls12`, `tls13`, `dtls10`, `dtls12`, `dtls13`                                                                                                                                                                                                                 |
+| `tls_fingerprint`    | `kind`, `value`                   | —                             | `none`     | `kind`: one of `jarm`, `ja3s`<br>`value`: `tls_fingerprint_value`                                                                                                                                                                                                                                                                        |
+| `txt_record`         | `value`                           | —                             | `none`     | `value`: `txt_value`                                                                                                                                                                                                                                                                                                                     |
+| `whois_registration` | `registry`, `registry_domain_id`  | `has_registration` (source)   | `inherits` | `registry`: `public_suffix`<br>`registry_domain_id`: `registry_domain_id`                                                                                                                                                                                                                                                                |
 
 ## Relation types
 
@@ -302,7 +313,7 @@ An autonomous system number: the routing identity a network is announced from.
 
 **Not modeled:** Not the organization holding it (`organization` through `operated_by`) and not the prefixes it announces (`ip_cidr` through `announced_by`).
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** `asn_assigned.1`<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** `asn_assigned.1`<br>**Canonicalizations:** —
 
 | Property  | Required | Rule                                                | Meaning                                                                                   |
 | --------- | -------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -319,7 +330,7 @@ One X.509 certificate, identified by the SHA-256 of its DER encoding.
 
 A self edge through `issued_by` records a self-signed certificate. Absence of that edge means the issuer was never written, not that the chain ends.
 
-**Identity:** `der_sha256`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `der_sha256`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property      | Required | Rule                  | Meaning                                                                        |
 | ------------- | -------- | --------------------- | ------------------------------------------------------------------------------ |
@@ -337,7 +348,7 @@ A provider tenancy container: an AWS account, a GCP project or an Azure subscrip
 
 **Not modeled:** Not an identity-provider tenant (`identity_tenant`), a user or a billing profile.
 
-**Identity:** `provider`, `account_id`<br>**Parent scope:** —<br>**Checks:** `cloud_account_spelling.1`<br>**Canonicalizations:** —
+**Identity:** `provider`, `account_id`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** `cloud_account_spelling.1`<br>**Canonicalizations:** —
 
 | Property     | Required | Rule                         | Meaning                                                                     |
 | ------------ | -------- | ---------------------------- | --------------------------------------------------------------------------- |
@@ -352,7 +363,7 @@ A provider-managed resource that answers at a provider-assigned default hostname
 
 Each accepted hostname names one resource at a time, so a takeover keeps the node and moves its `in_account` edge. Write a custom name or an alias host (`dualstack.`, `.scm.`, `.firebaseapp.com`, `-dot-` routes) as a `subdomain` reached through `hosted_on`. Cloud Run and project-level Cloud Functions hosts have no one-resource default hostname and are not modeled.
 
-**Identity:** `hostname`<br>**Parent scope:** —<br>**Checks:** `cloud_resource_hostname.1`<br>**Canonicalizations:** —
+**Identity:** `hostname`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** `cloud_resource_hostname.1`<br>**Canonicalizations:** —
 
 | Property   | Required | Rule                                                                                                                                                                                                                                                                                                | Meaning                                                                |
 | ---------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -366,7 +377,7 @@ A published CVE record, shared by every object affected by it.
 
 **Not modeled:** Not an observation that something is vulnerable; that is `affected_by` from the affected service, endpoint or finding. Never a finding source.
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `none`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property          | Required | Rule            | Meaning                                                                     |
 | ----------------- | -------- | --------------- | --------------------------------------------------------------------------- |
@@ -384,7 +395,7 @@ A CWE weakness class: the canonical spelling that joins findings from different 
 
 **Not modeled:** Not a finding or an advisory; those reach it through `has_weakness`. Never a finding source.
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `none`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property | Required | Rule                 | Meaning                                                                            |
 | -------- | -------- | -------------------- | ---------------------------------------------------------------------------------- |
@@ -399,7 +410,7 @@ The DKIM key record one domain publishes for one selector, scoped through `has_d
 
 Writing the same selector again patches `value` in place, so the node is a current-state view; a rotated key survives only in evidence attached to the earlier write.
 
-**Identity:** `selector`<br>**Parent scope:** `has_dkim_selector` (source)<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `selector`<br>**Parent scope:** `has_dkim_selector` (source)<br>**Inventory:** `inherits`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property   | Required | Rule            | Meaning                                                                               |
 | ---------- | -------- | --------------- | ------------------------------------------------------------------------------------- |
@@ -412,7 +423,7 @@ A DMARC policy value, shared by every name that publishes the same string.
 
 **Not modeled:** Not the `_dmarc` owner name; `has_dmarc` attaches the record to the domain or subdomain itself.
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `none`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property | Required | Rule    | Meaning                                        |
 | -------- | -------- | ------- | ---------------------------------------------- |
@@ -424,7 +435,7 @@ A registrable domain name as the bundled public suffix list classifies it, such 
 
 **Not modeled:** Not a name below a registrable domain (`subdomain`) and not a public suffix. Registration dates, status and DNSSEC state belong to a `whois_registration`, not to the name.
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** `dns_name_kind.1`<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** `dns_name_kind.1`<br>**Canonicalizations:** —
 
 | Property   | Required | Rule       | Meaning                                                                   |
 | ---------- | -------- | ---------- | ------------------------------------------------------------------------- |
@@ -437,7 +448,7 @@ A mailbox, reached as a contact through `has_contact`.
 
 **Not modeled:** Not a person; person and company types are out of scope. Never a finding source.
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property | Required | Rule            | Meaning                                          |
 | -------- | -------- | --------------- | ------------------------------------------------ |
@@ -451,7 +462,7 @@ One HTTP method on one URL path: the unit a crawler or scanner observes.
 
 Response digests are pivots on `http_fingerprint` nodes, not endpoint attributes. Raw response bodies and headers belong in evidence, where they are full-text indexed. Only the query is removed from `url`: a secret carried in the path, such as a webhook token, stays in it.
 
-**Identity:** `url`, `method`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** `endpoint_url_drop_query.1`
+**Identity:** `url`, `method`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** —<br>**Canonicalizations:** `endpoint_url_drop_query.1`
 
 | Property         | Required | Rule                  | Meaning                                                                                       |
 | ---------------- | -------- | --------------------- | --------------------------------------------------------------------------------------------- |
@@ -471,7 +482,7 @@ One issue a scanner or analyst reports about one object, scoped to it through `h
 
 Identity is the rule and matcher under the parent, as nuclei deduplicates by template, matcher and target, so a renamed template patches `title` instead of forking. Send a distinct `matcher` for each result one rule reports on one parent; two results sharing `""` overwrite each other. `unknown` severity means none was assigned and is not ordinal: never sort or filter it as below `info`.
 
-**Identity:** `rule`, `matcher`<br>**Parent scope:** `has_finding` (source)<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `rule`, `matcher`<br>**Parent scope:** `has_finding` (source)<br>**Inventory:** `inherits`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property      | Required | Rule                                                          | Meaning                                                                                    |
 | ------------- | -------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -492,7 +503,7 @@ An SSH host public key, shared by every service that presents it.
 
 **Not modeled:** Not a host. Two hosts presenting one key are a cloned image or one machine at two addresses, which makes this a correlation pivot. Never a finding source.
 
-**Identity:** `algorithm`, `fingerprint_sha256`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `algorithm`, `fingerprint_sha256`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property             | Required | Rule                                                                                                                                                                                | Meaning                                                                                           |
 | -------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
@@ -505,7 +516,7 @@ A response-side clustering pivot: a favicon hash or a body or header digest.
 
 **Not modeled:** Not an identifier of a host or an owner; a shared default favicon or framework page is common. Never a finding source.
 
-**Identity:** `kind`, `value`<br>**Parent scope:** —<br>**Checks:** `http_fingerprint_value_kind.1`<br>**Canonicalizations:** —
+**Identity:** `kind`, `value`<br>**Parent scope:** —<br>**Inventory:** `none`<br>**Checks:** `http_fingerprint_value_kind.1`<br>**Canonicalizations:** —
 
 | Property | Required | Rule                                                  | Meaning                                                                                |
 | -------- | -------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -518,7 +529,7 @@ An identity-provider tenant, such as an Entra ID directory or an Okta organizati
 
 **Not modeled:** Not a cloud billing account or subscription and not a user.
 
-**Identity:** `provider`, `tenant_id`<br>**Parent scope:** —<br>**Checks:** `tenant_id_spelling.1`<br>**Canonicalizations:** —
+**Identity:** `provider`, `tenant_id`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** `tenant_id_spelling.1`<br>**Canonicalizations:** —
 
 | Property    | Required | Rule                      | Meaning                                                                      |
 | ----------- | -------- | ------------------------- | ---------------------------------------------------------------------------- |
@@ -533,7 +544,7 @@ One IPv4 or IPv6 address.
 
 A range-list classification (cdncheck, httpx `cdn_name`) is an attribute of the address; a CDN or WAF seen in front of a name or service is a `protected_by` edge instead.
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** `ip_address_version.1`<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** `ip_address_version.1`<br>**Canonicalizations:** —
 
 | Property         | Required | Rule         | Meaning                                                                    |
 | ---------------- | -------- | ------------ | -------------------------------------------------------------------------- |
@@ -549,7 +560,7 @@ One IPv4 or IPv6 network with an explicit prefix length, as allocated, announced
 
 **Not modeled:** Not a single address (`ip_address`) and not its holder (`organization` through `operated_by`).
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** `ip_cidr_version.1`<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** `ip_cidr_version.1`<br>**Canonicalizations:** —
 
 | Property  | Required | Rule                                                | Meaning                                                   |
 | --------- | -------- | --------------------------------------------------- | --------------------------------------------------------- |
@@ -567,7 +578,7 @@ The MTA-STS TXT record a name publishes at `_mta-sts.<name>`, scoped through `ha
 
 Scoped because the TXT value is only a version pointer that unrelated tenants publish verbatim; unscoped, their policy attributes would overwrite each other.
 
-**Identity:** `value`<br>**Parent scope:** `has_mta_sts_policy` (source)<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** `has_mta_sts_policy` (source)<br>**Inventory:** `inherits`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property  | Required | Rule                                | Meaning                                                         |
 | --------- | -------- | ----------------------------------- | --------------------------------------------------------------- |
@@ -582,7 +593,7 @@ A number-resource holder known to a regional internet registry, keyed on the reg
 
 **Not modeled:** Not a company in general and not a domain registrant; person and company types are out of scope.
 
-**Identity:** `registry`, `handle`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `registry`, `handle`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property   | Required | Rule                                                | Meaning                                                                             |
 | ---------- | -------- | --------------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -596,7 +607,7 @@ One named input of one endpoint, by name and location, scoped through `has_param
 
 **Not modeled:** Not a value seen for the parameter; values are sample data for evidence.
 
-**Identity:** `name`, `location`<br>**Parent scope:** `has_parameter` (source)<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `name`, `location`<br>**Parent scope:** `has_parameter` (source)<br>**Inventory:** `inherits`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property   | Required | Rule                                               | Meaning                                       |
 | ---------- | -------- | -------------------------------------------------- | --------------------------------------------- |
@@ -609,7 +620,7 @@ A telephone contact, reached through `has_contact`.
 
 **Not modeled:** Not a person or a subscriber. Never a finding source.
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property | Required | Rule         | Meaning                                 |
 | -------- | -------- | ------------ | --------------------------------------- |
@@ -621,7 +632,7 @@ One open transport port on one address, scoped to its `ip_address` through `has_
 
 **Not modeled:** Not a closed or filtered port: only open ports are written, and the scope edge is the state.
 
-**Identity:** `transport`, `number`<br>**Parent scope:** `has_open_port` (source)<br>**Checks:** `port_number_assigned.1`<br>**Canonicalizations:** —
+**Identity:** `transport`, `number`<br>**Parent scope:** `has_open_port` (source)<br>**Inventory:** `inherits`<br>**Checks:** `port_number_assigned.1`<br>**Canonicalizations:** —
 
 | Property    | Required | Rule                        | Meaning                 |
 | ----------- | -------- | --------------------------- | ----------------------- |
@@ -634,7 +645,7 @@ An ICANN-accredited registrar, keyed on its IANA registrar id.
 
 **Not modeled:** Not a registry or a reseller. A registrar without an IANA id gets no node.
 
-**Identity:** `iana_id`<br>**Parent scope:** —<br>**Checks:** `registrar_iana_assigned.1`<br>**Canonicalizations:** —
+**Identity:** `iana_id`<br>**Parent scope:** —<br>**Inventory:** `none`<br>**Checks:** `registrar_iana_assigned.1`<br>**Canonicalizations:** —
 
 | Property  | Required | Rule                 | Meaning                                                                                     |
 | --------- | -------- | -------------------- | ------------------------------------------------------------------------------------------- |
@@ -647,7 +658,7 @@ A source-code repository on one hosting instance, keyed on the host, owner and n
 
 **Not modeled:** Not an organization or a person. `owns_repository` attributes it to a name and needs evidence.
 
-**Identity:** `host`, `owner`, `name`<br>**Parent scope:** —<br>**Checks:** `repository_owner_spelling.1`<br>**Canonicalizations:** —
+**Identity:** `host`, `owner`, `name`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** `repository_owner_spelling.1`<br>**Canonicalizations:** —
 
 | Property         | Required | Rule                                            | Meaning                                                              |
 | ---------------- | -------- | ----------------------------------------------- | -------------------------------------------------------------------- |
@@ -668,7 +679,7 @@ One exposed credential, identified only by the SHA-256 of the secret so its occu
 
 Hash the secret part's UTF-8 bytes untrimmed: trufflehog `Raw` or the secret half of a two-part `RawV2`, gitleaks `Secret` (never `Match`), a leak corpus password or its published hash; in PEM, CRLF becomes LF. Compute it, then replace every secret field with `[REDACTED]` before ingesting the output as evidence. A password digest is unsalted and reversible by dictionary: treat the workspace as holding the passwords. Always send `kind`.
 
-**Identity:** `value_sha256`<br>**Parent scope:** —<br>**Checks:** `secret_plaintext_keys.1`<br>**Canonicalizations:** —
+**Identity:** `value_sha256`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** `secret_plaintext_keys.1`<br>**Canonicalizations:** —
 
 | Property       | Required | Rule                                                                                                                                       | Meaning                                                                                |
 | -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
@@ -684,7 +695,7 @@ The application protocol a port speaks, scoped to that port through `has_service
 
 **Not modeled:** Not the product or version implementing it; that is `runs_technology`.
 
-**Identity:** `name`<br>**Parent scope:** `has_service` (source)<br>**Checks:** `service_secure_flag.1`<br>**Canonicalizations:** —
+**Identity:** `name`<br>**Parent scope:** `has_service` (source)<br>**Inventory:** `inherits`<br>**Checks:** `service_secure_flag.1`<br>**Canonicalizations:** —
 
 | Property  | Required | Rule                 | Meaning                                                                            |
 | --------- | -------- | -------------------- | ---------------------------------------------------------------------------------- |
@@ -699,7 +710,7 @@ An SPF policy value, shared by every name that publishes the same string.
 
 **Not modeled:** Not the publishing name (`has_spf`) and not a malformed SPF-like value, which is a `txt_record`.
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `none`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property | Required | Rule  | Meaning                                      |
 | -------- | -------- | ----- | -------------------------------------------- |
@@ -711,7 +722,7 @@ An object-storage bucket in a provider-global namespace.
 
 **Not modeled:** Not an Azure container (the node is the storage account) and not a regional namespace such as DigitalOcean Spaces.
 
-**Identity:** `provider`, `name`<br>**Parent scope:** —<br>**Checks:** `bucket_name_spelling.1`<br>**Canonicalizations:** —
+**Identity:** `provider`, `name`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** `bucket_name_spelling.1`<br>**Canonicalizations:** —
 
 | Property   | Required | Rule                                     | Meaning                                                             |
 | ---------- | -------- | ---------------------------------------- | ------------------------------------------------------------------- |
@@ -724,7 +735,7 @@ A DNS name below a registrable domain, such as `api.example.com`.
 
 **Not modeled:** Not the registrable domain itself (`domain`).
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** `dns_name_kind.1`<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Checks:** `dns_name_kind.1`<br>**Canonicalizations:** —
 
 | Property          | Required | Rule       | Meaning                                                                         |
 | ----------------- | -------- | ---------- | ------------------------------------------------------------------------------- |
@@ -740,7 +751,7 @@ A product, framework or service slug, shared by every host that runs it.
 
 The slug has no naming authority; use the product's Wappalyzer name lowercased with spaces as hyphens, and put the vendor's product-level CPE in `cpe` to anchor it.
 
-**Identity:** `name`<br>**Parent scope:** —<br>**Checks:** `cpe_product_level.1`<br>**Canonicalizations:** —
+**Identity:** `name`<br>**Parent scope:** —<br>**Inventory:** `none`<br>**Checks:** `cpe_product_level.1`<br>**Canonicalizations:** —
 
 | Property | Required | Rule         | Meaning                                                                |
 | -------- | -------- | ------------ | ---------------------------------------------------------------------- |
@@ -753,7 +764,7 @@ An IANA TLS cipher suite at one protocol version, shared by every service accept
 
 **Not modeled:** Not a negotiated session. Never a finding source.
 
-**Identity:** `version`, `name`<br>**Parent scope:** —<br>**Checks:** —<br>**Canonicalizations:** —
+**Identity:** `version`, `name`<br>**Parent scope:** —<br>**Inventory:** `none`<br>**Checks:** —<br>**Canonicalizations:** —
 
 | Property  | Required | Rule                                                                             | Meaning                                        |
 | --------- | -------- | -------------------------------------------------------------------------------- | ---------------------------------------------- |
@@ -766,7 +777,7 @@ A TLS stack clustering pivot, JARM or JA3S, shared by every host behind one stac
 
 **Not modeled:** Not a host identifier: every host behind one load balancer presents the same JARM.
 
-**Identity:** `kind`, `value`<br>**Parent scope:** —<br>**Checks:** `tls_fingerprint_length.1`<br>**Canonicalizations:** —
+**Identity:** `kind`, `value`<br>**Parent scope:** —<br>**Inventory:** `none`<br>**Checks:** `tls_fingerprint_length.1`<br>**Canonicalizations:** —
 
 | Property | Required | Rule                    | Meaning                                               |
 | -------- | -------- | ----------------------- | ----------------------------------------------------- |
@@ -779,7 +790,7 @@ A generic TXT value a name publishes, when no dedicated type accepts it.
 
 **Not modeled:** Not an SPF, DMARC, DKIM or MTA-STS value its dedicated type accepts, and never an ephemeral `_acme-challenge` value.
 
-**Identity:** `value`<br>**Parent scope:** —<br>**Checks:** `txt_record_diversion.1`<br>**Canonicalizations:** —
+**Identity:** `value`<br>**Parent scope:** —<br>**Inventory:** `none`<br>**Checks:** `txt_record_diversion.1`<br>**Canonicalizations:** —
 
 | Property | Required | Rule        | Meaning                   |
 | -------- | -------- | ----------- | ------------------------- |
@@ -793,7 +804,7 @@ One registry-level registration of a registrable domain, known by the repository
 
 A drop and re-registration gets a new object id, so a new node, and the old one keeps its dates. When the registry publishes no id, or only a redaction placeholder, write no registration: keep the response as evidence on the domain and never invent a key.
 
-**Identity:** `registry`, `registry_domain_id`<br>**Parent scope:** `has_registration` (source)<br>**Checks:** `registry_domain_id_assigned.1`<br>**Canonicalizations:** —
+**Identity:** `registry`, `registry_domain_id`<br>**Parent scope:** `has_registration` (source)<br>**Inventory:** `inherits`<br>**Checks:** `registry_domain_id_assigned.1`<br>**Canonicalizations:** —
 
 | Property               | Required | Rule                 | Meaning                                                                                           |
 | ---------------------- | -------- | -------------------- | ------------------------------------------------------------------------------------------------- |

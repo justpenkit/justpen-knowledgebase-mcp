@@ -1,23 +1,28 @@
 """Closed strict request models preserve nested raw field presence."""
 
-from typing import Annotated, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, get_args, get_origin, get_type_hints
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from justpen_knowledgebase_mcp import models
+from justpen_knowledgebase_mcp.catalog import catalog_manifest
 from justpen_knowledgebase_mcp.identity import GRAPH_ID_PATTERN
 from justpen_knowledgebase_mcp.jobs import JobsRequest
 from justpen_knowledgebase_mcp.models import (
     ClosedModel,
     DeleteRequest,
     GetRequest,
+    MutationResult,
+    NeighborEdge,
+    NeighborNode,
     NeighborsRequest,
     NodeRef,
     NodeWrite,
     RelationWrite,
     SearchRequest,
+    SearchSummary,
     StoredRecordID,
     TargetRef,
     WriteRequest,
@@ -226,3 +231,159 @@ def test_no_request_model_carries_the_egress_identifier_alias():
     ]
     assert {model.__name__ for model in requests} >= {"GetRequest", "JobsRequest", "NodeRef", "TargetRef"}
     assert {model.__name__: _record_id_fields(model) for model in requests if _record_id_fields(model)} == {}
+
+
+PROPERTY_INDEX = {
+    "complete": True,
+    "paths_complete": True,
+    "non_array_complete": True,
+    "indexed_paths": 0,
+    "total_paths": 0,
+    "omitted_values": 0,
+}
+DOMAIN: dict[str, Any] = {"type": "domain", "properties": {"value": "example.test"}}
+RELATION: dict[str, Any] = {
+    "type": "has_subdomain",
+    "properties": {},
+    "source_ref": {"node_index": 0},
+    "target_ref": {"node_index": 1},
+}
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("ownership", "owned"), ("ownership", "rejected"), ("authorization", "in_scope"), ("allowlist_scoped", False)],
+)
+def test_node_write_accepts_top_level_state(field, value):
+    """Inventory state is sent beside `properties`, on creation and on an ID patch alike."""
+    assert getattr(NodeWrite.model_validate({**DOMAIN, field: value}), field) == value
+    patch = NodeWrite.model_validate({"id": str(uuid4()), field: value})
+    assert patch.model_fields_set == {"id", field}
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("ownership", "trusted"),
+        ("authorization", "maybe"),
+        ("allowlist_scoped", 1),
+        ("allowlist_scoped", "true"),
+        ("ownership", None),
+        ("authorization", None),
+        ("allowlist_scoped", None),
+    ],
+)
+def test_node_write_refuses_state_outside_the_vocabulary(field, value):
+    """A state is a closed value; an explicit null makes no claim and is refused like `observed_at`."""
+    with pytest.raises(ValidationError):
+        NodeWrite.model_validate({**DOMAIN, field: value})
+
+
+@pytest.mark.parametrize("field", ["ownership", "authorization", "allowlist_scoped"])
+def test_relation_write_stays_closed_to_state(field):
+    """Relations carry no inventory state, so the field is unknown rather than ignored."""
+    value = False if field == "allowlist_scoped" else "owned"
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RelationWrite.model_validate({**RELATION, field: value})
+
+
+@pytest.mark.parametrize("name", ["ownership", "authorization", "allowlist_scoped", "first_seen", "last_seen"])
+@pytest.mark.parametrize("model", [NodeWrite, RelationWrite])
+def test_reserved_names_are_refused_as_top_level_properties(model, name):
+    """A reserved name inside `properties` would shadow server-managed state; the error names the field."""
+    base = DOMAIN if model is NodeWrite else RELATION
+    with pytest.raises(ValidationError, match=f"use the top-level {name} field"):
+        model.model_validate({**base, "properties": {**base["properties"], name: "owned"}})
+    with pytest.raises(ValidationError, match=f"use the top-level {name} field"):
+        model.model_validate({"id": str(uuid4()), "properties": {name: None}})
+
+
+@pytest.mark.parametrize("model", [NodeWrite, RelationWrite])
+def test_reserved_names_are_free_below_the_top_level(model):
+    """Only top-level keys are reserved; scanner output nests these words freely."""
+    base = DOMAIN if model is NodeWrite else RELATION
+    nested = {"scanner": {"ownership": "x", "first_seen": "2026-01-01T00:00:00Z"}}
+    written = model.model_validate({**base, "properties": {**base["properties"], **nested}})
+    assert written.properties["scanner"] == nested["scanner"]
+
+
+def test_search_state_filters_are_node_only():
+    """State lives on nodes, so relation and evidence searches refuse the filters rather than ignore them."""
+    request = SearchRequest.model_validate({"kind": "nodes", "ownership": "rejected", "authorization": "in_scope"})
+    assert (request.ownership, request.authorization) == ("rejected", "in_scope")
+    for kind in ("evidence", "relations"):
+        for field, value in (("ownership", "owned"), ("authorization", "unknown")):
+            with pytest.raises(ValidationError):
+                SearchRequest.model_validate({"kind": kind, field: value})
+    with pytest.raises(ValidationError):
+        SearchRequest.model_validate({"kind": "nodes", "ownership": "trusted"})
+    assert SearchRequest.model_validate({"kind": "relations", "last_seen_min": "2026-01-01T00:00:00Z"})
+
+
+@pytest.mark.parametrize("field", ["first_seen_min", "first_seen_max", "last_seen_min", "last_seen_max"])
+def test_seen_bounds_replace_observed_at_on_graph_searches(field):
+    """KTD6: graph searches bound first and last seen; evidence keeps its per-source times."""
+    assert SearchRequest.model_validate({"kind": "nodes", field: "2026-01-01T00:00:00Z"})
+    for invalid in ({"kind": "evidence", field: "2026-01-01T00:00:00Z"}, {"kind": "nodes", field: "yesterday"}):
+        with pytest.raises(ValidationError):
+            SearchRequest.model_validate(invalid)
+    with pytest.raises(ValidationError):
+        SearchRequest.model_validate({"kind": "nodes", "observed_at_min": "2026-01-01T00:00:00Z"})
+
+
+def test_state_response_fields_are_optional_until_storage_fills_them():
+    """Current storage output validates unchanged, and a populated state validates too."""
+    root = str(uuid4())
+    bare = MutationResult.model_validate(
+        {
+            "id": str(uuid4()),
+            "created": True,
+            "updated": False,
+            "links_added": 0,
+            "links_removed": 0,
+            "property_index": PROPERTY_INDEX,
+        }
+    )
+    assert (bare.ownership, bare.authorization, bare.rejection_job_id) == (None, None, None)
+    rejected = MutationResult.model_validate(
+        {
+            **bare.model_dump(),
+            "ownership": "rejected",
+            "authorization": "out_of_scope",
+            "rejection_job_id": str(uuid4()),
+        }
+    )
+    assert rejected.ownership == "rejected"
+    summary = SearchSummary.model_validate(
+        {"id": str(uuid4()), "ownership": "owned", "authorization": "in_scope", "state_root_id": root}
+    )
+    assert summary.state_root_id == root
+    assert SearchSummary.model_validate({"id": str(uuid4())}).ownership is None
+    node = NeighborNode.model_validate(
+        {
+            "id": str(uuid4()),
+            "type": "port",
+            "ownership": "owned",
+            "authorization": "out_of_scope",
+            "state_root_id": root,
+        }
+    )
+    assert node.authorization == "out_of_scope"
+    assert NeighborNode.model_validate({"id": str(uuid4()), "type": "domain"}).ownership is None
+    with pytest.raises(ValidationError):
+        MutationResult.model_validate({**bare.model_dump(), "ownership": "trusted"})
+
+
+def test_neighbor_edges_carry_no_state():
+    """Relations hold no inventory state, so an edge refuses the node-only fields."""
+    edge = {"id": str(uuid4()), "type": "has_port", "source_id": str(uuid4()), "target_id": str(uuid4())}
+    assert NeighborEdge.model_validate(edge)
+    with pytest.raises(ValidationError):
+        NeighborEdge.model_validate({**edge, "ownership": "owned"})
+
+
+def test_state_vocabularies_match_the_catalog():
+    """The wire literals and the vocabularies `kb_types` publishes are one list."""
+    inventory = catalog_manifest()["inventory"]
+    assert list(get_args(models.Ownership)) == inventory["ownership"]
+    assert list(get_args(models.Authorization)) == inventory["authorization"]

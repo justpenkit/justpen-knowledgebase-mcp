@@ -25,6 +25,18 @@ DOCS: dict[str, Any] = {
         "properties_bytes": "Maximum size of one canonical properties object, in UTF-8 bytes.",
         "required_nonnull": "A required property may not be null or absent.",
     },
+    "inventory": {
+        "carries": "The node holds its own ownership and authorization.",
+        "inherits": (
+            "The node is parent-scoped and inherits ownership and authorization from its parent-scope chain, "
+            "which ends at a node that carries them."
+        ),
+        "none": "A vocabulary or shared record: the node holds no ownership or authorization.",
+        "testing": (
+            "Only `in_scope` authorizes active testing; `owned` and `unknown` do not. The server performs no "
+            "testing, so the agent enforces this rule."
+        ),
+    },
     "formats": {
         "alpn_tokens": (
             "An array of zero or more ASCII tokens matching `[A-Za-z0-9./_-]{1,255}`; order is not "

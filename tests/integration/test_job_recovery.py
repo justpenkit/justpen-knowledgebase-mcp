@@ -272,7 +272,15 @@ async def test_two_process_claim_and_expired_delete_worker_cannot_commit(tmp_pat
         owner = (
             await kb.write(
                 WriteRequest.model_validate(
-                    {"nodes": [{"type": "domain", "properties": {"value": "delete-owner.example"}}]}
+                    {
+                        "nodes": [
+                            {
+                                "type": "domain",
+                                "ownership": "candidate",
+                                "properties": {"value": "delete-owner.example"},
+                            }
+                        ]
+                    }
                 )
             )
         )["nodes"][0]["id"]

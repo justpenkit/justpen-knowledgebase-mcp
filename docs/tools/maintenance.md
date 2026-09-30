@@ -68,6 +68,13 @@ owner job, and intent time; `BUSY`, `LIMIT`, or storage errors. Once intent
 commits it cannot be cancelled. `cascade: true` removes incident relations and
 links while preserving neighboring nodes and unselected evidence blobs.
 
+Deleting a `rejected` node is an explicit purge: it lifts the block on
+re-creating its identity, and on creating subdomains under a rejected domain. A
+rejected node keeps its evidence links, so it needs `cascade: true`. Deleting
+evidence that is the last ready link of a node holding an ownership or
+authorization claim returns `CONFLICT: LAST_CLAIM_EVIDENCE`, and the blocker
+names that node; link other evidence first, or withdraw the claim.
+
 ## `kb_jobs`
 
 **Input:** `action` defaults to `list`. List accepts optional state, `limit` 20,

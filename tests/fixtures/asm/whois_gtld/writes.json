@@ -8,6 +8,7 @@
           "properties": {
             "value": "example.com"
           },
+          "ownership": "owned",
           "source": "whois_gtld"
         },
         {
@@ -40,6 +41,7 @@
           "properties": {
             "value": "abuse@example.net"
           },
+          "ownership": "dependency",
           "source": "whois_gtld"
         },
         {
@@ -47,6 +49,7 @@
           "properties": {
             "value": "+13105550100"
           },
+          "ownership": "dependency",
           "source": "whois_gtld"
         },
         {
@@ -54,6 +57,7 @@
           "properties": {
             "value": "ns1.example.net"
           },
+          "ownership": "dependency",
           "source": "whois_gtld"
         },
         {
@@ -61,6 +65,7 @@
           "properties": {
             "value": "ns2.example.net"
           },
+          "ownership": "dependency",
           "source": "whois_gtld"
         }
       ],

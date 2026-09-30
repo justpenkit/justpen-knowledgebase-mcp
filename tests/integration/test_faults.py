@@ -100,7 +100,11 @@ async def test_native_sqlite_full_rolls_back_and_next_writer_remains_usable(kb):
         await kb.workers.read(lambda c, t: c.execute("select name from sqlite_master where name='fault_payload'").get)
         is None
     )
-    assert (await kb.write({"nodes": [{"type": "domain", "properties": {"value": "after-full.example"}}]}))["nodes"]
+    assert (
+        await kb.write(
+            {"nodes": [{"type": "domain", "ownership": "candidate", "properties": {"value": "after-full.example"}}]}
+        )
+    )["nodes"]
 
 
 @pytest.mark.parametrize("boundary", ["before-copy", "eight-mib"])

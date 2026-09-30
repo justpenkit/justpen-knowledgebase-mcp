@@ -17,7 +17,7 @@ from justpen_knowledgebase_mcp.errors import (
 from justpen_knowledgebase_mcp.models import GetRequest, NodeRef, NodeWrite, RelationWrite, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.mutations import canonical_json
 from justpen_knowledgebase_mcp.responses import TypesResult, success_response
-from justpen_knowledgebase_mcp.storage import graph
+from justpen_knowledgebase_mcp.storage import graph, inventory
 
 from .helpers import EVIDENCE, NODE, OTHER, cursor, database, owner
 
@@ -138,7 +138,7 @@ def test_endpoint_constraints(relation, source_type, source, target_type, target
 def test_node_preparation_merge_identity_and_duplicate_boundaries(monkeypatch):
     plan = graph._prepare_node(
         database(cursor(value=None)),
-        NodeWrite(type="domain", properties={"value": "example.com", "extra": 2}),
+        NodeWrite(type="domain", ownership="candidate", properties={"value": "example.com", "extra": 2}),
         None,
         "domain",
         None,
@@ -155,7 +155,9 @@ def test_node_preparation_merge_identity_and_duplicate_boundaries(monkeypatch):
     monkeypatch.setattr(graph, "row_by_id", Mock(return_value=existing))
     with pytest.raises(ConflictError, match="type"):
         graph._node_header(database(), NodeWrite(id=NODE, type="subdomain", properties={}))
-    request = WriteRequest(nodes=[NodeWrite(type="domain", properties={"value": "example.com"})] * 2)
+    request = WriteRequest(
+        nodes=[NodeWrite(type="domain", ownership="candidate", properties={"value": "example.com"})] * 2
+    )
     with pytest.raises(InvalidParamsError, match="duplicate"):
         graph._prepare_node_plans(database(cursor(value=None), cursor(value=None)), Mock(), request)
     monkeypatch.setattr(graph, "row_by_id", Mock(return_value=None))
@@ -179,7 +181,7 @@ def test_persist_preserves_metadata_presence_and_refreshes_indexes(monkeypatch, 
     monkeypatch.setattr(graph, "refresh_properties", properties)
     monkeypatch.setattr(graph.fulltext, "refresh_record_text", text)
     previous = owner(metadata='{"label":"old","source":"original"}') if existing else None
-    mutation = NodeWrite(type="domain", properties={"value": "example.com"}, label=None)
+    mutation = NodeWrite(type="domain", ownership="candidate", properties={"value": "example.com"}, label=None)
     result, created = graph._persist(db, "nodes", mutation, previous, mutation.properties, (None, None))
     assert result is readback
     assert created != existing
@@ -203,7 +205,7 @@ def test_links_counts_actual_changes_and_rejects_missing(monkeypatch):
 
 
 def test_write_materializes_results_and_maps_validation(monkeypatch):
-    mutation = NodeWrite(type="domain", properties={"value": "example.com"})
+    mutation = NodeWrite(type="domain", ownership="candidate", properties={"value": "example.com"})
     plan = graph._PreparedMutation(
         mutation,
         "domain",
@@ -257,6 +259,15 @@ def test_record_projection_and_effective_lifecycle(monkeypatch, kind):
     assert result["id"] == NODE
 
 
+def test_a_pending_scoped_record_reports_no_state_and_walks_no_chain(monkeypatch):
+    """A purge removes a node's scope relation before the node, so a pending chain may be cut."""
+    monkeypatch.setattr(graph, "pending_blocker", Mock(return_value={"delete_job_id": OTHER, "pending_since": "t"}))
+    row = owner(type="port", ownership=None, authorization=None, state_root_uuid=OTHER, lifecycle="delete_pending")
+    record = graph._record(database(cursor(value=0)), "nodes", row)
+    assert record["lifecycle"] == "delete_pending"
+    assert not {"ownership", "authorization", "state_root_id"} & record.keys()
+
+
 def test_association_cursor_tie_break_and_limits(monkeypatch):
     monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner(uuid=EVIDENCE)))
     db = database(cursor(value=(NODE, 1)), cursor(rows=[(2, NODE)]), cursor(rows=[(2, OTHER)]))
@@ -291,6 +302,19 @@ def test_types_exposes_scoped_identity_in_manifest_and_schema():
     assert result["types"][0]["properties_schema"]["x-identity"] == identity
 
 
+@pytest.mark.parametrize(("type_name", "inventory"), [("subdomain", "carries"), ("port", "inherits"), ("cve", "none")])
+def test_types_publish_each_node_inventory_declaration_and_the_vocabulary(type_name, inventory):
+    db = database(cursor(value=(NODE, 1)))
+    result = graph.graph_types(db, Mock(deadline=0), TypesRequest(kind="nodes", type=type_name))
+
+    assert result["types"][0]["inventory"] == inventory
+    assert result["inventory"]["ownership"] == ["owned", "dependency", "candidate", "rejected"]
+    assert result["inventory"]["authorization"] == ["in_scope", "out_of_scope", "unknown"]
+    assert set(result["inventory"]["declarations"]) == {"carries", "inherits", "none"}
+    assert "Only `in_scope` authorizes active testing" in result["inventory"]["testing"]
+    assert TypesResult.model_validate(result).inventory == result["inventory"]
+
+
 def test_relation_references_batch_and_existing_endpoints_are_immutable(monkeypatch):
 
     source = owner(type="domain", properties='{"value":"example.com"}')
@@ -315,21 +339,21 @@ def test_relation_references_batch_and_existing_endpoints_are_immutable(monkeypa
 
 
 def test_dedup_uses_canonical_identity_to_reject_hash_collision(monkeypatch):
-    mutation = NodeWrite(type="domain", properties={"value": "example.com"})
+    mutation = NodeWrite(type="domain", ownership="candidate", properties={"value": "example.com"})
     properties = {"value": "example.com"}
     lookup = Mock(return_value=owner(properties='{"value":"example.com"}'))
     monkeypatch.setattr(graph, "row_by_id", lookup)
     existing, merged = graph._deduplicate_node(
-        database(cursor(value=1)), mutation, None, "domain", properties, None, "key"
+        database(cursor(value=1)), mutation, None, "domain", properties, None, "key", 4
     )
     assert existing == owner(properties='{"value":"example.com"}')
     assert merged == properties
     lookup.return_value = owner(properties='{"value":"different.com"}')
     with pytest.raises(ConflictError, match="collision"):
-        graph._deduplicate_node(database(cursor(value=1)), mutation, None, "domain", properties, None, "key")
+        graph._deduplicate_node(database(cursor(value=1)), mutation, None, "domain", properties, None, "key", 4)
     lookup.return_value = None
     with pytest.raises(NotFoundError):
-        graph._deduplicate_node(database(cursor(value=1)), mutation, None, "domain", properties, None, "key")
+        graph._deduplicate_node(database(cursor(value=1)), mutation, None, "domain", properties, None, "key", 4)
 
 
 def test_relation_persistence_binds_endpoint_ids_and_observation(monkeypatch):
@@ -346,11 +370,12 @@ def test_relation_persistence_binds_endpoint_ids_and_observation(monkeypatch):
     monkeypatch.setattr(graph, "refresh_properties", Mock())
     monkeypatch.setattr(graph.fulltext, "refresh_record_text", Mock())
     db = database()
-    _row, created = graph._persist(db, "relations", mutation, None, {}, (source, target))
+    observed = graph.parse_timestamp("2026-01-01T00:00:00Z")
+    _row, created = graph._persist(db, "relations", mutation, None, {}, (source, target), observed=observed)
     assert created
     values = db.execute.call_args.args[1]
     assert values[1:4] == (1, "resolves_to", 2)
-    assert values[-1] == graph.parse_timestamp("2026-01-01T00:00:00Z")
+    assert values[-2:] == (observed, observed)
 
 
 def test_sources_association_invalid_cursor_and_missing_owner(monkeypatch):
@@ -410,7 +435,9 @@ def test_evidence_record_projects_current_bounded_coverage(state, incomplete):
 
 
 def test_catalog_validation_preserves_authored_field_rule():
-    request = WriteRequest(nodes=[NodeWrite(type="domain", properties={"value": "SECRET-MARKER"})])
+    request = WriteRequest(
+        nodes=[NodeWrite(type="domain", ownership="candidate", properties={"value": "SECRET-MARKER"})]
+    )
     with pytest.raises(InvalidParamsError, match="/properties/value: expected dns_name"):
         graph.Graph.write(database(cursor(value=None)), Mock(), request)
 
@@ -459,3 +486,38 @@ def test_types_publish_what_each_type_models_and_the_rules_it_runs():
     assert set(endpoint["check_descriptions"]) == {*endpoint["checks"], *endpoint["canonicalize"]}
     assert result["formats"]["http_url"]["version"] == 1
     assert result["formats"]["http_url"]["description"]
+
+
+@pytest.mark.parametrize(
+    ("authorization", "allowlist", "overrides", "expected"),
+    [
+        ("in_scope", 0, [], "in_scope"),
+        ("in_scope", 1, [], "in_scope"),
+        ("unknown", 0, [None, None], "unknown"),
+        ("in_scope", 0, [None, "out_of_scope"], "out_of_scope"),
+        ("out_of_scope", 0, ["in_scope"], "out_of_scope"),
+        ("in_scope", 0, ["in_scope"], "in_scope"),
+        ("in_scope", 1, [None], "out_of_scope"),
+        ("in_scope", 1, [None, "in_scope"], "in_scope"),
+        ("in_scope", 1, ["in_scope", "out_of_scope"], "out_of_scope"),
+    ],
+)
+def test_effective_authorization_narrows_along_the_chain_and_widens_only_under_an_allowlist(
+    authorization, allowlist, overrides, expected
+):
+    """KTD4, R16, R27: overrides are the scoped nodes below the root, node first."""
+    root = owner(authorization=authorization, allowlist_scoped=allowlist)
+    assert inventory.effective_authorization(root, overrides) == expected
+
+
+def test_effective_state_walks_the_scope_chain_to_its_root():
+    root = owner(ownership="owned", authorization="in_scope", allowlist_scoped=1)
+    port = owner(id=2, uuid=OTHER, type="port", ownership=None, authorization=None, state_root_uuid=NODE)
+    service = owner(id=3, uuid=EVIDENCE, type="service", ownership=None, authorization=None, state_root_uuid=NODE)
+    db = database(cursor(record=port), cursor(record=root))
+    state = inventory.effective_state(db, {**service, "authorization_override": "in_scope"})
+    assert state == inventory.EffectiveState("owned", "in_scope", NODE)
+    assert [call.args[1] for call in db.execute.call_args_list] == [(3, "has_service"), (2, "has_open_port")]
+    assert inventory.effective_state(database(), owner(type="cve", ownership=None)) is None
+    with pytest.raises(ConflictError, match="parent relation"):
+        inventory.effective_state(database(cursor()), port)
