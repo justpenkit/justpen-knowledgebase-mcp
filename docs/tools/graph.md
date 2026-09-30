@@ -69,8 +69,9 @@ changes only by ID, following the transition table. A scoped child inherits
 ownership, may narrow its authorization to `out_of_scope` with evidence, and may
 widen it to `in_scope` only under an allowlist-scoped root. Only a `candidate`
 can be rejected, by ID and with evidence. A refusal raised by these rules
-starts with the item address, `nodes[i]:` or `relations[i]:`. Filter a scanner
-batch against a `kb_search` with `ownership: "rejected"` before writing it.
+starts with the item address, `nodes[i]:` or `relations[i]:`. After a
+`CONFLICT: REJECTED_IDENTITY` refusal, resend the batch without the listed
+`nodes[i]` items, their relations and their scoped children.
 
 The catalog is the only place a type, its required properties, its identity, its
 parent scope and its allowed relation endpoint **types** are declared. `kb_types`
@@ -104,9 +105,10 @@ existing object children. Required identity cannot change. Explicit `null`
 clears label/source but is literal data inside properties, except that a declared
 property rejects it; remove one with `remove_properties`. Records report
 monotonic `first_seen` and `last_seen`: a write is an observation when it
-creates the record, supplies `observed_at`, or sends `properties` or
-`remove_properties`, and a state, label, source or evidence-only write is not.
-An observation older than the record's `last_seen` only adds the properties the
+creates the record, matches it by identity, supplies `observed_at`, or sends
+`properties` or `remove_properties`, and a state, label, source or
+evidence-only write by ID is not. An `observed_at` more than five minutes past
+the server's clock is refused. An observation older than the record's `last_seen` only adds the properties the
 record lacks. See [First and last seen](../guides/graph.md#first-and-last-seen).
 
 Removing `/a` while setting `{"a": {}}` conflicts because the set recreates the

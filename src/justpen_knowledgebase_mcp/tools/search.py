@@ -65,5 +65,5 @@ def register(mcp: FastMCP) -> None:
         max_nodes: Annotated[int, Field(ge=1, le=1000)] = 100,
         max_edges: Annotated[int, Field(ge=0, le=3000)] = 300,
     ) -> ToolResult:
-        """Traverse stored ready relations from seed_ids within depth/node/edge/response/deadline budgets. Returns explicit truncation and frontier; pending deletion may temporarily disconnect the graph. No inferred relations are created."""
+        """Traverse stored ready relations from seed_ids within depth/node/edge/response/deadline budgets. Returns explicit truncation and frontier; pending deletion may temporarily disconnect the graph. No inferred relations are created. Nodes carry their effective `ownership`/`authorization`."""
         return await invoke(ctx, "neighbors", locals())

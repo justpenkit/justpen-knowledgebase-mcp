@@ -231,13 +231,21 @@ such a candidate is a dependency.
 
 A rejected record blocks its own re-creation. A write that matches a rejected
 identity, or that creates a `subdomain` under a rejected registrable `domain`,
-is refused with `CONFLICT: REJECTED_IDENTITY`, and the details list every
-offending `nodes[i]` with the rejected record it hit. Before writing a scanner
-batch, list the rejected names and drop them:
+is refused whole with `CONFLICT: REJECTED_IDENTITY`. Nothing is written, and
+the `rejected_items` details list every offending `nodes[i]` with the
+`rejected_record` it hit. Drop those items, the
+relations that point at them and the scoped children created under them, then
+resend the rest of the batch.
+
+To see the rejected names before writing, list the rejected records:
 
 ```json
 {"kind":"nodes","ownership":"rejected","limit":100}
 ```
+
+Search summaries carry no properties and a rejected record has no label, so read
+the returned IDs with `kb_get` and `kind: "nodes"`: each rejected record keeps
+its identity properties.
 
 Deleting the rejected record with `kb_delete` and `cascade: true` is an explicit
 purge that lifts the block.
@@ -286,9 +294,10 @@ catalog declares rejects it; remove that property with `remove_properties`.
 to the time of the write. Every node and relation reports `first_seen` and
 `last_seen`, the earliest and latest observation any write has reported, and an
 older observation never moves either one backward. A write is an observation
-when it creates the record, supplies `observed_at`, or sends `properties` or
-`remove_properties`. A write that only changes state, label, source or evidence
-links is not. A write observed before the record's `last_seen` may lower
+when it creates the record, matches it by identity (a rescan), supplies
+`observed_at`, or sends `properties` or `remove_properties`. A write by ID that
+only changes state, label, source or evidence links is not. An `observed_at`
+more than five minutes past the server's clock is refused. A write observed before the record's `last_seen` may lower
 `first_seen` and adds the properties the record lacks; it neither overwrites nor
 removes a stored value. `kb_search` bounds graph records with `first_seen_min`,
 `first_seen_max`, `last_seen_min` and `last_seen_max`.

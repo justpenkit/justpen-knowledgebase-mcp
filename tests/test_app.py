@@ -50,7 +50,8 @@ async def test_initialize_instructions_carry_the_inventory_rules(tmp_path, mode)
     assert "in evidence" in instructions
     assert "never write them as nodes" in instructions
     assert "`allowlist_scoped`" in instructions
-    assert "`ownership=rejected`" in instructions
+    assert "`CONFLICT: REJECTED_IDENTITY`" in instructions
+    assert "drop those items with their relations and scoped children, then resend" in instructions
 
 
 @pytest.mark.integration
@@ -59,10 +60,13 @@ async def test_tool_descriptions_state_the_inventory_rules_agents_hit(tmp_path):
         tools = {tool.name: tool.description or "" for tool in await client.list_tools()}
     assert "Creating a node whose kb_types inventory is `carries` requires `ownership`" in tools["kb_write"]
     assert "`owned` and `dependency` claims need `evidence_add`" in tools["kb_write"]
-    assert "`ownership=rejected`" in tools["kb_write"]
+    assert "`CONFLICT: REJECTED_IDENTITY`" in tools["kb_write"]
+    assert "drop those items with their relations and scoped children, then resend" in tools["kb_write"]
     assert "Only `in_scope` authorizes active testing" in tools["kb_write"]
     assert "lifts the block on re-creating its identity" in tools["kb_delete"]
     assert "`rejected`" in tools["kb_search"]
+    assert "effective `ownership`/`authorization`" in tools["kb_neighbors"]
+    assert "`inventory` declaration" in tools["kb_types"]
 
 
 @pytest.mark.integration

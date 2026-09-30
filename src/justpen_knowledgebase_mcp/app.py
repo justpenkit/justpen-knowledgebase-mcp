@@ -34,8 +34,9 @@ _INSTRUCTIONS = " ".join(
         "When the contract allows only listed assets under an `in_scope` root, such as ports 80 and 443 on",
         "one host, mark that root `allowlist_scoped` with evidence: its scoped children are then",
         "`out_of_scope` until an ID write with evidence widens them to `in_scope`.",
-        "Before writing a scanner batch, drop the names a `kb_search` with `ownership=rejected` returns;",
-        "one rejected identity refuses the whole batch.",
+        "A batch that would re-create a rejected identity is refused whole with `CONFLICT: REJECTED_IDENTITY`,",
+        "whose details list every offending `nodes[i]`; drop those items with their relations and scoped",
+        "children, then resend.",
         "Call `kb_types` before writing.",
     )
 )
