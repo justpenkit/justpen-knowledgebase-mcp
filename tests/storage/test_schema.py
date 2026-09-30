@@ -23,7 +23,7 @@ def test_schema_initialized_and_reopened(tmp_path):
     with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
         identity = None
         with closing(runtime.connect()) as connection:
-            assert connection.execute("select schema_version from settings").get == 3
+            assert connection.execute("select schema_version from settings").get == 4
             assert connection.execute("select count(*) from nodes").get == 0
             assert "identity_scope_id" not in {row[1] for row in connection.execute("pragma table_info(nodes)")}
             identity = connection.execute("select workspace_id from settings").get
@@ -35,7 +35,7 @@ def test_newer_schema_is_rejected(tmp_path):
     config = ServerConfig(workspace_dir=tmp_path)
     with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
         connection = runtime.connect()
-        connection.execute("update settings set schema_version=4")
+        connection.execute("update settings set schema_version=5")
         connection.close()
         with pytest.raises(ConfigurationError):
             runtime.connect()
@@ -89,8 +89,93 @@ def test_v3_catalog_workspace_fails_closed(tmp_path):
             runtime.connect()
 
 
+def test_v3_schema_workspace_fails_closed(tmp_path):
+    config = ServerConfig(workspace_dir=tmp_path)
+    with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
+        with closing(runtime.connect()) as connection:
+            connection.execute(
+                "update settings set schema_version=3,catalog_version=3,catalog_fingerprint=?",
+                ("b13948852d5624c5b7c4e51fe33a0216473ca8b68e8356fcb97982f0acad513a",),
+            )
+        with pytest.raises(ContractMismatchError, match="stored schema version differs"):
+            runtime.connect()
+
+
+INVENTORY_NODE_COLUMNS = {
+    "ownership",
+    "authorization",
+    "allowlist_scoped",
+    "authorization_override",
+    "state_root_uuid",
+    "first_seen",
+    "last_seen",
+}
+INVENTORY_INDEXES = {
+    "nodes_ownership": "ownership",
+    "nodes_authorization": "authorization",
+    "nodes_state_root": "state_root_uuid",
+}
+
+
+def test_fresh_workspace_has_inventory_columns_and_indexes(tmp_path):
+    config = ServerConfig(workspace_dir=tmp_path)
+    with (
+        WorkspacePaths(config) as workspace,
+        SQLiteRuntime(workspace, config) as runtime,
+        closing(runtime.connect()) as connection,
+    ):
+        node_columns = {row[1] for row in connection.execute("pragma table_info(nodes)")}
+        relation_columns = {row[1] for row in connection.execute("pragma table_info(relations)")}
+        assert node_columns >= INVENTORY_NODE_COLUMNS
+        assert relation_columns >= {"first_seen", "last_seen"}
+        assert "observed_at" in node_columns & relation_columns
+        for name, column in INVENTORY_INDEXES.items():
+            indexed = [row[2] for row in connection.execute(f"pragma index_info({name})")]
+            assert indexed[0] == column
+        schema.SchemaGuard.check_indexes(connection)
+
+
+@pytest.mark.parametrize(
+    ("insert", "rejected", "accepted"),
+    [
+        (
+            "insert into nodes(uuid,type,key,properties,ownership) values (?,'ip_address',?,'{}',?)",
+            "stranger",
+            ("owned", "dependency", "candidate", "rejected"),
+        ),
+        (
+            "insert into nodes(uuid,type,key,properties,authorization) values (?,'ip_address',?,'{}',?)",
+            "maybe",
+            ("in_scope", "out_of_scope", "unknown"),
+        ),
+        (
+            "insert into nodes(uuid,type,key,properties,authorization_override) values (?,'ip_address',?,'{}',?)",
+            "unknown",
+            ("in_scope", "out_of_scope"),
+        ),
+        (
+            "insert into nodes(uuid,type,key,properties,allowlist_scoped) values (?,'ip_address',?,'{}',?)",
+            2,
+            (0, 1),
+        ),
+    ],
+)
+def test_inventory_columns_enforce_their_enums(tmp_path, insert, rejected, accepted):
+    config = ServerConfig(workspace_dir=tmp_path)
+    with (
+        WorkspacePaths(config) as workspace,
+        SQLiteRuntime(workspace, config) as runtime,
+        closing(runtime.connect()) as connection,
+    ):
+        with pytest.raises(apsw.ConstraintError, match="CHECK"):
+            connection.execute(insert, ("bad", "bad", rejected))
+        for index, value in enumerate(accepted):
+            connection.execute(insert, (f"ok-{index}", f"ok-{index}", value))
+        assert connection.execute("select count(*) from nodes").get == len(accepted)
+
+
 CONTRACT_BREAKS = [
-    ("update settings set schema_version=4", "4", "schema version"),
+    ("update settings set schema_version=5", "5", "schema version"),
     ("update settings set catalog_version=0", "0", "catalog version"),
     ("update settings set catalog_fingerprint='wrong-fingerprint'", "wrong-fingerprint", "catalog fingerprint"),
     ("update settings set index_format_version=99", "99", "index format version"),
