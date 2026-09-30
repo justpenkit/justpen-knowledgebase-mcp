@@ -42,6 +42,8 @@ PENDING_OWNER_SQL = {
     "relations": "SELECT DISTINCT delete_job_id FROM relations WHERE lifecycle='delete_pending' AND delete_job_id IN (SELECT value FROM json_each(?))",
     "evidence": "SELECT DISTINCT delete_job_id FROM evidence WHERE lifecycle='delete_pending' AND delete_job_id IN (SELECT value FROM json_each(?))",
 }
+# `JobResult.deleted_ids` holds at most this many IDs; a rejection job reports its total beside them.
+DELETED_IDS_CAP = 100
 
 
 @dataclass
@@ -116,6 +118,23 @@ def pending_owners(connection: apsw.Connection, job_ids: list[str]) -> frozenset
     return frozenset(
         str(value) for sql in PENDING_OWNER_SQL.values() for (value,) in connection.execute(sql, (candidates,))
     )
+
+
+def rejection_payload(node_id: str) -> dict[str, Any]:
+    """Name only the rejected node: the job's intents, not its payload, carry what it purges."""
+    return {"node_id": node_id, "rejection": True}
+
+
+def _rejection_result(progress: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "deleted_ids": progress["deleted_ids"],
+        "progress": {"rows_deleted": progress["rows_deleted"]},
+    }
+    if progress["deleted_count"] > DELETED_IDS_CAP:
+        result["warnings"] = [
+            f"deleted {progress['deleted_count']} records; deleted_ids lists the first {DELETED_IDS_CAP}"
+        ]
+    return result
 
 
 def _invalid_metadata_result(row: dict[str, Any]) -> dict[str, Any]:
@@ -422,9 +441,21 @@ class JobStore:
         GraphDeletion.prepare(connection, request, job_id)
 
     @staticmethod
+    def admit_rejection(connection: apsw.Connection, job_id: str, node_id: str) -> None:
+        """Admit the purge of a rejected node's subtree inside the rejecting write (KTD5).
+
+        The caller's transaction has already marked the node's incident relations and scoped
+        descendants `delete_pending` under `job_id`; the node itself stays ready.
+        """
+        JobStore.insert(connection, job_id, "delete", "short", rejection_payload(node_id))
+
+    @staticmethod
     def delete_step(connection: apsw.Connection, claim: Claim) -> dict[str, Any] | None:
         """Bound all canonical cleanup and checkpoint/lease release in one commit."""
         JobStore.fence(connection, claim)
+        if claim.payload.get("rejection"):
+            JobStore._rejection_step(connection, claim)
+            return None
         kind = claim.payload["kind"]
         rows = list(connection.execute(INTENT_SQL[kind], (claim.job_id,)))
         if not rows:
@@ -445,6 +476,20 @@ class JobStore:
         else:
             JobStore.release(connection, claim, progress)
         return None
+
+    @staticmethod
+    def _rejection_step(connection: apsw.Connection, claim: Claim) -> None:
+        step = GraphDeletion.purge_rejection(connection, claim.job_id)
+        deleted_ids: list[str] = claim.progress.get("deleted_ids", [])
+        progress = {
+            "rows_deleted": claim.progress.get("rows_deleted", 0) + step.rows_deleted,
+            "deleted_ids": [*deleted_ids, *step.purged][:DELETED_IDS_CAP],
+            "deleted_count": claim.progress.get("deleted_count", 0) + len(step.purged),
+        }
+        if step.done:
+            JobStore.finish(connection, claim, "completed", _rejection_result(progress))
+        else:
+            JobStore.release(connection, claim, progress)
 
     @staticmethod
     def finalize_evidence(connection: apsw.Connection, claim: Claim, evidence_id: str) -> None:

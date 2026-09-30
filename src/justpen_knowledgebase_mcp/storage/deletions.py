@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..catalog import scope_order
 from ..errors import ConflictError, InvalidParamsError, MissingRecordsError, RecordConflictError
 from ..responses import BlockerDetails, MissingDetails
 from . import graph_sql as sql
@@ -15,6 +17,35 @@ if TYPE_CHECKING:
     import apsw
 
     from ..models import DeleteRequest
+
+# A rejection purges scoped nodes deepest type first, so each node goes before the parent that
+# scopes it, then the rejected node's own relations. The catalog orders scoped types parent-first.
+_REJECTION_NODE_TYPES = tuple(reversed(scope_order()))
+_REJECTION_NODE_BY_TYPE = (
+    "SELECT id,uuid,delete_job_id,delete_cascade,delete_requested_at FROM nodes "
+    "WHERE type=? AND lifecycle='delete_pending' AND delete_job_id=? ORDER BY id LIMIT 1"
+)
+_REJECTION_INTENT = {
+    "nodes": "SELECT id,uuid,delete_job_id,delete_cascade,delete_requested_at FROM nodes "
+    "WHERE lifecycle='delete_pending' AND delete_job_id=? ORDER BY id LIMIT 1",
+    "relations": "SELECT id,uuid,delete_job_id,delete_cascade,delete_requested_at FROM relations "
+    "WHERE lifecycle='delete_pending' AND delete_job_id=? ORDER BY id LIMIT 1",
+}
+_INCIDENT = (
+    "SELECT id,uuid,delete_job_id FROM relations WHERE source_id=? ORDER BY id LIMIT 1",
+    "SELECT id,uuid,delete_job_id FROM relations WHERE target_id=? ORDER BY id LIMIT 1",
+)
+# A ready node linked to this evidence that holds a claim and keeps no other link to ready evidence
+# outside the bound JSON array of deleted UUIDs (R21, KTD9). The claim values mirror the write path.
+_BARE_CLAIM = (
+    "SELECT n.uuid FROM node_evidence l JOIN nodes n ON n.id=l.node_id "
+    "WHERE l.evidence_id=? AND n.lifecycle='ready' "
+    "AND (n.ownership IN ('owned','dependency','rejected') OR n.authorization IN ('in_scope','out_of_scope') "
+    "OR n.authorization_override IN ('in_scope','out_of_scope')) "
+    "AND NOT EXISTS(SELECT 1 FROM node_evidence k JOIN evidence e ON e.id=k.evidence_id "
+    "WHERE k.node_id=n.id AND e.lifecycle='ready' AND e.uuid NOT IN (SELECT value FROM json_each(?))) "
+    "ORDER BY l.id LIMIT 1"
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +67,17 @@ class DeleteStep:
     rows_deleted: int
     done: bool
     files_pending: bool = False
+    # UUIDs of this job's own intents removed in the step: the owner, and incident relations it held.
+    purged: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class RejectionStep:
+    """One transaction's cost across a rejection job's intents, and whether any remain."""
+
+    rows_deleted: int
+    purged: tuple[str, ...]
+    done: bool
 
 
 def _dependency(connection: apsw.Connection, kind: str, owner_id: int) -> tuple[str, dict[str, Any]] | None:
@@ -75,6 +117,15 @@ def _reject_dependency(connection: apsw.Connection, kind: str, row: dict[str, An
         if blocker["blocking_record"] != details["blocking_record"]:
             details["deletion_owner"] = blocker["blocking_record"]
     raise RecordConflictError("DEPENDENCIES_EXIST", BlockerDetails.model_validate(details))
+
+
+def _reject_bare_claim(connection: apsw.Connection, request: DeleteRequest, row: dict[str, Any]) -> None:
+    """Refuse deleting the last ready evidence of a node that holds a claim (R21, KTD9)."""
+    node = connection.execute(_BARE_CLAIM, (row["id"], json.dumps(request.ids))).get
+    if node is not None:
+        raise RecordConflictError(
+            "LAST_CLAIM_EVIDENCE", BlockerDetails.model_validate({"blocking_record": {"kind": "nodes", "id": node}})
+        )
 
 
 def _reject_scope_orphan(connection: apsw.Connection, kind: str, row: dict[str, Any]) -> None:
@@ -140,23 +191,37 @@ def _has_children(connection: apsw.Connection, kind: str, owner_id: int) -> bool
     )
 
 
-def _delete_incident(connection: apsw.Connection, owner_id: int, row_budget: int) -> int:
+def _delete_incident(
+    connection: apsw.Connection, owner_id: int, row_budget: int, job_id: str
+) -> tuple[int, tuple[str, ...]]:
+    """Delete incident relations; also return the removed ones that were this job's own intents."""
     deleted = 0
+    purged: list[str] = []
     while deleted < row_budget:
-        identifier = connection.execute(
-            "SELECT id FROM relations WHERE source_id=? ORDER BY id LIMIT 1", (owner_id,)
-        ).get
-        if identifier is None:
-            identifier = connection.execute(
-                "SELECT id FROM relations WHERE target_id=? ORDER BY id LIMIT 1", (owner_id,)
-            ).get
-        if identifier is None:
+        relation = connection.execute(_INCIDENT[0], (owner_id,)).get
+        if relation is None:
+            relation = connection.execute(_INCIDENT[1], (owner_id,)).get
+        if relation is None:
             break
+        identifier, uuid, delete_job_id = relation
         deleted += _delete_children(connection, "relations", identifier, row_budget - deleted)
         if deleted < row_budget and not _has_children(connection, "relations", identifier):
             connection.execute("DELETE FROM relations WHERE id=?", (identifier,))
             deleted += connection.changes()
-    return deleted
+            if delete_job_id == job_id:
+                purged.append(uuid)
+    return deleted, tuple(purged)
+
+
+def _next_rejection_intent(connection: apsw.Connection, job_id: str) -> DeleteIntent | None:
+    """Select the deepest pending scoped node, then any other node, then a relation of this job."""
+    queries = [(_REJECTION_NODE_BY_TYPE, (type_name, job_id), "nodes") for type_name in _REJECTION_NODE_TYPES]
+    queries += [(_REJECTION_INTENT[kind], (job_id,), kind) for kind in ("nodes", "relations")]
+    for query, bindings, kind in queries:
+        row = connection.execute(query, bindings).fetchone()
+        if row is not None:
+            return DeleteIntent(kind, row[0], row[1], row[2], bool(row[3]), row[4])
+    return None
 
 
 def _validated_delete_rows(connection: apsw.Connection, request: DeleteRequest) -> list[dict[str, Any]]:
@@ -173,6 +238,8 @@ def _validated_delete_rows(connection: apsw.Connection, request: DeleteRequest) 
         _reject_scope_orphan(connection, request.kind, row)
         if not request.cascade:
             _reject_dependency(connection, request.kind, row)
+        if request.kind == "evidence":
+            _reject_bare_claim(connection, request, row)
         validated.append(row)
     return validated
 
@@ -212,15 +279,37 @@ class GraphDeletion:
             owner["lifecycle"],
         ) != (intent.uuid, intent.job_id, int(intent.cascade), intent.requested_at, "delete_pending"):
             raise ConflictError("delete intent mismatch")
-        deleted = 0
+        deleted, purged = 0, ()
         if intent.kind == "nodes":
-            deleted = _delete_incident(connection, intent.owner_id, row_budget)
+            deleted, purged = _delete_incident(connection, intent.owner_id, row_budget, intent.job_id)
             if deleted == row_budget:
-                return DeleteStep(deleted, done=False)
+                return DeleteStep(deleted, done=False, purged=purged)
         deleted += _delete_children(connection, intent.kind, intent.owner_id, row_budget - deleted)
         if deleted == row_budget or _has_children(connection, intent.kind, intent.owner_id):
-            return DeleteStep(deleted, done=False)
+            return DeleteStep(deleted, done=False, purged=purged)
         if intent.kind == "evidence":
             return DeleteStep(deleted, done=False, files_pending=True)
         connection.execute(sql.OWNER_DELETE[intent.kind], (intent.owner_id,))
-        return DeleteStep(deleted + connection.changes(), done=True)
+        return DeleteStep(deleted + connection.changes(), done=True, purged=(*purged, intent.uuid))
+
+    @staticmethod
+    def purge_rejection(connection: apsw.Connection, job_id: str, row_budget: int = 100) -> RejectionStep:
+        """Spend at most 100 logical rows across a rejection job's intents, innermost first (KTD5).
+
+        The job owns the rejected node's pending scoped descendants and incident relations, never
+        the node itself, so no `kb_delete` admission check applies to them.
+        """
+        if type(row_budget) is not int or not 1 <= row_budget <= 100:
+            raise InvalidParamsError("invalid deletion row budget")
+        deleted = 0
+        purged: list[str] = []
+        while deleted < row_budget:
+            intent = _next_rejection_intent(connection, job_id)
+            if intent is None:
+                return RejectionStep(deleted, tuple(purged), done=True)
+            step = GraphDeletion.step(connection, intent, row_budget - deleted)
+            deleted += step.rows_deleted
+            purged.extend(step.purged)
+            if not step.done:
+                break
+        return RejectionStep(deleted, tuple(purged), done=False)

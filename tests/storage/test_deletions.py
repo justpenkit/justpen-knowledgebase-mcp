@@ -1,5 +1,7 @@
 """Bounded SQL deletion primitives; job fixtures stand in for Task6 orchestration."""
 
+import json
+import time
 from uuid import uuid4
 
 import pytest
@@ -10,6 +12,8 @@ from justpen_knowledgebase_mcp.errors import ConflictError, MissingRecordsError,
 from justpen_knowledgebase_mcp.models import GetRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.deletions import GraphDeletion
+from justpen_knowledgebase_mcp.storage.job_recovery import recover_intents
+from justpen_knowledgebase_mcp.storage.jobs import JobStore
 
 from .graph_fixtures import admit, evidence_fixture, stated_request
 
@@ -440,3 +444,192 @@ async def test_a_scoped_child_of_a_scoped_child_is_deleted_innermost_first(tmp_p
         await finish_delete(kb, (await admit(kb, "nodes", [endpoint]))[0])
 
         assert (await kb.get(GetRequest(kind="nodes", ids=[endpoint])))["missing_ids"] == [endpoint]
+
+
+async def rejected_stack(kb):
+    """Write `domain -resolves_to-> ip_address -> port -> service -> finding` and name every row."""
+    written = await kb.write(
+        stated_request(
+            {
+                "nodes": [
+                    {"type": "ip_address", "properties": {"value": "192.0.2.10", "version": 4}},
+                    {"type": "port", "properties": {"transport": "tcp", "number": 443}},
+                    {"type": "service", "properties": {"name": "unknown"}},
+                    {
+                        "type": "finding",
+                        "properties": {
+                            "rule": "manual:exposed-admin",
+                            "matcher": "",
+                            "title": "Exposed admin",
+                            "severity": "high",
+                        },
+                    },
+                    {"type": "domain", "properties": {"value": "example.com"}},
+                ],
+                "relations": [
+                    {
+                        "type": relation,
+                        "source_ref": {"node_index": source},
+                        "target_ref": {"node_index": target},
+                        "properties": {},
+                    }
+                    for relation, source, target in (
+                        ("has_open_port", 0, 1),
+                        ("has_service", 1, 2),
+                        ("has_finding", 2, 3),
+                        ("resolves_to", 4, 0),
+                    )
+                ],
+            }
+        )
+    )
+    nodes = dict(zip(("ip_address", "port", "service", "finding", "domain"), written["nodes"], strict=True))
+    relations = dict(
+        zip(("has_open_port", "has_service", "has_finding", "resolves_to"), written["relations"], strict=True)
+    )
+    return {name: row["id"] for name, row in {**nodes, **relations}.items()}
+
+
+def seed_rejection(connection, stack, job_id):
+    """Stand in for the rejection write (U8): strip the node, mark its subtree, admit the job."""
+    root = connection.execute("select id from nodes where uuid=?", (stack["ip_address"],)).get
+    connection.execute("update nodes set ownership='rejected',authorization='unknown' where id=?", (root,))
+    for name in ("port", "service", "finding"):
+        connection.execute(
+            "update nodes set lifecycle='delete_pending',delete_job_id=?,delete_cascade=1,delete_requested_at=1 "
+            "where uuid=?",
+            (job_id, stack[name]),
+        )
+    connection.execute(
+        "update relations set lifecycle='delete_pending',delete_job_id=?,delete_cascade=1,delete_requested_at=1 "
+        "where source_id=? or target_id=?",
+        (job_id, root, root),
+    )
+    JobStore.admit_rejection(connection, job_id, stack["ip_address"])
+
+
+def rejection_purge_order(stack):
+    """The job's own intents in purge order: each node before its parent, the node's scope edge
+    as the node goes, and the rejected node's remaining relations last."""
+    return [stack[name] for name in ("finding", "service", "has_open_port", "port", "resolves_to")]
+
+
+async def run_delete_job(kb, job_id):
+    while True:
+        claim = await kb.workers.control(lambda c, t: JobStore.claim(c, "short", "delete"))
+        assert claim is not None
+        assert claim.job_id == job_id
+        await kb.workers.write(lambda c, t, claim=claim: JobStore.delete_step(c, claim))
+        result = await kb.workers.read(lambda c, t: JobStore.get(c, job_id))
+        if result["state"] == "completed":
+            return result
+
+
+async def surviving(kb):
+    return await kb.workers.read(
+        lambda c, t: {value for (value,) in c.execute("select uuid from nodes union all select uuid from relations")}
+    )
+
+
+async def test_rejection_job_purges_the_subtree_innermost_first_then_its_relations(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        await kb.job_runner.close()
+        stack = await rejected_stack(kb)
+        job_id = str(uuid4())
+        await kb.workers.write(lambda c, t: seed_rejection(c, stack, job_id))
+        # Outside the rejection intent, an ordinary delete of the parent still waits for its children.
+        with pytest.raises(ConflictError, match="child must be deleted first"):
+            await admit(kb, "nodes", [stack["ip_address"]])
+        purged, removed_at, steps = [], {}, 0
+        while True:
+            step = await kb.workers.write(lambda c, t: GraphDeletion.purge_rejection(c, job_id, row_budget=1))
+            steps += 1
+            assert step.rows_deleted <= 1
+            purged.extend(step.purged)
+            present = await surviving(kb)
+            for name, identifier in stack.items():
+                if identifier not in present:
+                    removed_at.setdefault(name, steps)
+            if step.done:
+                break
+        assert steps > 5
+        assert purged == rejection_purge_order(stack)
+        assert removed_at["finding"] < removed_at["service"] < removed_at["port"] < removed_at["resolves_to"]
+        assert await surviving(kb) == {stack["ip_address"], stack["domain"]}
+        record = (await kb.get(GetRequest(kind="nodes", ids=[stack["ip_address"]])))["records"][0]
+        assert record["lifecycle"] == "ready"
+        result = await run_delete_job(kb, job_id)
+        assert result["deleted_ids"] == []
+
+
+async def test_rejection_job_interrupted_after_one_step_resumes_on_restart(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        await kb.job_runner.close()
+        stack = await rejected_stack(kb)
+        job_id = str(uuid4())
+
+        def seed(connection, token):
+            finding = connection.execute("select id from nodes where uuid=?", (stack["finding"],)).get
+            connection.executemany("insert into search_documents(node_id,text) values (?,?)", [(finding, "body")] * 150)
+            seed_rejection(connection, stack, job_id)
+
+        await kb.workers.write(seed)
+        claim = await kb.workers.control(lambda c, t: JobStore.claim(c, "short", "delete"))
+        assert claim is not None
+        await kb.workers.write(lambda c, t: JobStore.delete_step(c, claim))
+        interrupted = await kb.workers.read(lambda c, t: JobStore.get(c, job_id))
+        assert interrupted["state"] == "queued"
+        assert interrupted["progress"]["rows_deleted"] == 100
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        result = await kb.job_runner.wait(job_id, time.monotonic() + 5)
+        assert result["state"] == "completed"
+        assert result["deleted_ids"] == rejection_purge_order(stack)
+        assert await surviving(kb) == {stack["ip_address"], stack["domain"]}
+
+
+@pytest.mark.parametrize("first", ["nodes", "relations"])
+async def test_lost_rejection_job_is_rebuilt_once_with_node_and_relation_intents(tmp_path, first):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        await kb.job_runner.close()
+        stack = await rejected_stack(kb)
+        job_id = str(uuid4())
+        await kb.workers.write(lambda c, t: seed_rejection(c, stack, job_id))
+        await kb.workers.control(lambda c, t: c.execute("delete from jobs where uuid=?", (job_id,)).fetchall())
+        order = [first, "relations" if first == "nodes" else "nodes"]
+        repaired = [
+            (await kb.workers.control(lambda c, t, kind=kind: recover_intents(c, kind, 0)))["repaired"]
+            for kind in order
+        ]
+        assert repaired == [1, 0]
+        payload = await kb.workers.read(
+            lambda c, t: json.loads(c.execute("select payload from jobs where uuid=?", (job_id,)).get)
+        )
+        assert payload == {"node_id": stack["ip_address"], "rejection": True}
+        result = await run_delete_job(kb, job_id)
+        assert result["deleted_ids"] == rejection_purge_order(stack)
+        assert await surviving(kb) == {stack["ip_address"], stack["domain"]}
+
+
+async def owned_domain(kb, evidence):
+    written = await kb.write(
+        stated_request(
+            {"nodes": [{"type": "domain", "properties": {"value": "example.com"}, "evidence_add": evidence}]},
+            "owned",
+        )
+    )
+    return written["nodes"][0]["id"]
+
+
+async def test_evidence_cascade_delete_keeps_the_last_link_of_a_claim(tmp_path):
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        first, second = await evidence_fixture(kb, 2)
+        domain = await owned_domain(kb, [first, second])
+        with pytest.raises(RecordConflictError, match="LAST_CLAIM_EVIDENCE") as caught:
+            await admit(kb, "evidence", [first, second])
+        assert caught.value.details.blocking_record.kind == "nodes"
+        assert str(caught.value.details.blocking_record.id) == domain
+        await admit(kb, "evidence", [first])
+        # The first deletion's links stay until its job runs, but pending evidence no longer counts.
+        with pytest.raises(RecordConflictError, match="LAST_CLAIM_EVIDENCE"):
+            await admit(kb, "evidence", [second])
+        assert (await kb.get(GetRequest(kind="evidence", ids=[second])))["records"][0]["lifecycle"] == "ready"
