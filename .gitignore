@@ -40,11 +40,14 @@ playwright/.cache/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 
-# Superpowers private working area (specs, plans)
-.superpowers/
+# Private working area (specs, plans)
+.private/
 
 # Git worktrees
 .worktrees/
 
 # Leftover dependency caches from older template versions
 node_modules/
+
+# Compound Engineering local scratch
+.context/compound-engineering/

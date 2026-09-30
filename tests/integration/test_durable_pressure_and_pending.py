@@ -222,8 +222,8 @@ async def test_association_pages_require_ready_owner_but_record_remains_inspecta
     written = await kb.write(
         {
             "nodes": [
-                {"type": "subdomain", "properties": {"value": "a.example.com"}},
-                {"type": "domain", "properties": {"value": "example.com"}},
+                {"type": "subdomain", "ownership": "candidate", "properties": {"value": "a.example.com"}},
+                {"type": "domain", "ownership": "candidate", "properties": {"value": "example.com"}},
             ],
             "relations": [
                 {

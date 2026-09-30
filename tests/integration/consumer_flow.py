@@ -49,7 +49,11 @@ async def exercise(python, workspace):
         await call("kb_types", {"kind": "nodes", "type": "subdomain"})
         result = await call(
             "kb_write",
-            {"nodes": [{"type": "subdomain", "properties": {"value": "consumer.example.test"}}]},
+            {
+                "nodes": [
+                    {"type": "subdomain", "ownership": "candidate", "properties": {"value": "consumer.example.test"}}
+                ]
+            },
         )
         identifier = result["nodes"][0]["id"]
         assert (await call("kb_get", {"kind": "nodes", "ids": [identifier]}))["records"][0]["id"] == identifier

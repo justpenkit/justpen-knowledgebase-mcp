@@ -20,6 +20,7 @@ import pytest
 from justpen_knowledgebase_mcp.catalog import (
     catalog_manifest,
     format_descriptions,
+    inventory_description,
     rule_descriptions,
     scope_relations,
     type_description,
@@ -114,17 +115,33 @@ def test_the_coverage_page_lists_every_source_and_transform() -> None:
         assert f"`{name}`" in page, name
 
 
-def test_every_node_type_is_listed_with_its_identity_scope_and_required_map(page: str) -> None:
+def test_every_node_type_is_listed_with_its_identity_scope_inventory_and_required_map(page: str) -> None:
     nodes = catalog_manifest()["nodes"]
     rows = {row[0].strip("`"): row for row in _rows(page, "Node types")}
 
     assert set(rows) == set(nodes)
     for name, definition in nodes.items():
-        _type, identity, scope, required = rows[name]
+        _type, identity, scope, inventory, required = rows[name]
         assert _names(identity)[: len(definition["identity"]["properties"])] == definition["identity"]["properties"]
         declared = definition["identity"].get("scope")
         assert _names(scope) == ([] if declared is None else [declared["relation"]])
+        assert _names(inventory) == [definition["inventory"]], name
         assert _required(required) == definition["required"]
+
+
+def test_the_page_states_the_inventory_gate_and_vocabulary(page: str) -> None:
+    """The inventory declaration is part of what a write is checked against, and the page carries
+    the same vocabularies and testing rule `kb_types` publishes."""
+    gates = {row[0]: row for row in _rows(page, "What a write is checked against")}
+    assert "Inventory" in gates
+    assert _names(gates["Inventory"][1]) == ["inventory"]
+    block = inventory_description()
+    rows = {row[0].strip("`"): row[1] for row in _rows(page, "Inventory state")}
+    assert rows == {name: text.replace("\\", "") for name, text in block["declarations"].items()}
+    text = " ".join(_section(page, "Inventory state").split())
+    assert _code(block["ownership"]) in text
+    assert _code(block["authorization"]) in text
+    assert block["testing"] in text
 
 
 def test_every_relation_type_is_listed_with_its_endpoints_self_edge_and_required_map(page: str) -> None:
@@ -191,6 +208,7 @@ def test_every_type_section_shows_props_identity_and_checks(page: str, kind: str
         if kind == "nodes":
             expected_scope = EMPTY if scope is None else f"`{scope['relation']}` (source)"
             assert f"**Parent scope:** {expected_scope}" in text, name
+            assert f"**Inventory:** `{definition['inventory']}`" in text, name
         else:
             assert f"**Sources:** {_code(definition['sources'])}" in text, name
             assert f"**Targets:** {_code(definition['targets'])}" in text, name

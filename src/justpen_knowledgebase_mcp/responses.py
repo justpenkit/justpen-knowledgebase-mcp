@@ -6,7 +6,15 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
-from .errors import VALID_ERROR_TYPES, LimitError, McpError, MissingRecordsError, RecordConflictError, WalBusyError
+from .errors import (
+    VALID_ERROR_TYPES,
+    LimitError,
+    McpError,
+    MissingRecordsError,
+    RecordConflictError,
+    RejectedIdentityError,
+    WalBusyError,
+)
 from .identity import EvidenceID, validate_record_id
 from .mutations import canonical_json
 
@@ -61,7 +69,22 @@ class WalRetryDetails(BaseModel):
     retry_after_ms: Annotated[int, Field(strict=True, ge=1000, le=30000)]
 
 
-ErrorDetails = BlockerDetails | MissingDetails | WalRetryDetails
+class RejectedItem(BaseModel):
+    """One batch item that would re-create a rejected identity, and the rejected record it names."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    item: Annotated[str, Field(pattern=r"^nodes\[[0-9]{1,2}\]$")]
+    rejected_record: UUID
+
+
+class RejectedIdentityDetails(BaseModel):
+    """Every item of a batch refused for a rejected identity, by address and record ID only."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    rejected_items: Annotated[list[RejectedItem], Field(min_length=1, max_length=100)]
+
+
+ErrorDetails = BlockerDetails | MissingDetails | RejectedIdentityDetails | WalRetryDetails
 
 
 class ErrorResult(BaseModel):
@@ -106,7 +129,7 @@ def exception_response(error: BaseException) -> dict[str, Any]:
             return error_response(
                 "BUSY", error.reason, WalRetryDetails(reason=error.reason, retry_after_ms=error.retry_after_ms)
             )
-        if isinstance(error, (RecordConflictError, MissingRecordsError)):
+        if isinstance(error, (RecordConflictError, MissingRecordsError, RejectedIdentityError)):
             return error_response(error.error_type, str(error), error.details)
         if isinstance(error, McpError):
             message = str(error)
@@ -133,6 +156,7 @@ class TypesResult(BaseModel):
     counts_deferred: bool
     common: dict[str, Any]
     formats: dict[str, Any]
+    inventory: dict[str, Any]
     next_cursor: str | None
 
 

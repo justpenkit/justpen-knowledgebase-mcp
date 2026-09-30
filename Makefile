@@ -14,7 +14,7 @@ test-native:
 
 SCALE ?= smoke
 BENCHMARK_SECONDS ?= 1200
-BENCHMARK_OUTPUT ?= .superpowers/benchmarks/$(SCALE)
+BENCHMARK_OUTPUT ?= .private/benchmarks/$(SCALE)
 BENCHMARK_PHASE ?= all
 BENCHMARK_RESUME ?= 0
 BENCHMARK_CORPUS_OUTPUT ?=

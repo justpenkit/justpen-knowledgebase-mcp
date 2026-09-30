@@ -2,12 +2,14 @@
 
 import json
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
 
 from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, NotFoundError, StorageIOError
+from justpen_knowledgebase_mcp.models import JobResult
 from justpen_knowledgebase_mcp.storage import evidence_records, jobs
-from justpen_knowledgebase_mcp.storage.deletions import DeleteStep
+from justpen_knowledgebase_mcp.storage.deletions import DeleteStep, RejectionStep
 
 from .helpers import EVIDENCE, NODE, OTHER, claim, cursor, database, job, owner
 
@@ -212,6 +214,35 @@ def test_delete_step_progress_and_publication_boundary(monkeypatch, rows, step, 
     else:
         assert release.call_args.args[2]["rows_deleted"] == 6
         assert result == ({"evidence_id": NODE, "sha256": "a" * 64} if expected == "files" else None)
+
+
+@pytest.mark.parametrize(("done", "count"), [(False, 40), (True, 40), (True, 130)])
+def test_rejection_step_caps_deleted_ids_and_reports_the_count_beyond_them(monkeypatch, done, count):
+    earlier = [str(uuid4()) for _ in range(count - 30)]
+    purged = tuple(str(uuid4()) for _ in range(30))
+    monkeypatch.setattr(jobs.JobStore, "fence", Mock(return_value=job()))
+    monkeypatch.setattr(jobs.GraphDeletion, "purge_rejection", Mock(return_value=RejectionStep(7, purged, done)))
+    finish, release = Mock(), Mock()
+    monkeypatch.setattr(jobs.JobStore, "finish", finish)
+    monkeypatch.setattr(jobs.JobStore, "release", release)
+    progress = {"rows_deleted": 3, "deleted_ids": earlier[: jobs.DELETED_IDS_CAP], "deleted_count": len(earlier)}
+    rejection = claim(kind="delete", payload=jobs.rejection_payload(NODE), progress=progress)
+    assert jobs.JobStore.delete_step(database(), rejection) is None
+    expected = [*earlier, *purged][: jobs.DELETED_IDS_CAP]
+    if not done:
+        assert release.call_args.args[2] == {"rows_deleted": 10, "deleted_ids": expected, "deleted_count": count}
+        finish.assert_not_called()
+        return
+    result = finish.call_args.args[3]
+    assert result["deleted_ids"] == expected
+    assert result["progress"] == {"rows_deleted": 10}
+    assert result.get("warnings") == (
+        [f"deleted {count} records; deleted_ids lists the first 100"] if count > 100 else None
+    )
+    JobResult.model_validate(
+        {"job_id": NODE, "kind": "delete", "state": "completed", "lane": "short", "attempts": 1}
+        | {"index_state": "not_applicable", **result}
+    )
 
 
 @pytest.mark.parametrize("remaining", [False, True])

@@ -8,6 +8,7 @@
           "properties": {
             "value": "www.example.com"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:17:05.482913Z",
           "source": "tlsx"
         },
@@ -16,6 +17,7 @@
           "properties": {
             "value": "example.com"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:17:05.482913Z",
           "source": "tlsx"
         },
@@ -25,6 +27,7 @@
             "value": "198.51.100.20",
             "version": 4
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:17:05.482913Z",
           "source": "tlsx"
         },
@@ -56,6 +59,7 @@
             "not_after": "2026-12-01T23:59:59Z",
             "serial": "a1b2c3d4e5f60718293a4b5c6d7e8f9"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:17:05.482913Z",
           "source": "tlsx"
         },
@@ -287,6 +291,7 @@
             "value": "203.0.113.10",
             "version": 4
           },
+          "ownership": "candidate",
           "observed_at": "2026-09-20T10:17:06.001122Z",
           "source": "tlsx"
         },
@@ -319,6 +324,7 @@
             "serial": "5a3c0017",
             "self_signed": true
           },
+          "ownership": "candidate",
           "observed_at": "2026-09-20T10:17:06.001122Z",
           "source": "tlsx"
         },
@@ -327,6 +333,7 @@
           "properties": {
             "value": "router.example.org"
           },
+          "ownership": "candidate",
           "observed_at": "2026-09-20T10:17:06.001122Z",
           "source": "tlsx"
         },

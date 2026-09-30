@@ -54,25 +54,10 @@
     }
   },
   "enabledPlugins": {
-    "superpowers@superpowers-marketplace": true,
     "pyright-lsp@claude-plugins-official": true,
-    "caveman@caveman": true
+    "compound-engineering@compound-engineering-plugin": true
   },
   "extraKnownMarketplaces": {
-    "superpowers-marketplace": {
-      "source": {
-        "source": "github",
-        "repo": "obra/superpowers-marketplace"
-      },
-      "autoUpdate": true
-    },
-    "caveman": {
-      "source": {
-        "source": "github",
-        "repo": "JuliusBrussee/caveman"
-      },
-      "autoUpdate": true
-    },
     "claude-plugins-official": {
       "source": {
         "source": "github",

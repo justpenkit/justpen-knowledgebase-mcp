@@ -83,6 +83,7 @@ async def test_unreachable_collector_does_not_fail_http_or_delay_exit(tmp_path, 
                 "nodes": [
                     {
                         "type": "domain",
+                        "ownership": "candidate",
                         "properties": {"value": "durable.example", "credential": "sentinel-secret"},
                     }
                 ]

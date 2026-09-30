@@ -19,6 +19,8 @@ from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.evidence import IngestRequest
 from justpen_knowledgebase_mcp.models import SearchRequest, TypesRequest, WriteRequest
 
+from .tools import envelope
+
 ROOT = Path(__file__).resolve().parent.parent
 pytestmark = [
     pytest.mark.integration,
@@ -85,6 +87,46 @@ def test_public_json_examples_parse_and_match_request_schemas():
     assert IngestRequest.model_validate(ingest).effective_media_type == "application/x-ndjson"
     assert WriteRequest.model_validate(write).nodes[1].properties["value"] == "api.example.com"
     assert SearchRequest.model_validate(search).properties is not None
+
+
+def graph_guide_examples():
+    source = (ROOT / "docs" / "guides" / "graph.md").read_text()
+    return [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", source, flags=re.DOTALL)]
+
+
+def test_graph_guide_state_examples_match_request_schemas():
+    examples = graph_guide_examples()
+    writes = [WriteRequest.model_validate(example) for example in examples if "nodes" in example]
+    patches = [write.nodes[0] for write in writes if write.nodes[0].id is not None]
+    assert any(node.allowlist_scoped and node.authorization == "in_scope" and node.evidence_add for node in patches)
+    assert any(node.ownership == "rejected" and node.evidence_add for node in patches)
+    rejected = next(example for example in examples if example.get("ownership") == "rejected")
+    assert SearchRequest.model_validate(rejected).ownership == "rejected"
+
+
+async def test_graph_guide_scanner_write_is_accepted_under_the_inventory_rules(tmp_path):
+    examples = graph_guide_examples()
+    write = next(example for example in examples if set(example) == {"nodes", "relations"})
+    allowlist = next(example for example in examples if example.get("nodes", [{}])[0].get("allowlist_scoped"))
+    async with Client(create_app(ServerConfig(workspace_dir=tmp_path))) as client:
+        ingested = await client.call_tool("kb_ingest_evidence", {"text": "subfinder and naabu output"})
+        evidence = envelope(ingested)["data"]["evidence_id"]
+        text = re.sub(r"e_[0-9a-f]{64}", evidence, json.dumps(write))
+        result = envelope(await client.call_tool("kb_write", json.loads(text)))
+        assert result["status"] == "ok", result
+        states = [(node["ownership"], node["authorization"]) for node in result["data"]["nodes"]]
+        assert [ownership for ownership, _ in states] == ["owned", "owned", "candidate", "candidate", "candidate"]
+        assert {authorization for _, authorization in states} == {"unknown"}
+        address, port = result["data"]["nodes"][2]["id"], result["data"]["nodes"][3]["id"]
+        allowlist["nodes"][0]["id"] = address
+        text = re.sub(r"e_[0-9a-f]{64}", evidence, json.dumps(allowlist))
+        result = envelope(await client.call_tool("kb_write", json.loads(text)))
+        assert result["status"] == "ok", result
+        assert result["data"]["nodes"][0]["authorization"] == "in_scope"
+        records = envelope(await client.call_tool("kb_get", {"kind": "nodes", "ids": [address, port]}))["data"]
+        assert records["records"][0]["allowlist_scoped"] is True
+        assert records["records"][1]["authorization"] == "out_of_scope"
+        assert records["records"][1]["state_root_id"] == address
 
 
 def test_readme_install_pin_matches_release_metadata():

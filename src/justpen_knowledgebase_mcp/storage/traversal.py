@@ -13,6 +13,7 @@ from ..models import NeighborsResult
 from ..mutations import canonical_json
 from .graph import require_ready, row_by_id
 from .graph_sql import ADJACENCY, READY
+from .inventory import effective_state
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -65,6 +66,15 @@ def _edges(
         yield from heapq.merge(*streams, key=lambda item: item[0])
 
 
+def _node(connection: apsw.Connection, row: dict[str, Any]) -> dict[str, Any]:
+    """A node's identity and effective state; a type that carries no state reports none."""
+    node: dict[str, Any] = {"id": row["uuid"], "type": row["type"]}
+    state = effective_state(connection, row)
+    if state is not None:
+        node.update(state.fields())
+    return node
+
+
 class _Traversal:
     def __init__(self, connection: apsw.Connection, token: OperationToken, request: NeighborsRequest) -> None:
         self.connection, self.token, self.request = connection, token, request
@@ -82,7 +92,7 @@ class _Traversal:
                 raise NotFoundError("seed missing")
             require_ready(self.connection, "nodes", row)
             self.visited[row["id"]] = row["uuid"]
-            node = {"id": row["uuid"], "type": row["type"]}
+            node = _node(self.connection, row)
             self.output["nodes"].append(node)
             self.response_bytes += _member_bytes(node)
             self.queue.append((row["id"], 0))
@@ -105,7 +115,8 @@ class _Traversal:
             "source_id": self.visited[owner] if source == owner else other_uuid,
             "target_id": other_uuid if source == owner else self.visited[owner],
         }
-        node = {"id": other_uuid, "type": row["type"]} if row else None
+        # The state fields are part of the node, so its cost below counts them.
+        node = _node(self.connection, row) if row else None
         cost = _member_bytes(item) + (_member_bytes(node) if node is not None else 0)
         if self.response_bytes + cost > RESPONSE_BYTES:
             return "response_bytes"
@@ -157,4 +168,6 @@ class _Traversal:
 
 def neighbors(connection: apsw.Connection, token: OperationToken, request: NeighborsRequest) -> dict[str, Any]:
     """Materialize only output-bounded nodes/edges, retaining a bounded frontier."""
-    return NeighborsResult.model_validate(_Traversal(connection, token, request).run()).model_dump()
+    # `exclude_unset` keeps the output to the fields the loop built and counted in `response_bytes`.
+    result = NeighborsResult.model_validate(_Traversal(connection, token, request).run())
+    return result.model_dump(exclude_unset=True)
