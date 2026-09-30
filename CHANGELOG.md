@@ -1,3 +1,35 @@
+## v0.5.0 (2026-09-30)
+
+### BREAKING CHANGE
+
+- kb_get records report first_seen and last_seen instead of observed_at, and kb_search replaces observed_at_min/observed_at_max with first_seen_min/max and last_seen_min/max.
+- creating a node of a state-carrying type now requires an ownership of owned, dependency or candidate, and owned or dependency requires evidence_add on that node in the same write.
+- the schema version is 4. A workspace created at schema version 3 fails closed at startup.
+- the catalog contract is v4. A workspace created under catalog v3 fails closed at startup; create a new workspace.
+
+### Feat
+
+- **storage**: expose effective inventory state on reads and search
+- **storage**: reject candidates into identity-only tombstones
+- **storage**: purge rejection subtrees and keep a claim's last evidence
+- **storage**: keep monotonic first and last seen on graph records
+- **storage**: enforce inventory classification on the write path
+- **models**: accept inventory state on node writes and search
+- **storage**: add schema v4 inventory and first/last-seen columns
+- **catalog**: declare inventory state per node type
+
+### Fix
+
+- **review**: apply findings #3 #4 #5 #8 on the write path
+
+### Refactor
+
+- **storage**: simplify the inventory state paths
+
+### Perf
+
+- **storage**: skip the scope-chain walk when nothing can override
+
 ## v0.4.0 (2026-09-23)
 
 ### BREAKING CHANGE

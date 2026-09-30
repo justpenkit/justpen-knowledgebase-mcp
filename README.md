@@ -42,7 +42,7 @@ absolute workspace directory:
 mkdir -p "$PWD/workspace"
 JUSTPEN_KNOWLEDGEBASE_WORKSPACE_DIR="$PWD/workspace" \
   uv run --no-project --python 3.13 \
-  --with "justpen-knowledgebase-mcp @ git+https://github.com/justpenkit/justpen-knowledgebase-mcp.git@v0.4.0" \
+  --with "justpen-knowledgebase-mcp @ git+https://github.com/justpenkit/justpen-knowledgebase-mcp.git@v0.5.0" \
   python -m justpen_knowledgebase_mcp
 ```
 
