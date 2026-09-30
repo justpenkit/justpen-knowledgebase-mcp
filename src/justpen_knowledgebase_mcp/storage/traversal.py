@@ -157,4 +157,6 @@ class _Traversal:
 
 def neighbors(connection: apsw.Connection, token: OperationToken, request: NeighborsRequest) -> dict[str, Any]:
     """Materialize only output-bounded nodes/edges, retaining a bounded frontier."""
-    return NeighborsResult.model_validate(_Traversal(connection, token, request).run()).model_dump()
+    # `exclude_unset` keeps the output to the fields the loop built and counted in `response_bytes`.
+    result = NeighborsResult.model_validate(_Traversal(connection, token, request).run())
+    return result.model_dump(exclude_unset=True)

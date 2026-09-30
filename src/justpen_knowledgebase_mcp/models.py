@@ -20,6 +20,12 @@ from .responses import BlockerDetails
 
 Kind = Literal["nodes", "relations", "evidence"]
 GraphKind = Literal["nodes", "relations"]
+# The inventory vocabularies `catalog.py` publishes in `kb_types`; the equality is pinned by a test.
+Ownership = Literal["owned", "dependency", "candidate", "rejected"]
+Authorization = Literal["in_scope", "out_of_scope", "unknown"]
+# Server-managed state and time live beside `properties`, never inside it: a top-level property of
+# the same name would read as that state to an agent while the server ignored it.
+RESERVED_PROPERTIES = ("ownership", "authorization", "allowlist_scoped", "first_seen", "last_seen")
 # Ingress. Every client-supplied graph identifier carries this alias, including the public tool
 # signatures in `tools/`, which FastMCP validates before a request model is built. Placing the
 # canonical check on the alias rather than inside `validate_record_id` is what makes `kb_get` and
@@ -90,6 +96,15 @@ class Mutation(ClosedModel):
     evidence_add: list[EvidenceID] = Field(default_factory=list, max_length=100)
     evidence_remove: list[EvidenceID] = Field(default_factory=list, max_length=100)
 
+    @field_validator("properties")
+    @classmethod
+    def reserved_properties(cls, value: dict[str, Any]) -> dict[str, Any]:
+        """Refuse a top-level property that would shadow server-managed state or time."""
+        for name in RESERVED_PROPERTIES:
+            if name in value:
+                raise ValueError(f"properties.{name} is reserved; use the top-level {name} field")
+        return value
+
     @model_validator(mode="after")
     def validate_mutation(self) -> Self:
         """Validate metadata without losing explicit null or omission."""
@@ -116,6 +131,17 @@ class NodeWrite(Mutation):
     """Node upsert or ID patch; new scoped nodes require their catalog scope relation in the same batch."""
 
     label: str | None = None
+    ownership: Ownership | None = None
+    authorization: Authorization | None = None
+    allowlist_scoped: bool | None = None
+
+    @model_validator(mode="after")
+    def state_presence(self) -> Self:
+        """Refuse an explicit null state, which makes no claim; omission leaves the state alone."""
+        for field in ("ownership", "authorization", "allowlist_scoped"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        return self
 
     @field_validator("label")
     @classmethod
@@ -226,6 +252,9 @@ class MutationResult(ClosedModel):
     links_added: Annotated[int, Field(ge=0, le=100)]
     links_removed: Annotated[int, Field(ge=0, le=100)]
     property_index: PropertyIndexCoverage
+    ownership: Ownership | None = None
+    authorization: Authorization | None = None
+    rejection_job_id: StoredRecordID | None = None
 
 
 class WriteResult(ClosedModel):
@@ -289,6 +318,8 @@ class SearchRequest(ClosedModel):
     target_id: RecordID | None = None
     observed_at_min: str | None = None
     observed_at_max: str | None = None
+    ownership: Ownership | None = None
+    authorization: Authorization | None = None
     properties: dict[str, Any] | None = None
     limit: Annotated[int, Field(ge=1, le=100)] = 20
     cursor: str | None = None
@@ -298,6 +329,8 @@ class SearchRequest(ClosedModel):
         """Validate predicate complexity and kind-specific explicit fields."""
         if self.kind == "nodes" and self.model_fields_set & {"source_id", "target_id"}:
             raise ValueError("endpoint filters require relations")
+        if self.kind == "relations" and self.model_fields_set & {"ownership", "authorization"}:
+            raise ValueError("state filters require nodes")
         evidence_fields = {
             "media_type",
             "index_state",
@@ -312,6 +345,8 @@ class SearchRequest(ClosedModel):
             "properties",
             "observed_at_min",
             "observed_at_max",
+            "ownership",
+            "authorization",
             "source_id",
             "target_id",
             "include_evidence",
@@ -377,6 +412,9 @@ class SearchSummary(ClosedModel):
     media_type: MediaType | None = None
     index_state: Literal["pending", "ready", "not_applicable", "index_failed"] | None = None
     byte_size: Annotated[int, Field(ge=0)] | None = None
+    ownership: Ownership | None = None
+    authorization: Authorization | None = None
+    state_root_id: StoredRecordID | None = None
     score: float | None = None
     query_mode: Literal["literal", "words"] | None = None
     snippet: str | None = None
@@ -409,15 +447,20 @@ class SearchResult(ClosedModel):
 
 
 class NeighborNode(ClosedModel):
-    """Bounded graph node identity for traversal."""
+    """Bounded graph node identity and inventory state for traversal."""
 
     id: StoredRecordID
     type: str
+    ownership: Ownership | None = None
+    authorization: Authorization | None = None
+    state_root_id: StoredRecordID | None = None
 
 
-class NeighborEdge(NeighborNode):
-    """A directed stored relation, without inferred facts."""
+class NeighborEdge(ClosedModel):
+    """A directed stored relation, without inferred facts or inventory state."""
 
+    id: StoredRecordID
+    type: str
     source_id: StoredRecordID
     target_id: StoredRecordID
 

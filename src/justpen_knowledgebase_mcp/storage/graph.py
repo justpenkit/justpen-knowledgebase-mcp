@@ -674,7 +674,7 @@ class Graph:
             raise InvalidParamsError(exc.message) from None
         except ValueError:
             raise InvalidParamsError("invalid graph mutation") from None
-        return WriteResult.model_validate(output).model_dump()
+        return WriteResult.model_validate(output).model_dump(exclude_unset=True)
 
     @staticmethod
     def get(connection: apsw.Connection, token: OperationToken, request: GetRequest) -> dict[str, Any]:

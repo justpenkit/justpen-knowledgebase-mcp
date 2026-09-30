@@ -6,7 +6,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.tools import ToolResult
 from pydantic import Field
 
-from ..models import Kind, MediaType, NeighborsResult, RecordID, SearchResult
+from ..models import Authorization, Kind, MediaType, NeighborsResult, Ownership, RecordID, SearchResult
 from ..responses import tool_output_schema
 from .request_presence import invoke
 
@@ -40,6 +40,8 @@ def register(mcp: FastMCP) -> None:
         target_id: RecordID | None = None,
         observed_at_min: str | None = None,
         observed_at_max: str | None = None,
+        ownership: Ownership | None = None,
+        authorization: Authorization | None = None,
         properties: dict[str, Any] | None = None,
         limit: Annotated[int, Field(ge=1, le=100)] = 20,
         cursor: str | None = None,
