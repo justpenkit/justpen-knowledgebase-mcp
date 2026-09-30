@@ -31,7 +31,9 @@
       "git reset *",
       "git cherry-pick *",
       "git push *",
-      "git branch *"
+      "git branch *",
+      "git worktree *",
+      "gh pr checkout *"
     ],
     "filesystem": {
       "allowWrite": [

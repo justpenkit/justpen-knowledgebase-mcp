@@ -253,6 +253,8 @@ CLAUDE_UNSANDBOXED = {
     "git cherry-pick *",
     "git push *",
     "git branch *",
+    "git worktree *",
+    "gh pr checkout *",
 }
 
 
