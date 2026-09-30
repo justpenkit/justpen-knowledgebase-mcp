@@ -91,6 +91,9 @@ _RELIANCE_RELATIONS = json.dumps(
         )
     )
 )
+# How far past the server's clock an `observed_at` may run, in microseconds: last seen keeps the
+# maximum, so a later one would outrank every real scan until the clock caught up with it.
+_OBSERVATION_SKEW = 300_000_000
 
 
 def _member_bytes(member: object) -> int:
@@ -165,9 +168,26 @@ def _observation_time(mutation: Mutation) -> int:
     return parse_timestamp(mutation.observed_at) if mutation.observed_at is not None else time.time_ns() // 1000
 
 
+def _refuse_future_observations(request: WriteRequest) -> None:
+    """Refuse an `observed_at` later than the server's current time plus the clock-skew tolerance."""
+    limit = time.time_ns() // 1000 + _OBSERVATION_SKEW
+    for kind, mutations in (("nodes", request.nodes), ("relations", request.relations)):
+        for index, mutation in enumerate(mutations):
+            if mutation.observed_at is not None and parse_timestamp(mutation.observed_at) > limit:
+                raise InvalidParamsError(
+                    f"{kind}[{index}]: observed_at {mutation.observed_at} is later than the server's current time"
+                )
+
+
 def _reported(mutation: Mutation, existing: dict[str, Any] | None, observed: int) -> int | None:
-    """A creation, a supplied `observed_at` or a property change reports an observation; nothing else does."""
-    if existing is None or mutation.observed_at is not None or mutation.properties or mutation.remove_properties:
+    """Creations, identity rescans, `observed_at` and property changes observe; other ID writes do not."""
+    if (
+        existing is None
+        or mutation.id is None
+        or mutation.observed_at is not None
+        or mutation.properties
+        or mutation.remove_properties
+    ):
         return observed
     return None
 
@@ -629,7 +649,27 @@ def _preflight_state(
         _require_allowlist_root(connection, f"nodes[{index}]", plan, planned)
         if plan.rejecting:
             _refuse_relied_upon(connection, plan, planned)
+    _refuse_subdomains_of_planned_rejections(plans)
     _refuse_rejected_subtrees(connection, plans, relation_plans, planned)
+
+
+def _refuse_subdomains_of_planned_rejections(plans: list[_PreparedMutation]) -> None:
+    """Refuse a new subdomain under a domain this batch rejects, as one under a stored rejection is."""
+    rejected = {
+        cast("str", plan.properties["value"]): cast("str", plan.row["uuid"])
+        for plan in plans
+        if plan.rejecting and plan.type_name == "domain"
+    }
+    hits = [
+        {"item": f"nodes[{index}]", "rejected_record": rejected[domain]}
+        for index, plan in enumerate(plans)
+        if plan.match == "created"
+        and plan.type_name == "subdomain"
+        and (domain := registrable_domain(cast("str", plan.properties["value"]))) is not None
+        and domain in rejected
+    ]
+    if hits:
+        raise RejectedIdentityError(RejectedIdentityDetails.model_validate({"rejected_items": hits}))
 
 
 def _refuse_rejected_subtrees(
@@ -914,6 +954,7 @@ def _preflight(
     connection: apsw.Connection, token: OperationToken, request: WriteRequest
 ) -> tuple[list[_PreparedMutation], list[_PreparedMutation]]:
     """Resolve the complete graph batch and all identities before persistence."""
+    _refuse_future_observations(request)
     node_plans, node_rows = _prepare_node_plans(connection, token, request)
     _refuse_rejected_identities(connection, node_plans)
     relation_plans = _prepare_relation_plans(connection, token, request, node_rows)

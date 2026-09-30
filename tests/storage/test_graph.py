@@ -18,10 +18,11 @@ from justpen_knowledgebase_mcp.errors import (
     RecordConflictError,
     RejectedIdentityError,
 )
-from justpen_knowledgebase_mcp.identity import parse_timestamp
+from justpen_knowledgebase_mcp.identity import format_timestamp, parse_timestamp
 from justpen_knowledgebase_mcp.models import GetRequest, SearchRequest, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.graph import (
+    _RELIANCE_RELATIONS,
     _validate_endpoint_values,
     _validate_endpoints,
     graph_types,
@@ -638,15 +639,14 @@ asyncio.run(run())
             )
             assert await kb.workers.read(lambda c, t: c.execute("select count(*) from relations").get) == 2
         # A controlled commit order that delivers the newer observation first keeps its value and bounds.
-        for value, observed_at in ((3, "2030-01-01T00:00:00Z"), (0, "1990-01-01T00:00:00Z")):
+        # The newer one is the current time: an `observed_at` past the server's clock is refused.
+        newest = format_timestamp(time.time_ns() // 1000)
+        for value, observed_at in ((3, newest), (0, "1990-01-01T00:00:00Z")):
             patch = {"id": identifier, "properties": {"same": value}, "observed_at": observed_at}
             await kb.write(write({"nodes": [patch]}))
         record = (await kb.get(GetRequest(kind="nodes", ids=[identifier])))["records"][0]
         assert record["properties"]["same"] == 3
-        assert (record["first_seen"], record["last_seen"]) == (
-            "1990-01-01T00:00:00.000000Z",
-            "2030-01-01T00:00:00.000000Z",
-        )
+        assert (record["first_seen"], record["last_seen"]) == ("1990-01-01T00:00:00.000000Z", newest)
 
 
 async def test_ready_only_counts_pending_evidence_and_deferred_counts(tmp_path):
@@ -1422,6 +1422,35 @@ async def test_an_identity_rescan_never_changes_a_stored_classification(tmp_path
         assert await stored_state(kb, identifier) == ("owned", "in_scope", 0, None, None)
 
 
+@pytest.mark.parametrize("authorization", ["in_scope", "unknown"])
+async def test_an_identity_rescan_never_changes_a_scoped_childs_override(tmp_path, authorization):
+    """R19: under an allowlist root, a rescan could otherwise widen a narrowed port or clear its override."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        host, ssh = await classified_host(kb, evidence, 22)
+        await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {"id": host, "allowlist_scoped": True, "evidence_add": [evidence]},
+                        {"id": ssh, "authorization": "out_of_scope", "evidence_add": [evidence]},
+                    ]
+                }
+            )
+        )
+        rescan = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [HOST, {**port(22), "authorization": authorization, "evidence_add": [evidence]}],
+                    "relations": [open_port({"node_index": 0}, 1)],
+                }
+            )
+        )
+        node = rescan["nodes"][1]
+        assert (node["id"], node["authorization"]) == (ssh, "out_of_scope")
+        assert (await stored_state(kb, ssh))[3] == "out_of_scope"
+
+
 async def test_the_refused_transition_cells_name_the_current_state(tmp_path):
     """R20: owned cannot be rejected, rejected cannot return to candidate, and a rejected node's
     authorization is frozen, while a rejected node may still be attributed by ID with evidence."""
@@ -1616,6 +1645,29 @@ async def test_removing_the_last_ready_evidence_of_a_claim_is_refused(tmp_path):
         assert await kb.workers.read(lambda c, t: c.execute("select count(*) from node_evidence").get) == 3
 
 
+async def test_a_rejection_and_a_narrowed_child_keep_their_last_evidence_and_a_swap_is_allowed(tmp_path):
+    """R21: `rejected` and an authorization override are claims too; adding new evidence while
+    removing the old leaves a link, so the claim stays evidenced."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        first, second, third = await evidence_fixture(kb, 3)
+        (staging,) = await candidates(kb, STAGING)
+        await reject(kb, staging, first)
+        with pytest.raises(ConflictError, match=r"^nodes\[0\]: the domain holds a rejected claim"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": staging, "evidence_remove": [first]}]}))
+        _host, ssh = await classified_host(kb, first, 22)
+        await kb.write(
+            WriteRequest.model_validate(
+                {"nodes": [{"id": ssh, "authorization": "out_of_scope", "evidence_add": [second]}]}
+            )
+        )
+        with pytest.raises(ConflictError, match=r"^nodes\[0\]: the port holds a out_of_scope claim"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": ssh, "evidence_remove": [second]}]}))
+        swapped = await kb.write(
+            WriteRequest.model_validate({"nodes": [{"id": ssh, "evidence_add": [third], "evidence_remove": [second]}]})
+        )
+        assert (swapped["nodes"][0]["links_added"], swapped["nodes"][0]["links_removed"]) == (1, 1)
+
+
 # First and last seen. Each time is written as `observed_at` and read back in the canonical form.
 T1, T2 = "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"
 T1_SEEN, T2_SEEN = "2026-01-01T00:00:00.000000Z", "2026-02-01T00:00:00.000000Z"
@@ -1690,6 +1742,18 @@ async def test_an_older_observation_only_adds_the_properties_a_record_lacks(tmp_
         assert (record["first_seen"], record["last_seen"]) == (T1_SEEN, T2_SEEN)
 
 
+async def test_an_older_observation_adds_a_missing_key_inside_a_stored_object(tmp_path):
+    """R28, KTD6: the merge descends into objects, so the stored 1.3 stays beside the older cipher."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        newer = {"value": "acme.com", "tls": {"version": "1.3"}}
+        created = await kb.write(write({"nodes": [{**ACME, "properties": newer, "observed_at": T2}]}))
+        identifier = created["nodes"][0]["id"]
+        older = {"value": "acme.com", "tls": {"version": "1.2", "cipher": "x"}}
+        await kb.write(write({"nodes": [{**ACME, "properties": older, "observed_at": T1}]}))
+        record = await record_of(kb, "nodes", identifier)
+        assert record["properties"] == {"value": "acme.com", "tls": {"version": "1.3", "cipher": "x"}}
+
+
 async def test_an_older_relation_upsert_keeps_its_values_and_its_later_last_seen(tmp_path):
     """R12, R28: an identity re-upsert of an edge observed earlier adds a missing key and overwrites none."""
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
@@ -1726,6 +1790,50 @@ async def test_a_property_patch_without_observed_at_is_observed_now(tmp_path):
         first_seen, last_seen = await seen(kb, "nodes", identifier)
         assert first_seen == T1_SEEN
         assert before <= parse_timestamp(last_seen) <= after
+
+
+def resolution_edge(properties: dict[str, object], **fields: object) -> dict[str, object]:
+    relation = {"type": "resolves_to", "source_ref": {"node_index": 0}, "target_ref": {"node_index": 1}}
+    return {**relation, "properties": properties, **fields}
+
+
+async def test_an_identity_rescan_of_an_edge_without_properties_is_observed_now(tmp_path):
+    """R13: a rescan is an observation even when the edge carries no properties, while an ID patch
+    that changes only source or evidence is not."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        written = await kb.write(write({"nodes": [ACME, HOST], "relations": [resolution_edge({}, observed_at=T1)]}))
+        relation = written["relations"][0]["id"]
+        before = time.time_ns() // 1000
+        again = await kb.write(write({"nodes": [ACME, HOST], "relations": [resolution_edge({})]}))
+        after = time.time_ns() // 1000
+        assert again["relations"][0]["id"] == relation
+        first_seen, last_seen = await seen(kb, "relations", relation)
+        assert first_seen == T1_SEEN
+        assert before <= parse_timestamp(last_seen) <= after
+        patch = {"id": relation, "source": "dnsx", "evidence_add": [evidence]}
+        await kb.write(WriteRequest.model_validate({"relations": [patch]}))
+        assert await seen(kb, "relations", relation) == (first_seen, last_seen)
+
+
+def moved(seconds: int) -> str:
+    """The server's current time shifted by `seconds`, as an `observed_at`."""
+    return format_timestamp(time.time_ns() // 1000 + seconds * 1000000)
+
+
+async def test_an_observation_later_than_the_server_clock_allows_is_refused(tmp_path):
+    """R12: last seen keeps the maximum, so a future `observed_at` would outrank every real scan
+    until the clock caught up; one within five minutes of clock skew is accepted as given."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        future = moved(3600)
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[1\]: observed_at .* is later than"):
+            await kb.write(write({"nodes": [ACME, {**HOST, "observed_at": future}]}))
+        with pytest.raises(InvalidParamsError, match=r"^relations\[0\]: observed_at .* is later than"):
+            await kb.write(write({"nodes": [ACME, HOST], "relations": [resolution_edge({}, observed_at=future)]}))
+        assert await node_count(kb) == 0
+        skewed = moved(60)
+        created = await kb.write(write({"nodes": [{**ACME, "observed_at": skewed}]}))
+        assert parse_timestamp((await seen(kb, "nodes", created["nodes"][0]["id"]))[1]) == parse_timestamp(skewed)
 
 
 # Rejection (R7-R10, R17, R23, R24, R26). The job runner stays live here, so a rejection's purge
@@ -1808,6 +1916,39 @@ async def test_rejecting_an_address_keeps_its_identity_required_properties_evide
             assert found["items"] == []
 
 
+async def test_a_rejection_clears_the_allowlist_marker_and_is_no_observation(tmp_path):
+    """R9, R13: an allowlisted in_scope candidate loses its marker, and the rejecting write's
+    `observed_at` and properties move neither last seen nor the stored properties."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        claims = {"authorization": "in_scope", "allowlist_scoped": True, "evidence_add": [evidence]}
+        created = await kb.write(
+            WriteRequest.model_validate({"nodes": [{**STAGING, "ownership": "candidate", "observed_at": T1, **claims}]})
+        )
+        identifier = created["nodes"][0]["id"]
+        assert await stored_state(kb, identifier) == ("candidate", "in_scope", 1, None, None)
+        result = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {
+                            "id": identifier,
+                            "ownership": "rejected",
+                            "properties": {"note": "stranger"},
+                            "observed_at": T2,
+                            "evidence_add": [evidence],
+                        }
+                    ]
+                }
+            )
+        )
+        await kb.job_runner.wait(result["nodes"][0]["rejection_job_id"], time.monotonic() + 5)
+        assert await stored_state(kb, identifier) == ("rejected", "unknown", 0, None, None)
+        record = await record_of(kb, "nodes", identifier)
+        assert record["properties"] == STAGING["properties"]
+        assert (record["first_seen"], record["last_seen"]) == (T1_SEEN, T1_SEEN)
+
+
 async def test_rejection_needs_evidence_in_the_same_write(tmp_path):
     """R8: the refusal names the item and leaves the candidate untouched."""
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
@@ -1839,6 +1980,20 @@ async def test_a_rejected_identity_and_the_subdomains_under_it_cannot_be_re_crea
         assert await node_count(kb) == before
 
 
+async def test_a_new_subdomain_under_a_domain_the_same_batch_rejects_is_refused(tmp_path):
+    """R17, R26: the batch's planned rejection counts like a stored one, and nothing is written."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        (staging,) = await candidates(kb, STAGING)
+        rejection = {"id": staging, "ownership": "rejected", "evidence_add": [evidence]}
+        batch = [rejection, {**subdomain("www.acme-staging.net"), "ownership": "candidate"}]
+        with pytest.raises(RejectedIdentityError, match=r"^REJECTED_IDENTITY$") as refused:
+            await kb.write(WriteRequest.model_validate({"nodes": batch}))
+        assert rejected_items(refused) == [("nodes[1]", staging)]
+        assert await node_count(kb) == 1
+        assert (await stored_state(kb, staging))[0] == "candidate"
+
+
 async def test_a_scanner_batch_with_rejected_names_is_refused_once_listing_every_one(tmp_path):
     """R26: both rejected names are reported in one error; without them the batch is accepted."""
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
@@ -1859,38 +2014,94 @@ async def test_a_scanner_batch_with_rejected_names_is_refused_once_listing_every
         assert [node["created"] for node in accepted["nodes"]] == [True, True]
 
 
-async def test_rejecting_a_candidate_an_owned_name_relies_on_is_refused_naming_the_relation(tmp_path):
-    """AE10, R23: a cname_to from an owned name makes the candidate a dependency, not a stranger."""
+# A candidate target and the edge properties for each relation an owned name relies on.
+RELIANCE = {
+    "backed_by_bucket": ({"type": "storage_bucket", "properties": {"provider": "aws_s3", "name": "acme-assets"}}, {}),
+    "cname_to": (subdomain("shops.myshopify.com"), {}),
+    "dname_to": (subdomain("zone.dnshost.net"), {}),
+    "federates_with": ({"type": "identity_tenant", "properties": {"provider": "okta", "tenant_id": "dev-12345"}}, {}),
+    "has_mail_exchange": (subdomain("mx.mailhost.net"), {"preference": 10}),
+    "has_nameserver": (subdomain("ns1.dnshost.net"), {}),
+    "has_soa_primary": (subdomain("ns0.dnshost.net"), {}),
+    "has_srv_target": (
+        subdomain("sip.voiphost.net"),
+        {"service": "_sip", "protocol": "_tcp", "port": 5060, "priority": 10, "weight": 5},
+    ),
+    "has_svcb_binding": (subdomain("edge.cdnhost.net"), {"record_type": "https", "priority": 1, "alpn": ["h2"]}),
+    "hosted_on": (
+        {
+            "type": "cloud_resource",
+            "properties": {"service": "aws_cloudfront", "hostname": "d111111abcdef8.cloudfront.net"},
+        },
+        {},
+    ),
+    "resolves_to": (HOST, {}),
+}
+
+
+async def relied_upon(kb, relation, ownership, evidence, source="shop.acme.com"):
+    """Write a source name with `ownership` relying on a candidate over `relation`; return both IDs and the edge's."""
+    target, properties = RELIANCE[relation]
+    claim = {"ownership": ownership, "evidence_add": [] if ownership == "candidate" else [evidence]}
+    written = await kb.write(
+        WriteRequest.model_validate(
+            {
+                "nodes": [{**subdomain(source), **claim}, {**target, "ownership": "candidate"}],
+                "relations": [
+                    {
+                        "type": relation,
+                        "source_ref": {"node_index": 0},
+                        "target_ref": {"node_index": 1},
+                        "properties": properties,
+                    }
+                ],
+            }
+        )
+    )
+    return [node["id"] for node in written["nodes"]], written["relations"][0]["id"]
+
+
+def rejecting(identifier, evidence):
+    return {"id": identifier, "ownership": "rejected", "evidence_add": [evidence]}
+
+
+def test_every_reliance_relation_is_a_catalog_relation_with_a_case_here():
+    assert set(RELIANCE) == set(json.loads(_RELIANCE_RELATIONS))
+    assert set(RELIANCE) <= set(catalog_module.catalog_view()["relations"])
+
+
+@pytest.mark.parametrize("ownership", ["owned", "dependency"])
+@pytest.mark.parametrize("relation", sorted(RELIANCE))
+async def test_rejecting_a_candidate_an_owned_name_relies_on_is_refused_naming_the_relation(
+    tmp_path, relation, ownership
+):
+    """AE10, R23: a relied-upon edge from an owned or dependency name makes the candidate a
+    dependency, not a stranger."""
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         evidence = (await evidence_fixture(kb, 1))[0]
-        written = await kb.write(
-            WriteRequest.model_validate(
-                {
-                    "nodes": [
-                        {**subdomain("shop.acme.com"), "ownership": "owned", "evidence_add": [evidence]},
-                        {**subdomain("shops.myshopify.com"), "ownership": "candidate"},
-                    ],
-                    "relations": [
-                        {
-                            "type": "cname_to",
-                            "source_ref": {"node_index": 0},
-                            "target_ref": {"node_index": 1},
-                            "properties": {},
-                        }
-                    ],
-                }
-            )
-        )
-        shopify, cname = written["nodes"][1]["id"], written["relations"][0]["id"]
+        (_source, target), edge = await relied_upon(kb, relation, ownership, evidence)
         with pytest.raises(RecordConflictError, match=r"^REJECTION_BLOCKED$") as refused:
-            await kb.write(
-                WriteRequest.model_validate(
-                    {"nodes": [{"id": shopify, "ownership": "rejected", "evidence_add": [evidence]}]}
-                )
-            )
+            await kb.write(WriteRequest.model_validate({"nodes": [rejecting(target, evidence)]}))
         blocker = refused.value.details.blocking_record
-        assert (blocker.kind, str(blocker.id)) == ("relations", cname)
-        assert (await stored_state(kb, shopify))[0] == "candidate"
+        assert (blocker.kind, str(blocker.id)) == ("relations", edge)
+        assert (await stored_state(kb, target))[0] == "candidate"
+
+
+async def test_the_sources_planned_ownership_decides_whether_a_rejection_is_blocked(tmp_path):
+    """R23: a candidate source does not block; one promoted in the rejecting batch does, and one
+    withdrawn to candidate in that batch does not."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        (source, shopify), _edge = await relied_upon(kb, "cname_to", "candidate", evidence)
+        promotion = {"id": source, "ownership": "owned", "evidence_add": [evidence]}
+        with pytest.raises(RecordConflictError, match=r"^REJECTION_BLOCKED$"):
+            await kb.write(WriteRequest.model_validate({"nodes": [promotion, rejecting(shopify, evidence)]}))
+        assert (await stored_state(kb, source))[0] == "candidate"
+        assert (await reject(kb, shopify, evidence))["ownership"] == "rejected"
+        (owner, nameserver), _edge = await relied_upon(kb, "has_nameserver", "owned", evidence, "mail.acme.com")
+        withdrawal = {"id": owner, "ownership": "candidate"}
+        result = await kb.write(WriteRequest.model_validate({"nodes": [withdrawal, rejecting(nameserver, evidence)]}))
+        assert [node["ownership"] for node in result["nodes"]] == ["candidate", "rejected"]
 
 
 async def test_a_rejection_cannot_share_a_batch_with_its_relations_or_descendants(tmp_path):

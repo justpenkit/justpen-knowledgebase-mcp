@@ -641,6 +641,37 @@ async def test_evidence_cascade_delete_keeps_the_last_link_of_a_claim(tmp_path):
         assert (await kb.get(GetRequest(kind="evidence", ids=[second])))["records"][0]["lifecycle"] == "ready"
 
 
+async def test_evidence_delete_keeps_the_last_link_of_a_narrowed_child(tmp_path):
+    """R21: a scoped child's authorization override is a claim, though it states no ownership."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        first, second = await evidence_fixture(kb, 2)
+        written = await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {
+                            "type": "ip_address",
+                            "properties": {"value": "192.0.2.10", "version": 4},
+                            "ownership": "owned",
+                            "evidence_add": [first],
+                        },
+                        {
+                            "type": "port",
+                            "properties": {"transport": "tcp", "number": 22},
+                            "authorization": "out_of_scope",
+                            "evidence_add": [second],
+                        },
+                    ],
+                    "relations": [edge("has_open_port", 0, 1)],
+                }
+            )
+        )
+        port = written["nodes"][1]["id"]
+        with pytest.raises(RecordConflictError, match="LAST_CLAIM_EVIDENCE") as caught:
+            await admit(kb, "evidence", [second])
+        assert str(caught.value.details.blocking_record.id) == port
+
+
 STAGING = {"type": "domain", "properties": {"value": "acme-staging.net"}, "ownership": "candidate"}
 REGISTRATION = {"registry": "net", "registry_domain_id": "2336799_DOMAIN_NET-VRSN"}
 
