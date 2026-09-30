@@ -20,6 +20,7 @@ from justpen_knowledgebase_mcp.catalog import (
     catalog_manifest,
     common_descriptions,
     format_descriptions,
+    inventory_description,
     rule_descriptions,
     type_description,
 )
@@ -48,6 +49,12 @@ GATES = [
         "A value that does not match the published spelling. A rule missing from any of the three places would silently weaken the contract, so a test pins all three.",
     ),
     ("Identity", "`identity.properties`", "A later write that changes an identity property of an existing record."),
+    (
+        "Inventory",
+        "`inventory` per node type",
+        "A new node of a `carries` type without an ownership state, and inventory state on a type whose"
+        " declaration does not allow it.",
+    ),
     (
         "Parent scope",
         "`identity.scope`",
@@ -132,6 +139,7 @@ def _node_rows(manifest: dict[str, Any]) -> list[list[str]]:
             f"`{name}`",
             _identity(definition["identity"]),
             _scope(definition["identity"]),
+            f"`{definition['inventory']}`",
             _required(definition["required"]),
         ]
         for name, definition in sorted(nodes.items())
@@ -178,6 +186,7 @@ def _type_section(kind: str, name: str, definition: dict[str, Any]) -> list[str]
     facts = [f"**Identity:** {_identity(definition['identity'])}"]
     if kind == "nodes":
         facts.append(f"**Parent scope:** {_scope(definition['identity'])}")
+        facts.append(f"**Inventory:** `{definition['inventory']}`")
     else:
         facts.append(f"**Sources:** {_code(definition['sources'])}")
         facts.append(f"**Targets:** {_code(definition['targets'])}")
@@ -200,6 +209,7 @@ def render() -> str:
     common = cast("dict[str, Any]", manifest["common"])
     meanings = common_descriptions()
     formats = format_descriptions()
+    inventory = inventory_description()
     sections = [
         "# Catalog reference",
         "",
@@ -224,6 +234,15 @@ def render() -> str:
             [[f"`{name}`", _common_value(common[name]), meanings[name]] for name in sorted(common)],
         ),
         "",
+        "## Inventory state",
+        "",
+        "Every node type declares `inventory`, which says whether its nodes hold ownership and authorization."
+        " Both are server-managed fields outside `properties`. Ownership is one of"
+        f" {_code(inventory['ownership'])}, and authorization is one of {_code(inventory['authorization'])}."
+        f" {inventory['testing']}",
+        "",
+        _table(["Declaration", "Meaning"], [[f"`{name}`", text] for name, text in inventory["declarations"].items()]),
+        "",
         "## Bundled registries",
         "",
         "`dns_name` classifies names against the bundled ICANN public suffix list, and `service_name`"
@@ -240,7 +259,7 @@ def render() -> str:
         "Identity is what makes two writes the same node. A parent scope adds the parent's UUID to"
         " that identity, so the same properties under two parents are two nodes.",
         "",
-        _table(["Node", "Identity", "Parent scope", "Required properties"], _node_rows(manifest)),
+        _table(["Node", "Identity", "Parent scope", "Inventory", "Required properties"], _node_rows(manifest)),
         "",
         "## Relation types",
         "",

@@ -16,6 +16,7 @@ from ..catalog import (
     catalog_view,
     check_endpoint_values,
     format_descriptions,
+    inventory_description,
     rule_descriptions,
     scope_order,
     type_description,
@@ -806,7 +807,7 @@ def _associations(connection: apsw.Connection, request: GetRequest) -> dict[str,
 
 
 def graph_types(connection: apsw.Connection, token: OperationToken, request: TypesRequest) -> dict[str, Any]:
-    """Discover catalog definitions, including identity properties/scope, and ready-only counts."""
+    """Discover catalog definitions, identity properties/scope, inventory state, and ready-only counts."""
     # Deliberately not the shared read view: this hands `common`, `formats` and every definition
     # straight into the response, so it needs a tree it owns. It is also one call per request rather
     # than several per record, so the parse it keeps is not the cost the shared view exists to save.
@@ -853,5 +854,6 @@ def graph_types(connection: apsw.Connection, token: OperationToken, request: Typ
         "counts_deferred": deferred,
         "common": manifest["common"],
         "formats": format_descriptions(),
+        "inventory": inventory_description(),
         "next_cursor": binding.encode(after + len(items)) if after + len(items) < len(names) else None,
     }

@@ -291,6 +291,19 @@ def test_types_exposes_scoped_identity_in_manifest_and_schema():
     assert result["types"][0]["properties_schema"]["x-identity"] == identity
 
 
+@pytest.mark.parametrize(("type_name", "inventory"), [("subdomain", "carries"), ("port", "inherits"), ("cve", "none")])
+def test_types_publish_each_node_inventory_declaration_and_the_vocabulary(type_name, inventory):
+    db = database(cursor(value=(NODE, 1)))
+    result = graph.graph_types(db, Mock(deadline=0), TypesRequest(kind="nodes", type=type_name))
+
+    assert result["types"][0]["inventory"] == inventory
+    assert result["inventory"]["ownership"] == ["owned", "dependency", "candidate", "rejected"]
+    assert result["inventory"]["authorization"] == ["in_scope", "out_of_scope", "unknown"]
+    assert set(result["inventory"]["declarations"]) == {"carries", "inherits", "none"}
+    assert "Only `in_scope` authorizes active testing" in result["inventory"]["testing"]
+    assert TypesResult.model_validate(result).inventory == result["inventory"]
+
+
 def test_relation_references_batch_and_existing_endpoints_are_immutable(monkeypatch):
 
     source = owner(type="domain", properties='{"value":"example.com"}')

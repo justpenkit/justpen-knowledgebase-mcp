@@ -77,6 +77,18 @@ def test_v2_catalog_workspace_fails_closed(tmp_path):
             runtime.connect()
 
 
+def test_v3_catalog_workspace_fails_closed(tmp_path):
+    config = ServerConfig(workspace_dir=tmp_path)
+    with WorkspacePaths(config) as workspace, SQLiteRuntime(workspace, config) as runtime:
+        with closing(runtime.connect()) as connection:
+            connection.execute(
+                "update settings set catalog_version=3,catalog_fingerprint=?",
+                ("b13948852d5624c5b7c4e51fe33a0216473ca8b68e8356fcb97982f0acad513a",),
+            )
+        with pytest.raises(ContractMismatchError, match="stored catalog version differs"):
+            runtime.connect()
+
+
 CONTRACT_BREAKS = [
     ("update settings set schema_version=4", "4", "schema version"),
     ("update settings set catalog_version=0", "0", "catalog version"),

@@ -133,6 +133,7 @@ class TypesResult(BaseModel):
     counts_deferred: bool
     common: dict[str, Any]
     formats: dict[str, Any]
+    inventory: dict[str, Any]
     next_cursor: str | None
 
 

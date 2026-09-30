@@ -80,6 +80,16 @@ def test_guard_rejects_v2_catalog_contract():
     assert v2_fingerprint not in str(rejected.value)
 
 
+def test_guard_rejects_v3_catalog_contract():
+    value = guard()
+    v3_fingerprint = "b13948852d5624c5b7c4e51fe33a0216473ca8b68e8356fcb97982f0acad513a"
+    v3 = (schema.SCHEMA_VERSION, 3, v3_fingerprint, schema.INDEX_FORMAT_VERSION, value.paths)
+    with pytest.raises(ContractMismatchError, match="stored catalog version differs") as rejected:
+        value.check(database(cursor(rows=[(0, "blob_sha256")]), cursor(value=v3)))
+    assert rejected.value.dimension == "catalog version"
+    assert v3_fingerprint not in str(rejected.value)
+
+
 @pytest.mark.parametrize("raw", ["{}", "[]", "null", "invalid", '{"wal_low_bytes":true}'])
 def test_policy_requires_complete_strict_persisted_schema(raw):
     with pytest.raises(ConfigurationError):

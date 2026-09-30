@@ -1,4 +1,4 @@
-"""Catalog v3 manifest, schema, and strict validator contracts."""
+"""Catalog v4 manifest, schema, and strict validator contracts."""
 
 from __future__ import annotations
 
@@ -128,14 +128,97 @@ def _invalid(kind: str, type_name: str, properties: dict[str, object]) -> None:
         validate_record(kind, type_name, properties)
 
 
-def test_manifest_has_only_catalog_v3_types_and_stable_fingerprint() -> None:
+V3_FINGERPRINT = "b13948852d5624c5b7c4e51fe33a0216473ca8b68e8356fcb97982f0acad513a"
+
+
+def test_manifest_has_only_catalog_v4_types_and_stable_fingerprint() -> None:
     manifest = catalog_manifest()
 
-    assert CATALOG_VERSION == 3
-    assert manifest["version"] == 3
+    assert CATALOG_VERSION == 4
+    assert manifest["version"] == 4
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT == "b13948852d5624c5b7c4e51fe33a0216473ca8b68e8356fcb97982f0acad513a"
+    assert CATALOG_FINGERPRINT != V3_FINGERPRINT
+    assert CATALOG_FINGERPRINT == "2a82213a7a4019e9b6a8bcd6b86584fa237143de9d3af8f15d8f5e77f3495f33"
+
+
+INVENTORY = {
+    "carries": {
+        "asn",
+        "certificate",
+        "cloud_account",
+        "cloud_resource",
+        "domain",
+        "email_address",
+        "endpoint",
+        "host_key",
+        "identity_tenant",
+        "ip_address",
+        "ip_cidr",
+        "organization",
+        "phone",
+        "repository",
+        "secret",
+        "storage_bucket",
+        "subdomain",
+    },
+    "inherits": {"dkim_record", "finding", "mta_sts_policy", "parameter", "port", "service", "whois_registration"},
+    "none": {
+        "cve",
+        "cwe",
+        "dmarc_record",
+        "http_fingerprint",
+        "registrar",
+        "spf_record",
+        "technology",
+        "tls_cipher_suite",
+        "tls_fingerprint",
+        "txt_record",
+    },
+}
+
+
+def test_every_node_type_declares_exactly_one_inventory_value() -> None:
+    """A state-carrying type holds ownership and authorization itself, a parent-scoped child inherits
+    them from its root, and vocabulary or shared records carry none."""
+    nodes = catalog_manifest()["nodes"]
+    declared: dict[str, set[str]] = {}
+    for name, definition in nodes.items():
+        declared.setdefault(definition["inventory"], set()).add(name)
+
+    assert declared == INVENTORY
+    assert {value: len(names) for value, names in declared.items()} == {"carries": 17, "inherits": 7, "none": 10}
+    assert catalog_manifest()["inventory"] == {
+        "ownership": ["owned", "dependency", "candidate", "rejected"],
+        "authorization": ["in_scope", "out_of_scope", "unknown"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("type_name", "value", "message"),
+    [
+        ("port", "carries", "port is parent-scoped and must be declared inherits"),
+        ("domain", "inherits", "domain is not parent-scoped and cannot be declared inherits"),
+        ("ip_address", "none", "scope chain of [a-z_]+ ends at ip_address, which does not carry"),
+        ("domain", "sometimes", "domain declares no known inventory value"),
+    ],
+)
+def test_inventory_contract_refuses_a_declaration_state_cannot_resolve(
+    monkeypatch: pytest.MonkeyPatch, type_name: str, value: str, message: str
+) -> None:
+    monkeypatch.setitem(catalog_module._NODES, type_name, {**catalog_module._NODES[type_name], "inventory": value})
+    with pytest.raises(RuntimeError, match=message):
+        catalog_module._ensure_inventory_contract()
+
+
+def test_inventory_description_publishes_the_vocabularies_and_the_testing_rule() -> None:
+    block = catalog_module.inventory_description()
+
+    assert block["ownership"] == catalog_manifest()["inventory"]["ownership"]
+    assert block["authorization"] == catalog_manifest()["inventory"]["authorization"]
+    assert set(block["declarations"]) == set(INVENTORY)
+    assert "only `in_scope` authorizes active testing" in block["testing"].lower()
+    assert "`owned` and `unknown` do not" in block["testing"]
 
 
 def test_fingerprint_computation_eagerly_loads_both_bundled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
