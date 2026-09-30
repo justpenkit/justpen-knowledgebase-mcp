@@ -123,6 +123,7 @@ CREATE TABLE relations (
 );
 CREATE INDEX nodes_type_ready ON nodes(type,lifecycle,id);
 CREATE INDEX nodes_state_root ON nodes(state_root_uuid,id) WHERE state_root_uuid IS NOT NULL;
+CREATE INDEX nodes_override_root ON nodes(state_root_uuid) WHERE authorization_override IS NOT NULL;
 CREATE INDEX relations_type_ready ON relations(type,lifecycle,id);
 CREATE INDEX relations_outgoing ON relations(source_id,type,target_id,id);
 CREATE INDEX relations_outgoing_type_id ON relations(source_id,type,id);

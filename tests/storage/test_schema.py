@@ -112,6 +112,7 @@ INVENTORY_NODE_COLUMNS = {
 }
 INVENTORY_INDEXES = {
     "nodes_state_root": "state_root_uuid",
+    "nodes_override_root": "state_root_uuid",
 }
 
 

@@ -25,16 +25,22 @@ EFFECTIVE_OWNERSHIP = (
     "(CASE WHEN o.state_root_uuid IS NULL THEN o.ownership "
     "ELSE (SELECT root.ownership FROM nodes root WHERE root.uuid=o.state_root_uuid) END)"
 )
+# Only an override can move a scoped node off its root's authorization, and only under an allowlist
+# does a missing one matter, so the chain is walked only below an allowlist-scoped root or a root
+# that some scoped node overrides. The partial `nodes_override_root` index answers that per row with
+# one lookup, so a first page pays no statement-wide scan.
 EFFECTIVE_AUTHORIZATION = (
-    "(CASE WHEN o.state_root_uuid IS NULL THEN o.authorization ELSE ("
-    "WITH RECURSIVE chain(id,override) AS (SELECT o.id,o.authorization_override UNION "
+    "(CASE WHEN o.state_root_uuid IS NULL THEN o.authorization ELSE (SELECT CASE "
+    "WHEN root.authorization='out_of_scope' THEN 'out_of_scope' "
+    "WHEN root.allowlist_scoped=0 AND NOT EXISTS(SELECT 1 FROM nodes s "
+    "WHERE s.state_root_uuid=o.state_root_uuid AND s.authorization_override IS NOT NULL) THEN root.authorization "
+    "ELSE (WITH RECURSIVE chain(id,override) AS (SELECT o.id,o.authorization_override UNION "
     "SELECT parent.id,parent.authorization_override FROM chain "
     "JOIN relations r ON r.target_id=chain.id AND r.type IN scope_relation "
     "JOIN nodes parent ON parent.id=r.source_id WHERE parent.uuid<>o.state_root_uuid) "
-    "SELECT CASE WHEN root.authorization='out_of_scope' OR total(chain.override='out_of_scope')>0 "
-    "THEN 'out_of_scope' WHEN root.allowlist_scoped=1 "
+    "SELECT CASE WHEN total(chain.override='out_of_scope')>0 THEN 'out_of_scope' WHEN root.allowlist_scoped=1 "
     "THEN iif(total(chain.override='in_scope')>0,'in_scope','out_of_scope') ELSE root.authorization END "
-    "FROM chain JOIN nodes root ON root.uuid=o.state_root_uuid) END)"
+    "FROM chain) END FROM nodes root WHERE root.uuid=o.state_root_uuid) END)"
 )
 
 OWNER_LOOKUP = {

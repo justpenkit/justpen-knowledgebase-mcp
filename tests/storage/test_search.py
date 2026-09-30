@@ -10,7 +10,7 @@ import pytest
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import InvalidParamsError, LimitError
 from justpen_knowledgebase_mcp.evidence import IngestRequest
-from justpen_knowledgebase_mcp.models import GetRequest, SearchRequest
+from justpen_knowledgebase_mcp.models import GetRequest, SearchRequest, WriteRequest
 from justpen_knowledgebase_mcp.query import evaluate
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage import search as search_storage
@@ -22,7 +22,7 @@ from justpen_knowledgebase_mcp.storage.graph_sql import (
 )
 from justpen_knowledgebase_mcp.storage.inventory import effective_state
 
-from .graph_fixtures import inventory_graph, stated_request
+from .graph_fixtures import evidence_fixture, inventory_graph, stated_request
 
 pytestmark = pytest.mark.integration
 
@@ -515,12 +515,55 @@ PROJECTED_STATE = (
     "WITH scope_relation(type) AS (SELECT value FROM json_each(?)) "
     "SELECT o.uuid,{ownership},{authorization},o.state_root_uuid FROM nodes o WHERE o.lifecycle='ready'"
 )
+# How the SQL form resolves each ready scoped node: from its root alone, or by walking its chain.
+RESOLUTION_PATHS = (
+    "SELECT DISTINCT CASE WHEN root.authorization='out_of_scope' THEN 'out_of_scope root' "
+    "WHEN root.allowlist_scoped=1 THEN 'allowlist walk' WHEN EXISTS(SELECT 1 FROM nodes s "
+    "WHERE s.state_root_uuid=root.uuid AND s.authorization_override IS NOT NULL) THEN 'override walk' "
+    "ELSE 'inherited' END FROM nodes o JOIN nodes root ON root.uuid=o.state_root_uuid WHERE o.lifecycle='ready'"
+)
+
+
+async def inherited_roots(kb) -> None:
+    """Write a port, service and finding chain under an in_scope, an unknown and an out_of_scope
+    root; no scoped node overrides, so the SQL form takes each root's authorization directly."""
+    evidence = (await evidence_fixture(kb, 1))[0]
+    finding = {"rule": "nuclei:ssh-weak-cipher", "matcher": "", "title": "Weak SSH cipher", "severity": "low"}
+    links = ("has_open_port", "has_service", "has_finding")
+    nodes: list[dict[str, Any]] = []
+    relations: list[dict[str, Any]] = []
+    for value, authorization in (("192.0.2.30", "in_scope"), ("192.0.2.40", "unknown"), ("192.0.2.50", "out_of_scope")):
+        root = len(nodes)
+        nodes.append(
+            {
+                "type": "ip_address",
+                "properties": {"value": value, "version": 4},
+                "ownership": "owned",
+                "authorization": authorization,
+                "evidence_add": [evidence],
+            }
+        )
+        nodes.append({"type": "port", "properties": {"transport": "tcp", "number": 22}})
+        nodes.append({"type": "service", "properties": {"name": "ssh"}})
+        nodes.append({"type": "finding", "properties": finding})
+        relations.extend(
+            {
+                "type": relation,
+                "source_ref": {"node_index": root + depth},
+                "target_ref": {"node_index": root + depth + 1},
+                "properties": {},
+            }
+            for depth, relation in enumerate(links)
+        )
+    await kb.write(WriteRequest.model_validate({"nodes": nodes, "relations": relations}))
 
 
 async def test_sql_effective_state_agrees_with_the_python_resolver(tmp_path):
-    """KTD4: search filters on the SQL form and `kb_get` reports the Python walk; both must agree."""
+    """KTD4: search filters on the SQL form and `kb_get` reports the Python walk; both must agree,
+    whether the SQL form takes a root's authorization directly or walks the scope chain."""
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         await inventory_graph(kb)
+        await inherited_roots(kb)
 
         def compare(connection, token):
             rows = [
@@ -539,8 +582,10 @@ async def test_sql_effective_state_agrees_with_the_python_resolver(tmp_path):
                     (SCOPED_CHILD_RELATIONS,),
                 )
             }
-            return walked, projected
+            paths = {path for (path,) in connection.execute(RESOLUTION_PATHS)}
+            return walked, projected, paths
 
-        walked, projected = await kb.workers.read(compare)
-        assert len(walked) == 17
+        walked, projected, paths = await kb.workers.read(compare)
+        assert len(walked) == 29
         assert walked == projected
+        assert paths == {"out_of_scope root", "allowlist walk", "override walk", "inherited"}
