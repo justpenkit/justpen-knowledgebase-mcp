@@ -8,6 +8,7 @@
           "properties": {
             "value": "www.example.com"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:15:30.123456Z",
           "source": "httpx"
         },
@@ -18,6 +19,7 @@
             "version": 4,
             "cdn_provider": "cloudfront"
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:15:30.123456Z",
           "source": "httpx"
         },
@@ -27,6 +29,7 @@
             "value": "198.51.100.21",
             "version": 4
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:15:30.123456Z",
           "source": "httpx"
         },
@@ -36,6 +39,7 @@
             "value": "2001:db8::20",
             "version": 6
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:15:30.123456Z",
           "source": "httpx"
         },
@@ -68,6 +72,7 @@
             "content_type": "text/html",
             "webserver": "nginx/1.18.0"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:15:30.123456Z",
           "source": "httpx"
         },
@@ -130,6 +135,7 @@
             "name": "AMAZON-02",
             "country": "US"
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:15:30.123456Z",
           "source": "httpx"
         },
@@ -139,6 +145,7 @@
             "value": "198.51.100.0/24",
             "version": 4
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:15:30.123456Z",
           "source": "httpx"
         },
@@ -147,6 +154,7 @@
           "properties": {
             "value": "d111111abcdef8.cloudfront.net"
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:15:30.123456Z",
           "source": "httpx"
         },
@@ -156,6 +164,7 @@
             "service": "aws_cloudfront",
             "hostname": "d111111abcdef8.cloudfront.net"
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:15:30.123456Z",
           "source": "httpx"
         }
@@ -367,6 +376,7 @@
           "properties": {
             "value": "api.example.com"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:16:02.5Z",
           "source": "httpx"
         },
@@ -376,6 +386,7 @@
             "value": "203.0.113.5",
             "version": 4
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:16:02.5Z",
           "source": "httpx"
         },
@@ -408,6 +419,7 @@
             "content_type": "text/html",
             "webserver": "Apache"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:16:02.5Z",
           "source": "httpx"
         },
@@ -417,6 +429,7 @@
             "url": "https://api.example.com/login",
             "method": "GET"
           },
+          "ownership": "owned",
           "observed_at": "2026-09-20T10:16:02.5Z",
           "source": "httpx"
         },

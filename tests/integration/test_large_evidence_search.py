@@ -27,6 +27,7 @@ async def test_words_common_first_rare_second_narrows_verified_candidates(tmp_pa
                     "nodes": [
                         {
                             "type": "domain",
+                            "ownership": "candidate",
                             "properties": {
                                 "value": f"item-{index}.example",
                                 "body": "common obscureneedle" if index == 79 else "common ordinary",
@@ -62,10 +63,12 @@ async def test_words_search_keeps_record_and_evidence_match_units(tmp_path, monk
                     "nodes": [
                         {
                             "type": "domain",
+                            "ownership": "candidate",
                             "properties": {"value": "direct.example", "body": "common obscureneedle"},
                         },
                         {
                             "type": "domain",
+                            "ownership": "candidate",
                             "properties": {
                                 "value": "leaves.example",
                                 "first": "common",
@@ -73,8 +76,12 @@ async def test_words_search_keeps_record_and_evidence_match_units(tmp_path, monk
                                 "status": 403,
                             },
                         },
-                        {"type": "domain", "properties": {"value": "separate.example"}},
-                        {"type": "domain", "properties": {"value": "linked.example", "status": 403}},
+                        {"type": "domain", "ownership": "candidate", "properties": {"value": "separate.example"}},
+                        {
+                            "type": "domain",
+                            "ownership": "candidate",
+                            "properties": {"value": "linked.example", "status": 403},
+                        },
                     ]
                 }
             )
@@ -228,8 +235,16 @@ async def test_chunk_boundary_graph_filter_and_words_units(tmp_path):
                 WriteRequest.model_validate(
                     {
                         "nodes": [
-                            {"type": "domain", "properties": {"value": "a.example", "status": 403, "a": "access"}},
-                            {"type": "domain", "properties": {"value": "b.example", "status": 200}},
+                            {
+                                "type": "domain",
+                                "ownership": "candidate",
+                                "properties": {"value": "a.example", "status": 403, "a": "access"},
+                            },
+                            {
+                                "type": "domain",
+                                "ownership": "candidate",
+                                "properties": {"value": "b.example", "status": 200},
+                            },
                         ]
                     }
                 )
@@ -312,6 +327,7 @@ async def test_words_snippet_detects_omitted_other_leaf(tmp_path):
                     "nodes": [
                         {
                             "type": "domain",
+                            "ownership": "candidate",
                             "properties": {"value": "a.example", "a": "omega " * 32, "b": "alpha"},
                         }
                     ]

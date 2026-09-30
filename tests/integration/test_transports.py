@@ -160,7 +160,18 @@ async def test_all_tools_and_presence_over_real_wire(tmp_path, transport):
         props = {"value": "exact.example", "array": [True, 1, 1.25, None, "Ä\n"], "nested": {"null": None}}
         result = envelope(
             await client.call_tool(
-                "kb_write", {"nodes": [{"type": "domain", "properties": props, "label": "keep", "source": "keep"}]}
+                "kb_write",
+                {
+                    "nodes": [
+                        {
+                            "type": "domain",
+                            "ownership": "candidate",
+                            "properties": props,
+                            "label": "keep",
+                            "source": "keep",
+                        }
+                    ]
+                },
             )
         )["data"]
         identifier = result["nodes"][0]["id"]
@@ -268,7 +279,11 @@ async def test_real_cancellation_notification_and_late_cancel(tmp_path, transpor
                 "tools/call",
                 {
                     "name": "kb_write",
-                    "arguments": {"nodes": [{"type": "domain", "properties": {"value": "cancel.example"}}]},
+                    "arguments": {
+                        "nodes": [
+                            {"type": "domain", "ownership": "candidate", "properties": {"value": "cancel.example"}}
+                        ]
+                    },
                 },
             )
         )
@@ -292,7 +307,9 @@ async def test_real_cancellation_notification_and_late_cancel(tmp_path, transpor
             "tools/call",
             {
                 "name": "kb_write",
-                "arguments": {"nodes": [{"type": "domain", "properties": {"value": "next.example"}}]},
+                "arguments": {
+                    "nodes": [{"type": "domain", "ownership": "candidate", "properties": {"value": "next.example"}}]
+                },
             },
         )
         assert response["result"]["structuredContent"]["status"] == "ok"
@@ -304,7 +321,7 @@ async def test_raw_duplicate_keys_last_wins_and_nonfinite_rejected(tmp_path, tra
     async with wire_client(tmp_path, transport) as client:
         result = await client.raw(
             2,
-            b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"kb_write","arguments":{"nodes":[{"type":"domain","properties":{"value":"first.example","value":"last.example"}}]}}}',
+            b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"kb_write","arguments":{"nodes":[{"type":"domain","ownership":"candidate","properties":{"value":"first.example","value":"last.example"}}]}}}',
         )
         identifier = result["result"]["structuredContent"]["data"]["nodes"][0]["id"]
         result = await client.request(
@@ -313,7 +330,7 @@ async def test_raw_duplicate_keys_last_wins_and_nonfinite_rejected(tmp_path, tra
         assert result["result"]["structuredContent"]["data"]["records"][0]["properties"]["value"] == "last.example"
         for identifier, invalid in enumerate(("NaN", "Infinity", "-Infinity"), 4):
             body = (
-                '{"jsonrpc":"2.0","id":$TOKEN,"method":"tools/call","params":{"name":"kb_write","arguments":{"nodes":[{"type":"domain","properties":{"value":"bad.example","nested":{"value":$VALUE}}}]}}}'.replace(
+                '{"jsonrpc":"2.0","id":$TOKEN,"method":"tools/call","params":{"name":"kb_write","arguments":{"nodes":[{"type":"domain","ownership":"candidate","properties":{"value":"bad.example","nested":{"value":$VALUE}}}]}}}'.replace(
                     "$TOKEN", str(identifier)
                 ).replace("$VALUE", invalid)
             ).encode()
@@ -333,9 +350,9 @@ async def test_delete_atomic_pending_cascade_and_retry_contract(tmp_path, transp
         graph = await kb.write(
             {
                 "nodes": [
-                    {"type": "subdomain", "properties": {"value": "a.example.com"}},
-                    {"type": "subdomain", "properties": {"value": "b.example.com"}},
-                    {"type": "domain", "properties": {"value": "example.com"}},
+                    {"type": "subdomain", "ownership": "candidate", "properties": {"value": "a.example.com"}},
+                    {"type": "subdomain", "ownership": "candidate", "properties": {"value": "b.example.com"}},
+                    {"type": "domain", "ownership": "candidate", "properties": {"value": "example.com"}},
                 ],
                 "relations": [
                     {
@@ -488,6 +505,7 @@ async def test_response_budget_and_lifetime_link_pagination(tmp_path, transport)
                 "nodes": [
                     {
                         "type": "subdomain",
+                        "ownership": "candidate",
                         "properties": {"value": f"large-{index}.example.test", "blob": "x" * 60000},
                     }
                     for index in range(5)
@@ -577,6 +595,7 @@ async def test_two_stdio_and_http_share_commits_after_disconnect_and_kill(tmp_pa
                         "nodes": [
                             {
                                 "type": "domain",
+                                "ownership": "candidate",
                                 "properties": {"value": "shared.example", "values": [None, 1.25, True, "Ä"]},
                             }
                         ]
@@ -747,7 +766,11 @@ async def test_real_lock_contention_and_deadline_errors(tmp_path, transport, cod
             result = envelope(
                 await client.call_tool(
                     "kb_write",
-                    {"nodes": [{"type": "domain", "properties": {"value": "blocked.example"}}]},
+                    {
+                        "nodes": [
+                            {"type": "domain", "ownership": "candidate", "properties": {"value": "blocked.example"}}
+                        ]
+                    },
                     raise_on_error=False,
                 )
             )
@@ -757,7 +780,8 @@ async def test_real_lock_contention_and_deadline_errors(tmp_path, transport, cod
             await holder
         assert envelope(await client.call_tool("kb_search", {"kind": "nodes"}))["data"]["items"] == []
         await client.call_tool(
-            "kb_write", {"nodes": [{"type": "domain", "properties": {"value": "after-lock.example"}}]}
+            "kb_write",
+            {"nodes": [{"type": "domain", "ownership": "candidate", "properties": {"value": "after-lock.example"}}]},
         )
 
 

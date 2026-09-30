@@ -54,7 +54,9 @@ async def test_expired_lease_mid_flight_still_releases_the_delete_waiter(kb, mon
     # single JobStore.claim caller. A lease that expires mid-flight ends one
     # _run_claim without a terminal transition; the waiter must not hang until
     # its deadline while a later owner finishes the job.
-    created = await kb.write({"nodes": [{"type": "domain", "properties": {"value": "waiter.example"}}]})
+    created = await kb.write(
+        {"nodes": [{"type": "domain", "ownership": "candidate", "properties": {"value": "waiter.example"}}]}
+    )
     node = created["nodes"][0]["id"]
     select, expired, signals = JobStore._claim_selected, [], []
 
@@ -85,7 +87,7 @@ async def test_two_parent_jobs_lost_metadata_cancel_and_bounded_completion(kb):
     created = await kb.write(
         {
             "nodes": [
-                {"type": "domain", "properties": {"value": f"{name}.example"}}
+                {"type": "domain", "ownership": "candidate", "properties": {"value": f"{name}.example"}}
                 for name in ["first", "second", "survivor"]
             ]
         }

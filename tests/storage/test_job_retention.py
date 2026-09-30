@@ -13,12 +13,14 @@ from justpen_knowledgebase_mcp import jobs
 from justpen_knowledgebase_mcp.config import ServerConfig, WorkspacePolicy
 from justpen_knowledgebase_mcp.errors import BusyError, ConflictError, NotFoundError
 from justpen_knowledgebase_mcp.identity import identity_key
-from justpen_knowledgebase_mcp.models import GetRequest, WriteRequest
+from justpen_knowledgebase_mcp.models import GetRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.connection import SQLiteRuntime
 from justpen_knowledgebase_mcp.storage.job_retention import CANDIDATE_ROWS_SQL, CANDIDATES_SQL, JobRetention
 from justpen_knowledgebase_mcp.storage.jobs import JobStore
 from justpen_knowledgebase_mcp.workspace import WorkspacePaths
+
+from .graph_fixtures import stated_request
 
 pytestmark = pytest.mark.integration
 
@@ -143,7 +145,7 @@ async def test_real_short_purge_preserves_blob_links_and_removes_recorded_files(
     result = await kb.ingest_evidence({"base64": "AP8=", "source": "retained-source"})
     identifier = result["evidence_id"]
     graph = await kb.write(
-        WriteRequest.model_validate(
+        stated_request(
             {
                 "nodes": [
                     {

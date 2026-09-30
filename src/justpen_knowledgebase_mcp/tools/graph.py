@@ -43,7 +43,7 @@ def register(mcp: FastMCP) -> None:
         limit: Annotated[int, Field(ge=1, le=100)] = 20,
         cursor: str | None = None,
     ) -> ToolResult:
-        """Discover permitted types, required properties, machine-readable identity objects (properties plus optional parent scope), schemas, check and canonicalization ids with their rules, a description of what each type models and excludes, and ready-only counts. Keys are calculated by this MCP; agents cannot define types. Counts may be deferred; list success is not database health."""
+        """Discover permitted types, required properties, machine-readable identity objects (properties plus optional parent scope), schemas, check and canonicalization ids with their rules, a description of what each type models and excludes, each node type's `inventory` declaration (`carries`, `inherits` or `none`), a top-level `inventory` block with the state vocabularies, what each declaration means and the testing rule, and ready-only counts. Keys are calculated by this MCP; agents cannot define types. Counts may be deferred; list success is not database health."""
         return await invoke(ctx, "types", locals(), TypesRequest)
 
     @mcp.tool(
@@ -56,7 +56,7 @@ def register(mcp: FastMCP) -> None:
         nodes: Annotated[list[NodeWrite], Field(default_factory=list[NodeWrite], max_length=100)],
         relations: Annotated[list[RelationWrite], Field(default_factory=list[RelationWrite], max_length=100)],
     ) -> ToolResult:
-        """Atomically upsert 1-100 nodes/relations using kb_types. New parent-scoped nodes require exactly one declared scope relation in this request; existing scoped IDs do not. The MCP computes keys and forbids re-parenting. ID patches preserve omitted metadata; explicit null clears label/source, while property null is literal data except for declared properties, which reject it. Endpoints are immutable. Evidence links are explicit."""
+        """Atomically upsert 1-100 nodes/relations using kb_types. New parent-scoped nodes require exactly one declared scope relation in this request; existing scoped IDs do not. The MCP computes keys and forbids re-parenting. ID patches preserve omitted metadata; explicit null clears label/source, while property null is literal data except for declared properties, which reject it. Endpoints are immutable. Evidence links are explicit. Creating a node whose kb_types inventory is `carries` requires `ownership` (`owned`, `dependency` or `candidate`); `owned` and `dependency` claims need `evidence_add` on that node in the same write, as do `in_scope`/`out_of_scope` authorization and `allowlist_scoped`. Authorization defaults to `unknown`. Only `in_scope` authorizes active testing. Scoped children inherit state and may only override authorization. An identity match never changes stored state; change it by ID. Only a `candidate` can be rejected, by ID with evidence: it keeps its identity, and its relations and scoped descendants are purged. A batch that would re-create a rejected identity is refused whole with `CONFLICT: REJECTED_IDENTITY`, whose details list every offending `nodes[i]` and its `rejected_record`: drop those items with their relations and scoped children, then resend. `observed_at` is when the facts were seen, at most five minutes past the server clock; an older observation only adds missing properties."""
         return await invoke(ctx, "write", locals(), WriteRequest)
 
     @mcp.tool(
@@ -88,5 +88,5 @@ def register(mcp: FastMCP) -> None:
         ids: Annotated[list[RecordID | EvidenceID], Field(min_length=1, max_length=100)],
         cascade: bool = False,
     ) -> ToolResult:
-        """Atomically admit 1-100 unique IDs for durable deletion. Missing or pending targets reject the whole batch. cascade=false rejects linked records; cascade=true removes incident relations/links, preserving neighboring nodes and evidence blobs unless evidence itself is selected. Accepted jobs remain durable; pending deletion cannot be cancelled."""
+        """Atomically admit 1-100 unique IDs for durable deletion. Missing or pending targets reject the whole batch. cascade=false rejects linked records; cascade=true removes incident relations/links, preserving neighboring nodes and evidence blobs unless evidence itself is selected. Accepted jobs remain durable; pending deletion cannot be cancelled. Deleting a `rejected` node (cascade=true, since it keeps its evidence links) is an explicit purge that lifts the block on re-creating its identity. Deleting the last ready evidence of a node that holds an ownership or authorization claim is refused."""
         return await invoke(ctx, "delete", locals(), DeleteRequest)

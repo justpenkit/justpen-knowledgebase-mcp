@@ -10,6 +10,7 @@
             "name": "EXAMPLE-NET",
             "country": "US"
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:24:03.771202Z",
           "source": "asnmap"
         },
@@ -19,6 +20,7 @@
             "value": "192.0.2.0/24",
             "version": 4
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:24:03.771202Z",
           "source": "asnmap"
         },
@@ -28,6 +30,7 @@
             "value": "2001:db8::/32",
             "version": 6
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:24:03.771202Z",
           "source": "asnmap"
         }
@@ -67,6 +70,7 @@
             "name": "EXAMPLE-ORG",
             "country": "NL"
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:24:04.018834Z",
           "source": "asnmap"
         },
@@ -76,6 +80,7 @@
             "value": "198.51.100.0/24",
             "version": 4
           },
+          "ownership": "dependency",
           "observed_at": "2026-09-20T10:24:04.018834Z",
           "source": "asnmap"
         }

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from justpen_knowledgebase_mcp.catalog import catalog_manifest, scope_relations
+from justpen_knowledgebase_mcp.catalog import catalog_manifest, scope_order, scope_relations
 from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, MissingRecordsError, RecordConflictError
 from justpen_knowledgebase_mcp.models import DeleteRequest
 from justpen_knowledgebase_mcp.storage import deletions, graph_sql
@@ -112,9 +112,38 @@ def test_child_deletion_spends_remaining_budget(kind):
 def test_incident_cleanup_prefers_source_then_target_and_counts_owner(monkeypatch):
     monkeypatch.setattr(deletions, "_delete_children", Mock(return_value=2))
     monkeypatch.setattr(deletions, "_has_children", Mock(return_value=False))
-    db = database(cursor(), cursor(value=2), cursor())
-    assert deletions._delete_incident(db, 1, 3) == 3
+    db = database(cursor(), cursor(value=(2, OTHER, None)), cursor())
+    assert deletions._delete_incident(db, 1, 3, NODE) == (3, ())
     assert db.execute.call_args.args[1] == (2,)
+
+
+def test_incident_cleanup_reports_only_its_own_jobs_relations(monkeypatch):
+    monkeypatch.setattr(deletions, "_delete_children", Mock(return_value=0))
+    monkeypatch.setattr(deletions, "_has_children", Mock(return_value=False))
+    db = database(
+        cursor(value=(2, OTHER, NODE)), cursor(), cursor(value=(3, EVIDENCE, None)), cursor(), cursor(), cursor()
+    )
+    assert deletions._delete_incident(db, 1, 5, NODE) == (2, (OTHER,))
+
+
+def test_rejection_purge_selects_deepest_scoped_type_then_nodes_then_relations(monkeypatch):
+    """Each scoped type is probed deepest first; a job with no node left falls through to relations."""
+    order = list(reversed(scope_order()))
+    db = database(*(cursor() for _ in order), cursor(), cursor(rows=[(7, OTHER, NODE, 1, 10)]))
+    intent = deletions._next_rejection_intent(db, NODE)
+    assert intent == deletions.DeleteIntent("relations", 7, OTHER, NODE, cascade=True, requested_at=10)
+    assert [call.args[1][0] for call in db.execute.call_args_list[: len(order)]] == order
+    step = Mock(side_effect=[deletions.DeleteStep(2, done=True, purged=(OTHER,)), deletions.DeleteStep(3, done=False)])
+    monkeypatch.setattr(deletions.GraphDeletion, "step", step)
+    monkeypatch.setattr(deletions, "_next_rejection_intent", Mock(return_value=intent))
+    result = deletions.GraphDeletion.purge_rejection(database(), NODE, 5)
+    assert result == deletions.RejectionStep(5, (OTHER,), done=False)
+    assert [call.args[2] for call in step.call_args_list] == [5, 3]
+    monkeypatch.setattr(deletions, "_next_rejection_intent", Mock(return_value=None))
+    assert deletions.GraphDeletion.purge_rejection(database(), NODE).done
+    for budget in (0, 101, True):
+        with pytest.raises(InvalidParamsError):
+            deletions.GraphDeletion.purge_rejection(database(), NODE, budget)
 
 
 @pytest.mark.parametrize(
@@ -133,7 +162,7 @@ def test_step_budget_and_files_boundary(monkeypatch, kind, children, remaining, 
         "row_by_id",
         Mock(return_value=owner(lifecycle="delete_pending", delete_job_id=OTHER, delete_requested_at=10)),
     )
-    monkeypatch.setattr(deletions, "_delete_incident", Mock(return_value=0))
+    monkeypatch.setattr(deletions, "_delete_incident", Mock(return_value=(0, ())))
     monkeypatch.setattr(deletions, "_delete_children", Mock(return_value=children))
     monkeypatch.setattr(deletions, "_has_children", Mock(return_value=remaining))
     result = deletions.GraphDeletion.step(database(), intent, 3)

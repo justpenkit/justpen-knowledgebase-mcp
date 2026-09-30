@@ -11,6 +11,7 @@
             "owner": "example-org",
             "name": "web-app"
           },
+          "ownership": "owned",
           "source": "gitleaks"
         },
         {
@@ -20,6 +21,7 @@
             "detector": "generic-api-key",
             "kind": "api_key"
           },
+          "ownership": "owned",
           "source": "gitleaks"
         }
       ],

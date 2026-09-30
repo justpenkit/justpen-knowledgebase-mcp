@@ -36,7 +36,10 @@ async def client(tmp_path):
 
 async def _one_stored_node(client) -> str:
     result = envelope(
-        await client.call_tool("kb_write", {"nodes": [{"type": "domain", "properties": {"value": "one.example"}}]})
+        await client.call_tool(
+            "kb_write",
+            {"nodes": [{"type": "domain", "ownership": "candidate", "properties": {"value": "one.example"}}]},
+        )
     )
     return str(result["data"]["nodes"][0]["id"])
 

@@ -11,7 +11,7 @@ from justpen_knowledgebase_mcp import reindex as indexing_jobs
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.errors import ConflictError, InvalidParamsError, LimitError
 from justpen_knowledgebase_mcp.evidence import IngestRequest
-from justpen_knowledgebase_mcp.models import SearchRequest, WriteRequest
+from justpen_knowledgebase_mcp.models import SearchRequest
 from justpen_knowledgebase_mcp.mutations import canonical_json
 from justpen_knowledgebase_mcp.reindex import ReindexRequest, admit_reindex
 from justpen_knowledgebase_mcp.service import KnowledgeBase
@@ -20,13 +20,15 @@ from justpen_knowledgebase_mcp.storage.fulltext import append_chunk, claim_item,
 from justpen_knowledgebase_mcp.storage.jobs import JobStore
 from justpen_knowledgebase_mcp.text import TextChunk
 
+from .graph_fixtures import stated_request
+
 pytestmark = pytest.mark.integration
 
 
 async def test_records_literal_words_and_full_projection(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         written = await kb.write(
-            WriteRequest.model_validate(
+            stated_request(
                 {
                     "nodes": [
                         {
@@ -58,7 +60,7 @@ async def test_records_literal_words_and_full_projection(tmp_path):
         ]:
             found = await kb.search(SearchRequest.model_validate({"kind": "nodes", "query": query, "query_mode": mode}))
             assert [item["id"] for item in found["items"]] == ([identifier] if matches else [])
-        await kb.write(WriteRequest.model_validate({"nodes": [{"id": identifier, "properties": {"a": "removed"}}]}))
+        await kb.write(stated_request({"nodes": [{"id": identifier, "properties": {"a": "removed"}}]}))
         assert not (await kb.search(SearchRequest(kind="nodes", query="access")))["items"]
 
         def integrity(c, _t):
@@ -75,9 +77,7 @@ async def test_reindex_full_slot_epoch_and_current_record(tmp_path):
 
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         written = await kb.write(
-            WriteRequest.model_validate(
-                {"nodes": [{"type": "domain", "properties": {"value": "a.example", "note": "current"}}]}
-            )
+            stated_request({"nodes": [{"type": "domain", "properties": {"value": "a.example", "note": "current"}}]})
         )
 
         def admission(c, _t):
@@ -362,7 +362,7 @@ async def test_json_expanded_snippet_budget_and_match_reference_cap(tmp_path):
             {"type": "domain", "properties": {"value": f"n{i}.example", "note": "word" + "\x00" * 1000}}
             for i in range(100)
         ]
-        await kb.write(WriteRequest.model_validate({"nodes": nodes}))
+        await kb.write(stated_request({"nodes": nodes}))
         found = await kb.search(SearchRequest(kind="nodes", query="word", limit=100))
         assert len(canonical_json(found).encode()) < 256 * 1024
         assert found["has_more"]
@@ -404,9 +404,7 @@ async def test_literal_verification_timeout_is_incomplete_limit(tmp_path, monkey
         yield from original(*args)
 
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path, query_timeout_ms=100)) as kb:
-        await kb.write(
-            WriteRequest.model_validate({"nodes": [{"type": "domain", "properties": {"value": "needle.example"}}]})
-        )
+        await kb.write(stated_request({"nodes": [{"type": "domain", "properties": {"value": "needle.example"}}]}))
         monkeypatch.setattr(fulltext, "_literal_ranges", slow)
         with pytest.raises(LimitError, match="incomplete"):
             await kb.search(SearchRequest(kind="nodes", query="needle"))
@@ -416,9 +414,7 @@ async def test_long_canonical_pointer_keeps_one_exact_match_reference(tmp_path):
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         key = "/" * 60000
         await kb.write(
-            WriteRequest.model_validate(
-                {"nodes": [{"type": "domain", "properties": {"value": "a.example", key: "uniqueneedle"}}]}
-            )
+            stated_request({"nodes": [{"type": "domain", "properties": {"value": "a.example", key: "uniqueneedle"}}]})
         )
         found = (await kb.search(SearchRequest(kind="nodes", query="uniqueneedle")))["items"][0]
         assert found["matches"][0]["pointer"] == "/properties/" + "~1" * 60000
@@ -433,7 +429,7 @@ async def test_record_reindex_reads_canonical_after_concurrent_writer(tmp_path, 
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
         node = (
             await kb.write(
-                WriteRequest.model_validate(
+                stated_request(
                     {"nodes": [{"type": "domain", "properties": {"value": "a.example", "note": "oldvalue"}}]}
                 )
             )
@@ -450,7 +446,7 @@ async def test_record_reindex_reads_canonical_after_concurrent_writer(tmp_path, 
         accepted = await kb.reindex({"kind": "nodes", "ids": [node]})
         try:
             await asyncio.wait_for(entered.wait(), 3)
-            await kb.write(WriteRequest.model_validate({"nodes": [{"id": node, "properties": {"note": "newvalue"}}]}))
+            await kb.write(stated_request({"nodes": [{"id": node, "properties": {"note": "newvalue"}}]}))
         finally:
             release.set()
         done = await kb.job_runner.wait(accepted["job_id"], time.monotonic() + 5, accepted)

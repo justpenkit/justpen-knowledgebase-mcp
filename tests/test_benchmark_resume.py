@@ -103,7 +103,14 @@ async def test_real_schema_canonical_node_validation(tmp_path):
         return {"url": f"https://bench.example/{index}", "method": "GET"}
 
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
-        await kb.write({"nodes": [{"type": "endpoint", "properties": expected(index)} for index in range(100)]})
+        await kb.write(
+            {
+                "nodes": [
+                    {"type": "endpoint", "properties": expected(index), "ownership": "candidate"}
+                    for index in range(100)
+                ]
+            }
+        )
         measure = SimpleNamespace(nodes=100, hub="", check=Mock())
         assert await resume.validate_nodes(measure, kb, expected) == 100
         assert measure.hub

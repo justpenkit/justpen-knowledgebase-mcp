@@ -19,9 +19,10 @@ async def test_search_and_neighbors_use_reviewed_wire_shapes(tmp_path):
                 "nodes": [
                     {
                         "type": "domain",
+                        "ownership": "candidate",
                         "properties": {"value": "example.test", "platform": "linux", "note": "alpha proof"},
                     },
-                    {"type": "subdomain", "properties": {"value": "api.example.test"}},
+                    {"type": "subdomain", "ownership": "candidate", "properties": {"value": "api.example.test"}},
                 ],
                 "relations": [
                     {

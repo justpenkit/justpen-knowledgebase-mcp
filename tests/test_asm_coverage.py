@@ -191,6 +191,39 @@ def test_every_write_validates(source: harness.Source) -> None:
     assert harness.node_identities(source)
 
 
+def _misstated_ownership(batches: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """`(file, type)` of each node whose ownership disagrees with its type's inventory declaration.
+
+    A node of a `carries` type is written with a creation ownership; a scoped child or stateless
+    type is written with none, because it inherits its root's or holds no state.
+    """
+    misstated: list[tuple[str, str]] = []
+    for batch in batches:
+        for node in batch["request"].get("nodes", []):
+            if catalog_view()["nodes"][node["type"]]["inventory"] == "carries":
+                stated = node.get("ownership") in ("owned", "dependency", "candidate")
+            else:
+                stated = "ownership" not in node
+            if not stated:
+                misstated.append((batch["file"], node["type"]))
+    return misstated
+
+
+def test_every_carrying_node_states_its_ownership(source: harness.Source) -> None:
+    assert not _misstated_ownership(source.batches)
+
+
+def test_the_ownership_check_catches_a_missing_and_an_inherited_state() -> None:
+    nodes = [
+        {"type": "subdomain", "properties": {"value": "www.example.com"}},
+        {"type": "port", "properties": {"transport": "tcp", "number": 443}, "ownership": "owned"},
+        {"type": "subdomain", "properties": {"value": "api.example.com"}, "ownership": "candidate"},
+        {"type": "service", "properties": {"name": "https"}},
+    ]
+    batches = [{"file": "output.jsonl", "request": {"nodes": nodes}}]
+    assert _misstated_ownership(batches) == [("output.jsonl", "subdomain"), ("output.jsonl", "port")]
+
+
 def test_every_new_type_and_property_is_fed() -> None:
     """Test 7: every v3 type is written somewhere and every declared attribute has a source."""
     sinks: set[str] = set()
