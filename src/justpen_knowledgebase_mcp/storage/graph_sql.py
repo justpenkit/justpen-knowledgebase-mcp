@@ -26,8 +26,8 @@ OWNER_LOOKUP = {
 }
 
 OWNER_UPDATE = {
-    "nodes": "UPDATE nodes SET properties=?,metadata=?,updated_at=?,observed_at=? WHERE id=?",
-    "relations": "UPDATE relations SET properties=?,metadata=?,updated_at=?,observed_at=? WHERE id=?",
+    "nodes": "UPDATE nodes SET properties=?,metadata=?,updated_at=?,first_seen=?,last_seen=? WHERE id=?",
+    "relations": "UPDATE relations SET properties=?,metadata=?,updated_at=?,first_seen=?,last_seen=? WHERE id=?",
 }
 
 # `state_root_uuid` is fixed at creation, so an ID write rewrites only the state it may change.

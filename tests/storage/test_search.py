@@ -355,8 +355,8 @@ async def test_relation_properties_refresh_and_builtin_filters(tmp_path):
                 source="scanner",
                 source_id=written["nodes"][0]["id"],
                 target_id=written["nodes"][1]["id"],
-                observed_at_min="2026-09-14T00:00:00Z",
-                observed_at_max="2026-09-16T00:00:00Z",
+                first_seen_min="2026-09-14T00:00:00Z",
+                last_seen_max="2026-09-16T00:00:00Z",
                 properties={"path": "/status", "op": "eq", "value": 403},
             )
         )
@@ -368,6 +368,28 @@ async def test_relation_properties_refresh_and_builtin_filters(tmp_path):
                 SearchRequest(kind="relations", properties={"path": "/status", "op": "exists", "value": True})
             )
         )["items"]
+
+
+async def test_seen_bounds_select_records_by_their_first_and_last_observation(tmp_path):
+    """R12, KTD6: each bound is inclusive, and a node observed at T1 and T3 is seen at neither T2 bound."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        t1, t2, t3 = "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", "2026-03-01T00:00:00Z"
+        nodes = [
+            {"type": "domain", "properties": {"value": "early.example"}, "observed_at": t1},
+            {"type": "domain", "properties": {"value": "late.example"}, "observed_at": t3},
+        ]
+        early, late = [node["id"] for node in (await kb.write(stated_request({"nodes": nodes})))["nodes"]]
+        await kb.write(stated_request({"nodes": [{**nodes[0], "observed_at": t3}]}))
+
+        async def matches(**bounds: str) -> set[str]:
+            request = SearchRequest.model_validate({"kind": "nodes", **bounds})
+            return {item["id"] for item in (await kb.search(request))["items"]}
+
+        assert await matches(last_seen_min=t3) == {early, late}
+        assert await matches(first_seen_min=t2) == {late}
+        assert await matches(first_seen_max=t1) == {early}
+        assert await matches(last_seen_max=t2) == set()
+        assert await matches(first_seen_min=t1, last_seen_max=t3) == {early, late}
 
 
 async def test_relation_words_intersect_direct_and_single_linked_evidence_units(tmp_path):

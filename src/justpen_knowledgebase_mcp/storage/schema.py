@@ -99,7 +99,7 @@ CREATE TABLE nodes (
  id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT NOT NULL UNIQUE, type TEXT NOT NULL,
  key TEXT NOT NULL, properties TEXT NOT NULL CHECK(json_valid(properties)),
  metadata TEXT NOT NULL DEFAULT '{}', lifecycle TEXT NOT NULL DEFAULT 'ready',
- delete_job_id TEXT, delete_cascade INTEGER, delete_requested_at INTEGER, created_at INTEGER, updated_at INTEGER, observed_at INTEGER,
+ delete_job_id TEXT, delete_cascade INTEGER, delete_requested_at INTEGER, created_at INTEGER, updated_at INTEGER,
  first_seen INTEGER, last_seen INTEGER,
  ownership TEXT CHECK(ownership IS NULL OR ownership IN ('owned','dependency','candidate','rejected')),
  authorization TEXT CHECK(authorization IS NULL OR authorization IN ('in_scope','out_of_scope','unknown')),
@@ -116,7 +116,7 @@ CREATE TABLE relations (
  target_id INTEGER NOT NULL REFERENCES nodes(id), key TEXT NOT NULL,
  properties TEXT NOT NULL CHECK(json_valid(properties)), metadata TEXT NOT NULL DEFAULT '{}',
  lifecycle TEXT NOT NULL DEFAULT 'ready', delete_job_id TEXT, delete_cascade INTEGER, delete_requested_at INTEGER,
- created_at INTEGER, updated_at INTEGER, observed_at INTEGER, first_seen INTEGER, last_seen INTEGER,
+ created_at INTEGER, updated_at INTEGER, first_seen INTEGER, last_seen INTEGER,
  CHECK((lifecycle='ready' AND delete_job_id IS NULL AND delete_cascade IS NULL AND delete_requested_at IS NULL) OR
  (lifecycle='delete_pending' AND delete_job_id IS NOT NULL AND delete_cascade IS NOT NULL AND delete_cascade IN (0,1) AND typeof(delete_cascade)='integer' AND typeof(delete_requested_at)='integer')),
  UNIQUE(source_id,type,target_id,key)

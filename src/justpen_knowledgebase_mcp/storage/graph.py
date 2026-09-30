@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 from collections.abc import Mapping
@@ -34,7 +35,7 @@ from ..errors import (
 )
 from ..identity import format_timestamp, identity_json, identity_key, parse_timestamp
 from ..models import GetRequest, Mutation, NodeRef, NodeWrite, RelationWrite, WriteRequest, WriteResult
-from ..mutations import canonical_json, merge_properties
+from ..mutations import canonical_json, merge_properties, validate_properties
 from ..responses import BlockerDetails
 from . import fulltext, graph_sql as sql
 from .inventory import effective_state
@@ -93,6 +94,8 @@ class _PreparedMutation:
     parent_id: str | None = None
     endpoints: tuple[dict[str, Any] | None, dict[str, Any] | None] = (None, None)
     match: MatchKind | None = None
+    # The observation time the write reports (R13), or None when it reports none.
+    observed: int | None = None
 
 
 def row_by_id(connection: apsw.Connection, kind: str, identifier: str | int) -> dict[str, Any] | None:
@@ -132,6 +135,39 @@ def require_ready(connection: apsw.Connection, kind: str, row: dict[str, Any]) -
     blocker = pending_blocker(connection, kind, row)
     if blocker is not None:
         raise RecordConflictError("RECORD_DELETING", BlockerDetails.model_validate(blocker))
+
+
+def _observation_time(mutation: Mutation) -> int:
+    """KTD6: a write observes at its `observed_at`, or at the current time when it omits one."""
+    return parse_timestamp(mutation.observed_at) if mutation.observed_at is not None else time.time_ns() // 1000
+
+
+def _reported(mutation: Mutation, existing: dict[str, Any] | None, observed: int) -> int | None:
+    """R13: a creation, a supplied `observed_at` or a property change reports an observation; nothing else does."""
+    if existing is None or mutation.observed_at is not None or mutation.properties or mutation.remove_properties:
+        return observed
+    return None
+
+
+def _merge_observed(
+    current: dict[str, Any], mutation: Mutation, stored: dict[str, Any] | None, observed: int
+) -> dict[str, Any]:
+    """Merge a write onto a record; one observed before the record's last seen only adds what it lacks (R28)."""
+    if stored is None or stored["last_seen"] is None or observed >= stored["last_seen"]:
+        return merge_properties(current, mutation.properties, mutation.remove_properties)
+    result = copy.deepcopy(current)
+    _add_missing(result, mutation.properties)
+    validate_properties(result)
+    return result
+
+
+def _add_missing(target: dict[str, Any], patch: dict[str, Any]) -> None:
+    """Add each patch key the target lacks, at any object depth, without replacing a stored value."""
+    for key, value in patch.items():
+        if key not in target:
+            target[key] = copy.deepcopy(value)
+        elif type(value) is dict and type(target[key]) is dict:
+            _add_missing(cast("dict[str, Any]", target[key]), cast("dict[str, Any]", value))
 
 
 def _identity_definition(kind: str, type_name: str) -> Mapping[str, Any]:
@@ -250,6 +286,7 @@ def _deduplicate_node(
     properties: dict[str, Any],
     parent_id: str | None,
     key: str,
+    observed: int,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Match one node identity while distinguishing an impossible hash collision."""
     if existing is not None:
@@ -272,7 +309,7 @@ def _deduplicate_node(
     stored = json.loads(existing["properties"])
     if identity_json("nodes", type_name, stored, parent_id) != identity_json("nodes", type_name, properties, parent_id):
         raise ConflictError("identity hash collision")
-    properties = merge_properties(stored, mutation.properties, mutation.remove_properties)
+    properties = _merge_observed(stored, mutation, existing, observed)
     validate_record("nodes", type_name, properties)
     return existing, properties
 
@@ -310,17 +347,29 @@ def _prepare_node(
 ) -> _PreparedMutation:
     """Validate, scope, and deduplicate one node without changing SQLite state."""
     parent_id = _node_parent_id(connection, type_name, existing, parent)
+    observed = _observation_time(mutation)
     current: dict[str, Any] = json.loads(existing["properties"]) if existing is not None else {}
-    properties = merge_properties(current, mutation.properties, mutation.remove_properties)
+    properties = _merge_observed(current, mutation, existing, observed)
     validate_record("nodes", type_name, properties)
     key = identity_key("nodes", type_name, properties, parent_id)
     addressed = existing is not None
-    existing, properties = _deduplicate_node(connection, mutation, existing, type_name, properties, parent_id, key)
+    existing, properties = _deduplicate_node(
+        connection, mutation, existing, type_name, properties, parent_id, key, observed
+    )
     row = _preflight_row(existing, type_name, key, properties, synthetic_id)
     match: MatchKind = "id" if addressed else "identity" if existing is not None else "created"
     if existing is None:
         row.update(_NO_STATE, state_root_uuid=_state_root(parent))
-    return _PreparedMutation(mutation, type_name, existing, row, properties, parent_id, match=match)
+    return _PreparedMutation(
+        mutation,
+        type_name,
+        existing,
+        row,
+        properties,
+        parent_id,
+        match=match,
+        observed=_reported(mutation, existing, observed),
+    )
 
 
 def _state_root(parent: dict[str, Any] | None) -> str | None:
@@ -421,6 +470,7 @@ def _deduplicate_relation(
     target: dict[str, Any],
     properties: dict[str, Any],
     key: str,
+    observed: int,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Match one endpoint-bound relation identity and merge nonidentity properties."""
     if existing is not None:
@@ -443,7 +493,7 @@ def _deduplicate_relation(
     stored = json.loads(existing["properties"])
     if identity_json("relations", type_name, stored) != identity_json("relations", type_name, properties):
         raise ConflictError("identity hash collision")
-    properties = merge_properties(stored, mutation.properties, mutation.remove_properties)
+    properties = _merge_observed(stored, mutation, existing, observed)
     validate_record("relations", type_name, properties)
     return existing, properties
 
@@ -459,19 +509,28 @@ def _prepare_relation(
     source, target = _relation_endpoints(connection, mutation, nodes, existing)
     _validate_endpoints(type_name, source, target)
     _enforce_single_parent(connection, type_name, source, target)
+    observed = _observation_time(mutation)
     current: dict[str, Any] = json.loads(existing["properties"]) if existing is not None else {}
-    properties = merge_properties(current, mutation.properties, mutation.remove_properties)
+    properties = _merge_observed(current, mutation, existing, observed)
     validate_record("relations", type_name, properties)
     key = identity_key("relations", type_name, properties)
     existing, properties = _deduplicate_relation(
-        connection, mutation, existing, type_name, source, target, properties, key
+        connection, mutation, existing, type_name, source, target, properties, key, observed
     )
     # After both merges: `_deduplicate_relation` re-merges onto an edge the write matched by key.
     _validate_endpoint_values(type_name, properties, source, target)
     require_ready(connection, "nodes", source)
     require_ready(connection, "nodes", target)
     row = _preflight_row(existing, type_name, key, properties, synthetic_id)
-    return _PreparedMutation(mutation, type_name, existing, row, properties, endpoints=(source, target))
+    return _PreparedMutation(
+        mutation,
+        type_name,
+        existing,
+        row,
+        properties,
+        endpoints=(source, target),
+        observed=_reported(mutation, existing, observed),
+    )
 
 
 def _preflight_links(connection: apsw.Connection, plans: list[_PreparedMutation]) -> None:
@@ -732,6 +791,7 @@ def _persist(
     parent_id: str | None = None,
     planned_uuid: str | None = None,
     state: Mapping[str, Any] | None = None,
+    observed: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
     source, target = endpoints
     type_name = row["type"] if row else mutation.type
@@ -745,16 +805,16 @@ def _persist(
     for field in ("source", "label"):
         if field in mutation.model_fields_set:
             metadata[field] = getattr(mutation, field)
-    observed_at = parse_timestamp(mutation.observed_at) if mutation.observed_at is not None else now
+    first_seen, last_seen = _seen(row, observed)
     created = row is None
     if row is None:
         identifier = planned_uuid or str(uuid4())
         if kind == "nodes":
             planned = state or _NO_STATE
             connection.execute(
-                "INSERT INTO nodes(uuid,type,key,properties,metadata,created_at,updated_at,observed_at,"
+                "INSERT INTO nodes(uuid,type,key,properties,metadata,created_at,updated_at,first_seen,last_seen,"
                 "ownership,authorization,allowlist_scoped,authorization_override,state_root_uuid) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     identifier,
                     type_name,
@@ -763,7 +823,8 @@ def _persist(
                     canonical_json(metadata),
                     now,
                     now,
-                    observed_at,
+                    first_seen,
+                    last_seen,
                     *(planned[column] for column in _NO_STATE),
                 ),
             )
@@ -771,7 +832,8 @@ def _persist(
             if source is None or target is None:
                 raise InvalidParamsError("endpoints required")
             connection.execute(
-                "INSERT INTO relations(uuid,source_id,type,target_id,key,properties,metadata,created_at,updated_at,observed_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO relations(uuid,source_id,type,target_id,key,properties,metadata,created_at,updated_at,"
+                "first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     identifier,
                     source["id"],
@@ -782,7 +844,8 @@ def _persist(
                     canonical_json(metadata),
                     now,
                     now,
-                    observed_at,
+                    first_seen,
+                    last_seen,
                 ),
             )
         row = row_by_id(connection, kind, identifier)
@@ -791,7 +854,7 @@ def _persist(
     else:
         connection.execute(
             sql.OWNER_UPDATE[kind],
-            (canonical_json(properties), canonical_json(metadata), now, observed_at, row["id"]),
+            (canonical_json(properties), canonical_json(metadata), now, first_seen, last_seen, row["id"]),
         )
         _update_state(connection, row, state)
         row = row_by_id(connection, kind, row["id"])
@@ -800,6 +863,14 @@ def _persist(
     refresh_properties(connection, kind, row, properties)
     fulltext.refresh_record_text(connection, kind, row)
     return row, created
+
+
+def _seen(row: dict[str, Any] | None, observed: int | None) -> tuple[int | None, int | None]:
+    """R12: fold an observation into first seen as a minimum and into last seen as a maximum."""
+    first, last = (row["first_seen"], row["last_seen"]) if row is not None else (None, None)
+    if observed is None:
+        return first, last
+    return (observed if first is None else min(first, observed), observed if last is None else max(last, observed))
 
 
 def _update_state(connection: apsw.Connection, row: dict[str, Any], state: Mapping[str, Any] | None) -> None:
@@ -848,6 +919,7 @@ class Graph:
                         plan.parent_id,
                         cast("str", plan.row["uuid"]),
                         {column: plan.row[column] for column in _NO_STATE} if kind == "nodes" else None,
+                        plan.observed,
                     )
                     plan.row.clear()
                     plan.row.update(row)
@@ -908,7 +980,8 @@ def _record(connection: apsw.Connection, kind: str, row: dict[str, Any]) -> dict
         metadata: dict[str, Any] = json.loads(row["metadata"])
         record.update(metadata)
         record.update(type=row["type"], key=row["key"], properties=json.loads(row["properties"]))
-        record["observed_at"] = format_timestamp(row["observed_at"]) if row["observed_at"] is not None else None
+        for field in ("first_seen", "last_seen"):
+            record[field] = format_timestamp(row[field]) if row[field] is not None else None
         record["link_count"] = connection.execute(sql.LINK_COUNT[kind], (row["id"],)).get
         if kind == "relations":
             for field in ("source_id", "target_id"):

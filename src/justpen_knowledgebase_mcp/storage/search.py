@@ -148,8 +148,10 @@ def _builtin_filters(request: SearchRequest) -> tuple[list[str], list[Any]]:
             )
             filters.append(value)
     for timestamp, clause in (
-        (request.observed_at_min, "o.observed_at>=?"),
-        (request.observed_at_max, "o.observed_at<=?"),
+        (request.first_seen_min, "o.first_seen>=?"),
+        (request.first_seen_max, "o.first_seen<=?"),
+        (request.last_seen_min, "o.last_seen>=?"),
+        (request.last_seen_max, "o.last_seen<=?"),
     ):
         if timestamp is not None:
             clauses.append(clause)

@@ -335,16 +335,16 @@ def test_dedup_uses_canonical_identity_to_reject_hash_collision(monkeypatch):
     lookup = Mock(return_value=owner(properties='{"value":"example.com"}'))
     monkeypatch.setattr(graph, "row_by_id", lookup)
     existing, merged = graph._deduplicate_node(
-        database(cursor(value=1)), mutation, None, "domain", properties, None, "key"
+        database(cursor(value=1)), mutation, None, "domain", properties, None, "key", 4
     )
     assert existing == owner(properties='{"value":"example.com"}')
     assert merged == properties
     lookup.return_value = owner(properties='{"value":"different.com"}')
     with pytest.raises(ConflictError, match="collision"):
-        graph._deduplicate_node(database(cursor(value=1)), mutation, None, "domain", properties, None, "key")
+        graph._deduplicate_node(database(cursor(value=1)), mutation, None, "domain", properties, None, "key", 4)
     lookup.return_value = None
     with pytest.raises(NotFoundError):
-        graph._deduplicate_node(database(cursor(value=1)), mutation, None, "domain", properties, None, "key")
+        graph._deduplicate_node(database(cursor(value=1)), mutation, None, "domain", properties, None, "key", 4)
 
 
 def test_relation_persistence_binds_endpoint_ids_and_observation(monkeypatch):
@@ -361,11 +361,12 @@ def test_relation_persistence_binds_endpoint_ids_and_observation(monkeypatch):
     monkeypatch.setattr(graph, "refresh_properties", Mock())
     monkeypatch.setattr(graph.fulltext, "refresh_record_text", Mock())
     db = database()
-    _row, created = graph._persist(db, "relations", mutation, None, {}, (source, target))
+    observed = graph.parse_timestamp("2026-01-01T00:00:00Z")
+    _row, created = graph._persist(db, "relations", mutation, None, {}, (source, target), observed=observed)
     assert created
     values = db.execute.call_args.args[1]
     assert values[1:4] == (1, "resolves_to", 2)
-    assert values[-1] == graph.parse_timestamp("2026-01-01T00:00:00Z")
+    assert values[-2:] == (observed, observed)
 
 
 def test_sources_association_invalid_cursor_and_missing_owner(monkeypatch):

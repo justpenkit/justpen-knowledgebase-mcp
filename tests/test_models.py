@@ -317,7 +317,18 @@ def test_search_state_filters_are_node_only():
                 SearchRequest.model_validate({"kind": kind, field: value})
     with pytest.raises(ValidationError):
         SearchRequest.model_validate({"kind": "nodes", "ownership": "trusted"})
-    assert SearchRequest.model_validate({"kind": "nodes", "observed_at_min": "2026-01-01T00:00:00Z"})
+    assert SearchRequest.model_validate({"kind": "relations", "last_seen_min": "2026-01-01T00:00:00Z"})
+
+
+@pytest.mark.parametrize("field", ["first_seen_min", "first_seen_max", "last_seen_min", "last_seen_max"])
+def test_seen_bounds_replace_observed_at_on_graph_searches(field):
+    """KTD6: graph searches bound first and last seen; evidence keeps its per-source times."""
+    assert SearchRequest.model_validate({"kind": "nodes", field: "2026-01-01T00:00:00Z"})
+    for invalid in ({"kind": "evidence", field: "2026-01-01T00:00:00Z"}, {"kind": "nodes", field: "yesterday"}):
+        with pytest.raises(ValidationError):
+            SearchRequest.model_validate(invalid)
+    with pytest.raises(ValidationError):
+        SearchRequest.model_validate({"kind": "nodes", "observed_at_min": "2026-01-01T00:00:00Z"})
 
 
 def test_state_response_fields_are_optional_until_storage_fills_them():

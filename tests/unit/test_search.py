@@ -87,13 +87,16 @@ def test_builtin_filters_parameterize_all_user_values():
         source="unsafe'",
         source_id=NODE,
         target_id=OTHER,
-        observed_at_min="2026-01-01T00:00:00Z",
-        observed_at_max="2026-01-02T00:00:00Z",
+        first_seen_min="2026-01-01T00:00:00Z",
+        first_seen_max="2026-01-02T00:00:00Z",
+        last_seen_min="2026-01-03T00:00:00Z",
+        last_seen_max="2026-01-04T00:00:00Z",
     )
     clauses, values = search._builtin_filters(request)
     assert "unsafe'" not in " ".join(clauses)
     assert values.count("unsafe'") == 2
-    assert values[-1] > values[-2]
+    assert values[-4:] == sorted(values[-4:])
+    assert clauses[-4:] == ["o.first_seen>=?", "o.first_seen<=?", "o.last_seen>=?", "o.last_seen<=?"]
     request = SearchRequest(
         kind="evidence",
         source="source",

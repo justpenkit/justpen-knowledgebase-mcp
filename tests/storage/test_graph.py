@@ -17,6 +17,7 @@ from justpen_knowledgebase_mcp.errors import (
     NotFoundError,
     RecordConflictError,
 )
+from justpen_knowledgebase_mcp.identity import parse_timestamp
 from justpen_knowledgebase_mcp.models import GetRequest, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage.graph import (
@@ -366,7 +367,10 @@ async def test_identity_upsert_atomic_batch_and_metadata_presence(tmp_path):
         record = (await kb.get(GetRequest(kind="nodes", ids=[identifier])))["records"][0]
         assert record["label"] == "App"
         assert record["properties"]["nested"] == {"a": 1, "b": 2}
-        assert record["observed_at"] == "2001-01-01T00:00:00.000000Z"
+        # An ID write observed before the stored last seen lowers first seen and only adds `old`.
+        assert record["properties"]["old"] is True
+        assert record["first_seen"] == "2001-01-01T00:00:00.000000Z"
+        assert record["last_seen"] > record["first_seen"]
         with pytest.raises(InvalidParamsError):
             await kb.write(
                 write(
@@ -552,7 +556,8 @@ async def run():
 asyncio.run(run())
 """
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
-        created = await kb.write(write({"nodes": [{"type": "domain", "properties": {"value": "example.com"}}]}))
+        domain = {"type": "domain", "properties": {"value": "example.com"}, "observed_at": "2000-01-01T00:00:00Z"}
+        created = await kb.write(write({"nodes": [domain]}))
         identifier = created["nodes"][0]["id"]
         children = [
             await asyncio.create_subprocess_exec(
@@ -595,24 +600,21 @@ asyncio.run(run())
                 ]
                 payloads = [stated(payload) for payload in payloads]
             if mode == "same":
+                # Either commit order ends the same way: the later observation's value, and both bounds.
+                observations = ((2, "2002-01-01T00:00:00Z"), (1, "2001-01-01T00:00:00Z"))
                 payloads = [
-                    {"nodes": [{"id": identifier, "properties": {"same": value}, "observed_at": timestamp}]}
-                    for value, timestamp in ((1, "2026-01-01T00:00:00Z"), (2, "2001-01-01T00:00:00Z"))
+                    {"nodes": [{"id": identifier, "properties": {"same": value}, "observed_at": observed_at}]}
+                    for value, observed_at in observations
                 ]
-                outputs = [
-                    await asyncio.wait_for(child.communicate(json.dumps(payload).encode()), 15)
-                    for child, payload in zip(children, payloads, strict=True)
-                ]
-            else:
-                outputs = await asyncio.wait_for(
-                    asyncio.gather(
-                        *(
-                            child.communicate(json.dumps(payload).encode())
-                            for child, payload in zip(children, payloads, strict=True)
-                        )
-                    ),
-                    15,
-                )
+            outputs = await asyncio.wait_for(
+                asyncio.gather(
+                    *(
+                        child.communicate(json.dumps(payload).encode())
+                        for child, payload in zip(children, payloads, strict=True)
+                    )
+                ),
+                15,
+            )
             assert all(child.returncode == 0 for child in children), outputs
         finally:
             for child in children:
@@ -624,29 +626,26 @@ asyncio.run(run())
             assert record["properties"] == {"value": "example.com", "left": 1, "right": 2}
         elif mode == "same":
             assert record["properties"]["same"] == 2
-            assert record["observed_at"] == "2001-01-01T00:00:00.000000Z"
+            assert (record["first_seen"], record["last_seen"]) == (
+                "2000-01-01T00:00:00.000000Z",
+                "2002-01-01T00:00:00.000000Z",
+            )
         else:
             assert (
                 await kb.workers.read(lambda c, t: c.execute("select count(*) from nodes where type='ip_address'").get)
                 == 1
             )
             assert await kb.workers.read(lambda c, t: c.execute("select count(*) from relations").get) == 2
-        # A controlled commit order on the same field preserves the final writer's payload and timestamp.
-        for value in (1, 2):
-            await kb.write(
-                write(
-                    {
-                        "nodes": [
-                            {
-                                "id": identifier,
-                                "properties": {"same": value},
-                                "observed_at": f"200{value}-01-01T00:00:00Z",
-                            }
-                        ]
-                    }
-                )
-            )
-        assert (await kb.get(GetRequest(kind="nodes", ids=[identifier])))["records"][0]["properties"]["same"] == 2
+        # A controlled commit order that delivers the newer observation first keeps its value and bounds.
+        for value, observed_at in ((3, "2030-01-01T00:00:00Z"), (0, "1990-01-01T00:00:00Z")):
+            patch = {"id": identifier, "properties": {"same": value}, "observed_at": observed_at}
+            await kb.write(write({"nodes": [patch]}))
+        record = (await kb.get(GetRequest(kind="nodes", ids=[identifier])))["records"][0]
+        assert record["properties"]["same"] == 3
+        assert (record["first_seen"], record["last_seen"]) == (
+            "1990-01-01T00:00:00.000000Z",
+            "2030-01-01T00:00:00.000000Z",
+        )
 
 
 async def test_ready_only_counts_pending_evidence_and_deferred_counts(tmp_path):
@@ -707,8 +706,8 @@ async def test_metadata_is_integer_and_association_ids_are_not_reused(tmp_path):
         )
         identifier = output["nodes"][0]["id"]
         assert await kb.workers.read(
-            lambda c, t: c.execute("select observed_at,typeof(observed_at) from nodes").get
-        ) == (1, "integer")
+            lambda c, t: c.execute("select first_seen,last_seen,typeof(first_seen),typeof(last_seen) from nodes").get
+        ) == (1, 1, "integer", "integer")
         first = await kb.workers.read(lambda c, t: c.execute("select id from node_evidence").get)
         await kb.write(write({"nodes": [{"id": identifier, "evidence_remove": [evidence]}]}))
         await kb.write(write({"nodes": [{"id": identifier, "evidence_add": [evidence]}]}))
@@ -1617,3 +1616,115 @@ async def test_removing_the_last_ready_evidence_of_a_claim_is_refused(tmp_path):
         with pytest.raises(ConflictError, match=r"^nodes\[0\]: .*last ready evidence"):
             await kb.write(WriteRequest.model_validate({"nodes": [{"id": host, "evidence_remove": [first]}]}))
         assert await kb.workers.read(lambda c, t: c.execute("select count(*) from node_evidence").get) == 3
+
+
+# First and last seen. Each time is written as `observed_at` and read back in the canonical form.
+T1, T2 = "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"
+T1_SEEN, T2_SEEN = "2026-01-01T00:00:00.000000Z", "2026-02-01T00:00:00.000000Z"
+
+
+async def record_of(kb, kind, identifier):
+    return (await kb.get(GetRequest(kind=kind, ids=[identifier])))["records"][0]
+
+
+async def seen(kb, kind, identifier):
+    record = await record_of(kb, kind, identifier)
+    assert "observed_at" not in record
+    return record["first_seen"], record["last_seen"]
+
+
+async def test_an_older_observation_lowers_first_seen_and_a_state_change_is_no_observation(tmp_path):
+    """AE6, R12, R13: an older rescan moves first seen back, and promotion, label, source and evidence do not."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        created = await kb.write(
+            WriteRequest.model_validate({"nodes": [{**ACME, "ownership": "candidate", "observed_at": T2}]})
+        )
+        identifier = created["nodes"][0]["id"]
+        assert await seen(kb, "nodes", identifier) == (T2_SEEN, T2_SEEN)
+        await kb.write(WriteRequest.model_validate({"nodes": [{**ACME, "ownership": "candidate", "observed_at": T1}]}))
+        assert await seen(kb, "nodes", identifier) == (T1_SEEN, T2_SEEN)
+        await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {
+                            "id": identifier,
+                            "ownership": "owned",
+                            "label": "Acme",
+                            "source": "registrar",
+                            "evidence_add": [evidence],
+                        }
+                    ]
+                }
+            )
+        )
+        assert await seen(kb, "nodes", identifier) == (T1_SEEN, T2_SEEN)
+
+
+async def test_an_older_observation_only_adds_the_properties_a_record_lacks(tmp_path):
+    """AE6, R28, KTD6: the stored 1.25 survives a T1 scan of 1.18, which adds `product` and removes nothing."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        stack = scoped_stack()
+        stack["nodes"][2] = {
+            "type": "service",
+            "properties": {"name": "http", "version": "1.25", "secure": False, "banner": "welcome"},
+            "observed_at": T2,
+        }
+        service = (await kb.write(WriteRequest.model_validate(stack)))["nodes"][2]["id"]
+        await kb.write(
+            WriteRequest.model_validate(
+                {
+                    "nodes": [
+                        {
+                            "id": service,
+                            "properties": {"version": "1.18", "product": "nginx"},
+                            "remove_properties": ["/banner"],
+                            "observed_at": T1,
+                        }
+                    ]
+                }
+            )
+        )
+        record = await record_of(kb, "nodes", service)
+        stored = {"name": "http", "version": "1.25", "secure": False, "banner": "welcome", "product": "nginx"}
+        assert record["properties"] == stored
+        assert (record["first_seen"], record["last_seen"]) == (T1_SEEN, T2_SEEN)
+
+
+async def test_an_older_relation_upsert_keeps_its_values_and_its_later_last_seen(tmp_path):
+    """R12, R28: an identity re-upsert of an edge observed earlier adds a missing key and overwrites none."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+
+        def resolution(properties, observed_at):
+            relation = {
+                "type": "resolves_to",
+                "source_ref": {"node_index": 0},
+                "target_ref": {"node_index": 1},
+                "properties": properties,
+                "observed_at": observed_at,
+            }
+            return write({"nodes": [ACME, HOST], "relations": [relation]})
+
+        written = await kb.write(resolution({"vantage": "public"}, T2))
+        relation = written["relations"][0]["id"]
+        again = await kb.write(resolution({"vantage": "internal", "ttl": 60}, T1))
+        assert again["relations"][0]["id"] == relation
+        record = await record_of(kb, "relations", relation)
+        assert record["properties"] == {"vantage": "public", "ttl": 60}
+        assert (record["first_seen"], record["last_seen"]) == (T1_SEEN, T2_SEEN)
+
+
+async def test_a_property_patch_without_observed_at_is_observed_now(tmp_path):
+    """R13, KTD6: a property change reports an observation at the current time."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        created = await kb.write(
+            WriteRequest.model_validate({"nodes": [{**ACME, "ownership": "candidate", "observed_at": T1}]})
+        )
+        identifier = created["nodes"][0]["id"]
+        before = time.time_ns() // 1000
+        await kb.write(WriteRequest.model_validate({"nodes": [{"id": identifier, "properties": {"note": "seen"}}]}))
+        after = time.time_ns() // 1000
+        first_seen, last_seen = await seen(kb, "nodes", identifier)
+        assert first_seen == T1_SEEN
+        assert before <= parse_timestamp(last_seen) <= after

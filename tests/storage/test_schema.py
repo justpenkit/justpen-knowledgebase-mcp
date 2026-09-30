@@ -128,7 +128,7 @@ def test_fresh_workspace_has_inventory_columns_and_indexes(tmp_path):
         relation_columns = {row[1] for row in connection.execute("pragma table_info(relations)")}
         assert node_columns >= INVENTORY_NODE_COLUMNS
         assert relation_columns >= {"first_seen", "last_seen"}
-        assert "observed_at" in node_columns & relation_columns
+        assert "observed_at" not in node_columns | relation_columns
         for name, column in INVENTORY_INDEXES.items():
             indexed = [row[2] for row in connection.execute(f"pragma index_info({name})")]
             assert indexed[0] == column

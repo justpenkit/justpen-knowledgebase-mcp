@@ -316,8 +316,10 @@ class SearchRequest(ClosedModel):
     source: str | None = None
     source_id: RecordID | None = None
     target_id: RecordID | None = None
-    observed_at_min: str | None = None
-    observed_at_max: str | None = None
+    first_seen_min: str | None = None
+    first_seen_max: str | None = None
+    last_seen_min: str | None = None
+    last_seen_max: str | None = None
     ownership: Ownership | None = None
     authorization: Authorization | None = None
     properties: dict[str, Any] | None = None
@@ -343,8 +345,10 @@ class SearchRequest(ClosedModel):
             "type",
             "key",
             "properties",
-            "observed_at_min",
-            "observed_at_max",
+            "first_seen_min",
+            "first_seen_max",
+            "last_seen_min",
+            "last_seen_max",
             "ownership",
             "authorization",
             "source_id",
@@ -357,7 +361,14 @@ class SearchRequest(ClosedModel):
             raise ValueError("relevance needs query and does not accept cursor")
         if self.query is not None and len(self.query.encode("utf-8")) > 2048:
             raise ValueError("query byte limit")
-        for timestamp in (self.observed_at_min, self.observed_at_max, self.created_at_min, self.created_at_max):
+        for timestamp in (
+            self.first_seen_min,
+            self.first_seen_max,
+            self.last_seen_min,
+            self.last_seen_max,
+            self.created_at_min,
+            self.created_at_max,
+        ):
             if timestamp is not None:
                 parse_timestamp(timestamp)
         if self.properties is not None:
