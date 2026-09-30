@@ -6,7 +6,7 @@ The server registers exactly 11 tools:
 | ------------------------------------------------------ | --------------------------------------------------------------------- |
 | [`kb_status`](maintenance.md#kb_status)                | Cached health, WAL, queue, retention, index, scope, and fixed limits. |
 | [`kb_types`](graph.md#kb_types)                        | Discover fixed node/relation schemas and ready counts.                |
-| [`kb_write`](graph.md#kb_write)                        | Atomically create/upsert/patch graph records and evidence links.      |
+| [`kb_write`](graph.md#kb_write)                        | Atomically write graph records, inventory state, evidence links.      |
 | [`kb_get`](graph.md#kb_get)                            | Read records, evidence links, or evidence sources.                    |
 | [`kb_search`](graph.md#kb_search)                      | Search graph/evidence summaries with exact filters and text.          |
 | [`kb_neighbors`](graph.md#kb_neighbors)                | Traverse ready stored relations with explicit budgets.                |

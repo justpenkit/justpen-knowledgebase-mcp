@@ -12,8 +12,12 @@ what each property means, and ready-only counts. The page also carries the
 shared `common` limits, every format with its behavior `version` and
 `description`, `counts_deferred`, and `next_cursor`. Each entry has an `identity` object with a
 `properties` array. Parent-scoped node types also include `scope`, for example
-`{"relation":"has_open_port","endpoint":"source"}` for `port`. A pending
-high-degree delete can defer counts rather than block discovery.
+`{"relation":"has_open_port","endpoint":"source"}` for `port`. Each node entry
+declares `inventory` as `carries`, `inherits` or `none`, and the page's
+top-level `inventory` block lists the `ownership` and `authorization`
+vocabularies, what each declaration means, and the `testing` rule: only
+`in_scope` authorizes active testing. A pending high-degree delete can defer
+counts rather than block discovery.
 
 **Errors:** `INVALID` for a bad kind/type/page/cursor; `LIMIT` or `BUSY` for
 bounded admission. Listing types is discovery and does not replace `kb_status`.
@@ -34,14 +38,39 @@ is shaped as it is.
 `evidence_add`/`evidence_remove` mutations. Creation supplies `type` and
 `properties`; patch supplies `id`. Relations also supply immutable
 `source_ref`/`target_ref`, each exactly one `{id}` or same-batch `{node_index}`.
+Nodes also accept top-level `ownership` (`owned`, `dependency`, `candidate`,
+`rejected`), `authorization` (`in_scope`, `out_of_scope`, `unknown`) and
+`allowlist_scoped` (boolean). Every record accepts `observed_at`, the time its
+facts were observed. `properties` may not contain `ownership`, `authorization`,
+`allowlist_scoped`, `first_seen` or `last_seen`.
 
 **Output:** ordered node/relation acknowledgments with UUID, created/updated
-flags, link counts, and property-index coverage.
+flags, link counts, and property-index coverage. A state-bearing node's
+acknowledgment echoes its effective `ownership` and `authorization`, and a
+rejection adds the `rejection_job_id` of the job purging its relations and
+scoped descendants.
 
 **Errors:** `INVALID` for strict catalog, merge, pointer, endpoint, or batch-rule
-failure; `NOT_FOUND` for an atomic missing reference/evidence set;
-`CONFLICT`/`RECORD_DELETING` for immutable or pending records; `BUSY`, `LIMIT`,
+failure, including a missing `ownership` on creation or a claim without
+`evidence_add`; `NOT_FOUND` for an atomic missing reference/evidence set;
+`CONFLICT`/`RECORD_DELETING` for immutable or pending records;
+`CONFLICT: REJECTED_IDENTITY` when the batch would re-create rejected
+identities, with details listing each `nodes[i]` and its rejected record;
+`CONFLICT: REJECTION_BLOCKED` when an `owned` or `dependency` node relies on the
+candidate being rejected, with details naming that relation; `BUSY`, `LIMIT`,
 or storage errors. No partial batch commits.
+
+Inventory state follows the rules in the
+[graph guide](../guides/graph.md#inventory-state). Creating a node whose
+`inventory` is `carries` requires `ownership`, and `owned` or `dependency`
+requires `evidence_add` on that node in the same write. Authorization defaults
+to `unknown`. A write matched by identity never changes stored state; state
+changes only by ID, following the transition table. A scoped child inherits
+ownership, may narrow its authorization to `out_of_scope` with evidence, and may
+widen it to `in_scope` only under an allowlist-scoped root. Only a `candidate`
+can be rejected, by ID and with evidence. A refusal raised by these rules
+starts with the item address, `nodes[i]:` or `relations[i]:`. Filter a scanner
+batch against a `kb_search` with `ownership: "rejected"` before writing it.
 
 The catalog is the only place a type, its required properties, its identity, its
 parent scope and its allowed relation endpoint **types** are declared. `kb_types`
@@ -73,8 +102,12 @@ present.
 Object patches merge recursively, arrays replace whole values, and `{}` leaves
 existing object children. Required identity cannot change. Explicit `null`
 clears label/source but is literal data inside properties, except that a declared
-property rejects it; remove one with `remove_properties`. A supplied
-`observed_at` is last-writer-wins rather than maximum timestamp.
+property rejects it; remove one with `remove_properties`. Records report
+monotonic `first_seen` and `last_seen`: a write is an observation when it
+creates the record, supplies `observed_at`, or sends `properties` or
+`remove_properties`, and a state, label, source or evidence-only write is not.
+An observation older than the record's `last_seen` only adds the properties the
+record lacks. See [First and last seen](../guides/graph.md#first-and-last-seen).
 
 Removing `/a` while setting `{"a": {}}` conflicts because the set recreates the
 removed object. Removing `/a/x` while setting `{"a": {"y": 1}}` is valid: it
@@ -141,7 +174,7 @@ converted, only these declared spellings are canonicalized.
 
 A workspace written before this rule may hold both spellings as two edges, and
 nothing merges them. No repair procedure is needed, because such a workspace
-predates schema version 3 and is refused at open, so no forked pair reaches a
+predates schema version 4 and is refused at open, so no forked pair reaches a
 readable workspace. Within a workspace this release created, the fold happens on
 every write, so the fork cannot form.
 
@@ -466,7 +499,10 @@ concluding that a type does not exist.
 
 **Output:** record view returns canonical records, `missing_ids`, and
 `remaining_ids`. Links/sources return a page plus `next_cursor`. Evidence records
-include lifecycle/index state; pending lifecycle remains inspectable.
+include lifecycle/index state; pending lifecycle remains inspectable. Node and
+relation records carry `first_seen` and `last_seen`. A ready state-bearing node
+also carries its effective `ownership` and `authorization`, with
+`allowlist_scoped` on a root and `state_root_id` on a scoped node.
 
 **Errors:** `INVALID` for mismatched IDs/view/cursor; `RECORD_DELETING` for a
 pending links/source page; `LIMIT`, `BUSY`, or storage errors. Missing record-view
@@ -475,12 +511,17 @@ IDs are data, not an all-or-nothing error.
 ## `kb_search`
 
 **Input:** required `kind`; optional literal/words `query`; `sort` defaults to
-`id`; graph type/key/source/endpoint/timestamp/property filters; evidence
+`id`; graph type/key/source/endpoint/property filters and the
+`first_seen_min`, `first_seen_max`, `last_seen_min` and `last_seen_max` bounds;
+node-only `ownership` and `authorization` filters on effective state; evidence
 media/index/size/created/source filters; `limit` defaults to 20. Graph search
 defaults `include_evidence` to true. Omit that field entirely for `kind: "evidence"`. Relevance requires a query and rejects a cursor.
+A node search without an `ownership` filter leaves `rejected` records out.
 
 **Output:** bounded summaries and exact match references, `cursor`, `has_more`,
-property filter mode/scan count, and live evidence index coverage. Relevance
+property filter mode/scan count, and live evidence index coverage. Node
+summaries carry effective `ownership` and `authorization`, and `state_root_id`
+for a scoped node. Relevance
 returns the top 100 at most. Full properties/raw bytes require `kb_get` or
 `kb_read_evidence`.
 
@@ -499,7 +540,8 @@ canonical JSON fallback and is reported. See [Evidence, search, and deletion](..
 `both`; optional relation types; `depth` defaults to 1 (maximum 3);
 `max_nodes`/`max_edges` default to 100/300 and cap at 1,000/3,000.
 
-**Output:** ready nodes and stored directed relations, plus `truncated`, a reason
+**Output:** ready nodes with their effective `ownership` and `authorization`
+and stored directed relations, plus `truncated`, a reason
 (`max_nodes`, `max_edges`, `deadline`, or `response_bytes`), and the unexpanded
 frontier. It never infers relations.
 

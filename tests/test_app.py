@@ -6,6 +6,7 @@ import pytest
 from fastmcp import Client, Context
 
 from justpen_knowledgebase_mcp import app
+from justpen_knowledgebase_mcp.catalog import inventory_description
 from justpen_knowledgebase_mcp.config import ServerConfig
 from justpen_knowledgebase_mcp.storage.schema import SCHEMA_VERSION
 
@@ -33,6 +34,35 @@ async def test_initialize_reports_application_distribution_version(tmp_path, mod
         assert client.server_info is not None
         assert client.server_info.name == "justpen-knowledgebase-mcp"
         assert client.server_info.version == version("justpen-knowledgebase-mcp")
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("mode", ["legacy", "auto"])
+async def test_initialize_instructions_carry_the_inventory_rules(tmp_path, mode):
+    async with Client(app.create_app(ServerConfig(workspace_dir=tmp_path)), mode=mode) as client:
+        instructions = client.instructions
+        if mode == "legacy":
+            assert client.initialize_result is not None
+            assert client.initialize_result.instructions == instructions
+    assert instructions is not None
+    assert inventory_description()["testing"] in instructions
+    assert "Only `in_scope` authorizes active testing" in instructions
+    assert "in evidence" in instructions
+    assert "never write them as nodes" in instructions
+    assert "`allowlist_scoped`" in instructions
+    assert "`ownership=rejected`" in instructions
+
+
+@pytest.mark.integration
+async def test_tool_descriptions_state_the_inventory_rules_agents_hit(tmp_path):
+    async with Client(app.create_app(ServerConfig(workspace_dir=tmp_path))) as client:
+        tools = {tool.name: tool.description or "" for tool in await client.list_tools()}
+    assert "Creating a node whose kb_types inventory is `carries` requires `ownership`" in tools["kb_write"]
+    assert "`owned` and `dependency` claims need `evidence_add`" in tools["kb_write"]
+    assert "`ownership=rejected`" in tools["kb_write"]
+    assert "Only `in_scope` authorizes active testing" in tools["kb_write"]
+    assert "lifts the block on re-creating its identity" in tools["kb_delete"]
+    assert "`rejected`" in tools["kb_search"]
 
 
 @pytest.mark.integration

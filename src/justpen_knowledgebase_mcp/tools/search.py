@@ -48,7 +48,7 @@ def register(mcp: FastMCP) -> None:
         limit: Annotated[int, Field(ge=1, le=100)] = 20,
         cursor: str | None = None,
     ) -> ToolResult:
-        """Search ready summaries using exact property filters and literal/words text. Include linked evidence only for graph searches; omit include_evidence for kind=evidence. Canonical fallback preserves unindexed property correctness. Coverage reports pending/failed/incomplete text indexes; use kb_get/kb_read_evidence for full content."""
+        """Search ready summaries using exact property filters and literal/words text. Include linked evidence only for graph searches; omit include_evidence for kind=evidence. Canonical fallback preserves unindexed property correctness. Coverage reports pending/failed/incomplete text indexes; use kb_get/kb_read_evidence for full content. Graph searches bound `first_seen`/`last_seen`; node searches filter on effective `ownership`/`authorization` and leave out `rejected` records unless `ownership=rejected` asks for them."""
         return await invoke(ctx, "search", locals())
 
     @mcp.tool(
