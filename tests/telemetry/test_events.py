@@ -125,7 +125,11 @@ def test_tool_metric_dimension_is_allowlisted():
         data = reader.get_metrics_data()
         assert data is not None
         points = data.resource_metrics[0].scope_metrics[0].metrics[0].data.data_points
-        assert {(point.attributes or {}).get("gen_ai.tool.name") for point in points} == {"kb_write", None}
+        # OpenTelemetry types attribute values as possibly unhashable, so compare a list, not a set.
+        names = [(point.attributes or {}).get("gen_ai.tool.name") for point in points]
+        assert len(names) == 2
+        assert names.count("kb_write") == 1
+        assert names.count(None) == 1
         assert "sentinel-secret" not in repr(data)
     finally:
         provider.shutdown()
