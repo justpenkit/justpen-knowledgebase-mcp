@@ -1149,10 +1149,25 @@ def _record(connection: apsw.Connection, kind: str, row: dict[str, Any]) -> dict
             "SELECT count(*) FROM evidence_sources WHERE evidence_id=?", (row["id"],)
         ).get
     blocker = pending_blocker(connection, kind, row)
+    # A purge deletes a node's scope relation before the node, so only a ready chain is walked.
+    if kind == "nodes" and blocker is None:
+        _record_state(connection, record, row)
     record["lifecycle"] = "delete_pending" if blocker else "ready"
     record["delete_job_id"] = blocker["delete_job_id"] if blocker else None
     record["pending_since"] = blocker["pending_since"] if blocker else None
     return record
+
+
+def _record_state(connection: apsw.Connection, record: dict[str, Any], row: dict[str, Any]) -> None:
+    """Add effective state (KTD7): a root's allowlist marker, or the root a scoped node inherits from."""
+    state = effective_state(connection, row)
+    if state is None:
+        return
+    record.update(ownership=state.ownership, authorization=state.authorization)
+    if state.root_id is None:
+        record["allowlist_scoped"] = bool(row["allowlist_scoped"])
+    else:
+        record["state_root_id"] = state.root_id
 
 
 def _binding(

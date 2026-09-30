@@ -14,8 +14,15 @@ from justpen_knowledgebase_mcp.models import GetRequest, SearchRequest
 from justpen_knowledgebase_mcp.query import evaluate
 from justpen_knowledgebase_mcp.service import KnowledgeBase
 from justpen_knowledgebase_mcp.storage import search as search_storage
+from justpen_knowledgebase_mcp.storage.graph import row_by_id
+from justpen_knowledgebase_mcp.storage.graph_sql import (
+    EFFECTIVE_AUTHORIZATION,
+    EFFECTIVE_OWNERSHIP,
+    SCOPED_CHILD_RELATIONS,
+)
+from justpen_knowledgebase_mcp.storage.inventory import effective_state
 
-from .graph_fixtures import stated_request
+from .graph_fixtures import inventory_graph, stated_request
 
 pytestmark = pytest.mark.integration
 
@@ -458,3 +465,82 @@ async def test_empty_cursor_is_invalid_while_omitted_or_null_starts_first_page(t
             assert [item["id"] for item in result["items"]] == expected_ids
         with pytest.raises(InvalidParamsError):
             await kb.search({"kind": "nodes", "cursor": ""})
+
+
+async def state_matches(kb, **filters: object) -> set[str]:
+    request = SearchRequest.model_validate({"kind": "nodes", "limit": 100, **filters})
+    return {item["id"] for item in (await kb.search(request))["items"]}
+
+
+async def test_authorization_filter_follows_narrowing_and_allowlists_down_the_scope_chain(tmp_path):
+    """AE7, AE11, R14, R16, R27: one filtered search lists every in_scope asset, inherited ports,
+    services and findings included, and leaves out what a narrowing or an allowlist excludes."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        ids = await inventory_graph(kb)
+        in_scope = ("ip", "port_443", "https", "allowlisted", "port_80", "allowlisted_443", "http", "allowlisted_https")
+        assert await state_matches(kb, authorization="in_scope") == {ids[name] for name in in_scope}
+        out_of_scope = ("port_22", "ssh", "finding", "port_8080", "alternate")
+        assert await state_matches(kb, authorization="out_of_scope") == {ids[name] for name in out_of_scope}
+        assert await state_matches(kb, authorization="unknown") == {ids["candidate"], ids["www"]}
+
+
+async def test_ownership_filter_and_default_search_keep_rejected_records_apart(tmp_path):
+    """R25, Success Criteria: candidates come back without the rejected record, which only an
+    explicit `rejected` filter returns; a default search leaves it out whatever it matches."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        ids = await inventory_graph(kb)
+        assert await state_matches(kb, ownership="candidate") == {ids["candidate"], ids["www"]}
+        assert await state_matches(kb, ownership="rejected") == {ids["stranger"]}
+        assert ids["ssh"] in await state_matches(kb, ownership="owned")
+        assert await state_matches(kb, type="domain") == {ids["candidate"]}
+        assert ids["stranger"] not in await state_matches(kb)
+        assert await state_matches(kb, query="stranger.example", include_evidence=False) == {ids["www"]}
+        assert await state_matches(kb, query="stranger.example", ownership="rejected") == {ids["stranger"]}
+
+
+async def test_search_summaries_carry_effective_state_and_the_inherited_root(tmp_path):
+    """R14, KTD7: a scoped summary names its root; a stateless type reports no state."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        ids = await inventory_graph(kb)
+        items = {item["id"]: item for item in (await kb.search(SearchRequest(kind="nodes", limit=100)))["items"]}
+        ssh = items[ids["ssh"]]
+        assert (ssh["ownership"], ssh["authorization"], ssh["state_root_id"]) == ("owned", "out_of_scope", ids["ip"])
+        assert (items[ids["ip"]]["ownership"], items[ids["ip"]]["authorization"]) == ("owned", "in_scope")
+        assert "state_root_id" not in items[ids["ip"]]
+        assert not {"ownership", "authorization", "state_root_id"} & items[ids["cve"]].keys()
+
+
+# The statement shape a node search uses: its `scope_relation` table takes the first binding.
+PROJECTED_STATE = (
+    "WITH scope_relation(type) AS (SELECT value FROM json_each(?)) "
+    "SELECT o.uuid,{ownership},{authorization},o.state_root_uuid FROM nodes o WHERE o.lifecycle='ready'"
+)
+
+
+async def test_sql_effective_state_agrees_with_the_python_resolver(tmp_path):
+    """KTD4: search filters on the SQL form and `kb_get` reports the Python walk; both must agree."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        await inventory_graph(kb)
+
+        def compare(connection, token):
+            rows = [
+                row_by_id(connection, "nodes", identifier)
+                for (identifier,) in connection.execute("SELECT id FROM nodes WHERE lifecycle='ready'")
+            ]
+            walked = {}
+            for row in rows:
+                assert row is not None
+                state = effective_state(connection, row)
+                walked[row["uuid"]] = (state.ownership, state.authorization, state.root_id) if state else (None,) * 3
+            projected = {
+                uuid: (ownership, authorization, root)
+                for uuid, ownership, authorization, root in connection.execute(
+                    PROJECTED_STATE.format(ownership=EFFECTIVE_OWNERSHIP, authorization=EFFECTIVE_AUTHORIZATION),
+                    (SCOPED_CHILD_RELATIONS,),
+                )
+            }
+            return walked, projected
+
+        walked, projected = await kb.workers.read(compare)
+        assert len(walked) == 17
+        assert walked == projected

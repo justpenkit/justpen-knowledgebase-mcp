@@ -29,7 +29,7 @@ from justpen_knowledgebase_mcp.storage.graph import (
 )
 from justpen_knowledgebase_mcp.storage.inventory import effective_state
 
-from .graph_fixtures import admit, evidence_fixture, graph_node, scoped_stack, stated
+from .graph_fixtures import admit, evidence_fixture, graph_node, inventory_graph, scoped_stack, stated
 
 pytestmark = pytest.mark.integration
 
@@ -1974,3 +1974,24 @@ async def test_a_rejected_node_reclassified_as_owned_gets_nothing_back(tmp_path)
         assert (await kb.get(GetRequest(kind="nodes", ids=[https])))["missing_ids"] == [https]
         relations = await kb.search(SearchRequest(kind="relations", source_id=host))
         assert relations["items"] == []
+
+
+async def test_kb_get_reports_effective_state_and_names_the_root_a_scoped_record_inherits_from(tmp_path):
+    """R14, KTD7: a service reports its address's ownership and names that address as its root; the
+    root reports its allowlist marker, and a stateless type reports no state."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        ids = await inventory_graph(kb)
+        ssh = await record_of(kb, "nodes", ids["ssh"])
+        assert (ssh["ownership"], ssh["authorization"], ssh["state_root_id"]) == ("owned", "out_of_scope", ids["ip"])
+        assert ssh["first_seen"] is not None
+        assert ssh["last_seen"] is not None
+        assert "allowlist_scoped" not in ssh
+        root = await record_of(kb, "nodes", ids["allowlisted"])
+        assert (root["ownership"], root["authorization"], root["allowlist_scoped"]) == ("owned", "in_scope", True)
+        assert "state_root_id" not in root
+        rejected = await record_of(kb, "nodes", ids["stranger"])
+        assert (rejected["ownership"], rejected["authorization"]) == ("rejected", "unknown")
+        assert (
+            not {"ownership", "authorization", "allowlist_scoped", "state_root_id"}
+            & (await record_of(kb, "nodes", ids["cve"])).keys()
+        )

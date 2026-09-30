@@ -15,7 +15,14 @@ from ..mutations import canonical_json
 from ..query import compile_filter, compile_text_query, evaluate
 from ..responses import bounded_response
 from .fulltext import coverage, owner_match
-from .graph_sql import PROPERTY_BODY, READY, SEARCH_CANDIDATE
+from .graph_sql import (
+    EFFECTIVE_AUTHORIZATION,
+    EFFECTIVE_OWNERSHIP,
+    PROPERTY_BODY,
+    READY,
+    SCOPED_CHILD_RELATIONS,
+    SEARCH_CANDIDATE,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -73,10 +80,18 @@ def search(connection: apsw.Connection, token: OperationToken, request: SearchRe
         filters.extend(text_filters)
         clauses.append(f"o.id IN ({candidate_sql})")
     sql = (
-        "SELECT o.id,o.uuid,NULL,NULL,json_object('media_type',o.media_type,'index_state',o.index_state,'byte_size',o.byte_size),1 FROM evidence o WHERE {conditions} ORDER BY o.id"
+        "SELECT o.id,o.uuid,NULL,NULL,json_object('media_type',o.media_type,'index_state',o.index_state,'byte_size',o.byte_size),1,NULL,NULL,NULL FROM evidence o WHERE {conditions} ORDER BY o.id"
         if request.kind == "evidence"
         else SEARCH_CANDIDATE[request.kind]
-    ).format(expression=expression, conditions=" AND ".join(clauses))
+    ).format(
+        expression=expression,
+        ownership=EFFECTIVE_OWNERSHIP,
+        authorization=EFFECTIVE_AUTHORIZATION,
+        conditions=" AND ".join(clauses),
+    )
+    if request.kind == "nodes":
+        # The node statement opens with its `scope_relation` table, which takes the first binding.
+        values = [SCOPED_CHILD_RELATIONS, *values]
     current_coverage = coverage(connection)
     output: dict[str, Any] = {
         "items": [],
@@ -137,6 +152,7 @@ def _builtin_filters(request: SearchRequest) -> tuple[list[str], list[Any]]:
             else "json_extract(o.metadata,'$.source')=?"
         )
         filters.append(request.source)
+    _state_filters(request, clauses, filters)
     for field in ("source_id", "target_id"):
         value = getattr(request, field)
         if value is not None:
@@ -171,6 +187,20 @@ def _builtin_filters(request: SearchRequest) -> tuple[list[str], list[Any]]:
     return clauses, filters
 
 
+def _state_filters(request: SearchRequest, clauses: list[str], filters: list[Any]) -> None:
+    """Filter nodes on effective state (KTD4); a search that names no ownership leaves `rejected` out (R25)."""
+    if request.kind != "nodes":
+        return
+    if request.ownership is None:
+        clauses.append(f"{EFFECTIVE_OWNERSHIP} IS NOT 'rejected'")
+    else:
+        clauses.append(f"{EFFECTIVE_OWNERSHIP}=?")
+        filters.append(request.ownership)
+    if request.authorization is not None:
+        clauses.append(f"{EFFECTIVE_AUTHORIZATION}=?")
+        filters.append(request.authorization)
+
+
 def _matched_candidates(
     connection: apsw.Connection,
     token: OperationToken,
@@ -185,7 +215,7 @@ def _matched_candidates(
     with closing(connection.execute(sql, [*values, after, *filters])) as candidates:
         for candidate in candidates:
             token.check()
-            identifier, uuid, type_name, key, metadata, answer = candidate
+            identifier, uuid, type_name, key, metadata, answer, ownership, authorization, root = candidate
             if answer is None:
                 body = connection.execute(PROPERTY_BODY[request.kind], (identifier,)).get
                 output["canonical_scan_count"] += 1
@@ -212,6 +242,12 @@ def _matched_candidates(
             item = {"id": uuid, **json.loads(metadata), **match}
             if request.kind != "evidence":
                 item.update(type=type_name, key=key)
+            # State is projected from its own columns, never from the metadata spread; a type that
+            # carries no inventory state reports none.
+            if ownership is not None:
+                item.update(ownership=ownership, authorization=authorization)
+            if root is not None:
+                item["state_root_id"] = root
             yield identifier, item
 
 

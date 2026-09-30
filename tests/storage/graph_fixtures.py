@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -99,3 +100,118 @@ async def admit(kb, kind, identifiers, *, cascade=True):
         return GraphDeletion.prepare(connection, DeleteRequest(kind=kind, ids=identifiers, cascade=cascade), job_id)
 
     return await kb.workers.write(prepare)
+
+
+def _scope(relation: str, source: int, target: int) -> dict[str, object]:
+    return {
+        "type": relation,
+        "source_ref": {"node_index": source},
+        "target_ref": {"node_index": target},
+        "properties": {},
+    }
+
+
+def _host(value: str, evidence: str, **state: object) -> dict[str, object]:
+    return {
+        "type": "ip_address",
+        "properties": {"value": value, "version": 4},
+        "ownership": "owned",
+        "authorization": "in_scope",
+        "evidence_add": [evidence],
+        **state,
+    }
+
+
+def _port(number: int, **state: object) -> dict[str, object]:
+    return {"type": "port", "properties": {"transport": "tcp", "number": number}, **state}
+
+
+def _service(name: str, **properties: object) -> dict[str, object]:
+    return {"type": "service", "properties": {"name": name, **properties}}
+
+
+async def inventory_graph(kb: Any) -> dict[str, str]:
+    """Write AE7, AE11, a candidate, a rejected candidate and a stateless node; name their IDs.
+
+    `ip` is in scope with port 22 narrowed out (an SSH service and a finding under it) and port 443
+    with its service. `allowlisted` is an allowlist-scoped host with 80 and 443 widened, each with a
+    service, and a port 8080 with a service written later. `stranger` is rejected after its subdomain
+    relation to `www` was written.
+    """
+    evidence = (await evidence_fixture(kb, 1))[0]
+    widened = {"authorization": "in_scope", "evidence_add": [evidence]}
+    finding = {
+        "type": "finding",
+        "properties": {"rule": "nuclei:ssh-weak-cipher", "matcher": "", "title": "Weak SSH cipher", "severity": "low"},
+    }
+    names = (
+        "ip", "port_22", "port_443", "ssh", "https", "finding",
+        "allowlisted", "port_80", "allowlisted_443", "http", "allowlisted_https",
+        "candidate", "stranger", "www", "cve",
+    )  # fmt: skip
+    written = await kb.write(
+        WriteRequest.model_validate(
+            {
+                "nodes": [
+                    _host("192.0.2.10", evidence),
+                    _port(22),
+                    _port(443),
+                    _service("ssh"),
+                    _service("http", secure=True),
+                    finding,
+                    _host("192.0.2.20", evidence, allowlist_scoped=True),
+                    _port(80, **widened),
+                    _port(443, **widened),
+                    _service("http", secure=False),
+                    _service("http", secure=True),
+                    {"type": "domain", "properties": {"value": "acme.example"}, "ownership": "candidate"},
+                    {"type": "domain", "properties": {"value": "stranger.example"}, "ownership": "candidate"},
+                    {"type": "subdomain", "properties": {"value": "www.stranger.example"}, "ownership": "candidate"},
+                    {"type": "cve", "properties": {"value": "CVE-2026-1234"}},
+                ],
+                "relations": [
+                    _scope("has_open_port", 0, 1),
+                    _scope("has_open_port", 0, 2),
+                    _scope("has_service", 1, 3),
+                    _scope("has_service", 2, 4),
+                    _scope("has_finding", 3, 5),
+                    _scope("has_open_port", 6, 7),
+                    _scope("has_open_port", 6, 8),
+                    _scope("has_service", 7, 9),
+                    _scope("has_service", 8, 10),
+                    _scope("has_subdomain", 12, 13),
+                ],
+            }
+        )
+    )
+    ids: dict[str, str] = dict(zip(names, (node["id"] for node in written["nodes"]), strict=True))
+    await kb.write(
+        WriteRequest.model_validate(
+            {"nodes": [{"id": ids["port_22"], "authorization": "out_of_scope", "evidence_add": [evidence]}]}
+        )
+    )
+    later = await kb.write(
+        WriteRequest.model_validate(
+            {
+                "nodes": [_port(8080), _service("http-proxy", secure=False)],
+                "relations": [
+                    {
+                        "type": "has_open_port",
+                        "source_ref": {"id": ids["allowlisted"]},
+                        "target_ref": {"node_index": 0},
+                        "properties": {},
+                    },
+                    _scope("has_service", 0, 1),
+                ],
+            }
+        )
+    )
+    ids["port_8080"], ids["alternate"] = (node["id"] for node in later["nodes"])
+    rejected = await kb.write(
+        WriteRequest.model_validate(
+            {"nodes": [{"id": ids["stranger"], "ownership": "rejected", "evidence_add": [evidence]}]}
+        )
+    )
+    job = await kb.job_runner.wait(rejected["nodes"][0]["rejection_job_id"], time.monotonic() + 5)
+    assert job["state"] == "completed"
+    return ids

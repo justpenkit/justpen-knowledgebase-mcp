@@ -14,7 +14,7 @@ from justpen_knowledgebase_mcp.storage import traversal
 from justpen_knowledgebase_mcp.storage.traversal import _member_bytes, neighbors
 from justpen_knowledgebase_mcp.storage.worker import OperationToken
 
-from .graph_fixtures import admit, stated_request
+from .graph_fixtures import admit, inventory_graph, stated_request
 
 pytestmark = pytest.mark.integration
 
@@ -322,3 +322,41 @@ async def test_edge_budget_serializes_each_appended_item_once(tmp_path, monkeypa
         # for the fixed envelope; the replaced shape cost fifteen times as much here.
         assert volumes[300] <= 4 * volumes[100]
         assert volumes[300] <= 4 * len(canonical_json(results[300]).encode("utf-8"))
+
+
+async def test_neighbors_report_each_node_effective_state(tmp_path):
+    """R14, KTD7: scoped neighbors report the state they inherit and the root they inherit it from."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        ids = await inventory_graph(kb)
+        result = await kb.neighbors(NeighborsRequest(seed_ids=[ids["ip"]], direction="out", depth=3))
+        nodes = {node["id"]: node for node in result["nodes"]}
+        assert nodes[ids["ip"]] == {
+            "id": ids["ip"],
+            "type": "ip_address",
+            "ownership": "owned",
+            "authorization": "in_scope",
+        }
+        states = {
+            name: (nodes[ids[name]]["authorization"], nodes[ids[name]]["state_root_id"])
+            for name in ("port_22", "ssh", "finding", "port_443", "https")
+        }
+        assert states == {
+            "port_22": ("out_of_scope", ids["ip"]),
+            "ssh": ("out_of_scope", ids["ip"]),
+            "finding": ("out_of_scope", ids["ip"]),
+            "port_443": ("in_scope", ids["ip"]),
+            "https": ("in_scope", ids["ip"]),
+        }
+        assert {nodes[ids[name]]["ownership"] for name in states} == {"owned"}
+
+
+async def test_neighbors_seeded_on_a_rejected_node_return_an_empty_page(tmp_path):
+    """R9, R25: a rejected node keeps no relations, so only the seed itself comes back."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        ids = await inventory_graph(kb)
+        result = await kb.neighbors(NeighborsRequest(seed_ids=[ids["stranger"]], depth=3))
+        assert result["edges"] == []
+        assert result["nodes"] == [
+            {"id": ids["stranger"], "type": "domain", "ownership": "rejected", "authorization": "unknown"}
+        ]
+        assert not result["truncated"]

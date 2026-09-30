@@ -259,6 +259,15 @@ def test_record_projection_and_effective_lifecycle(monkeypatch, kind):
     assert result["id"] == NODE
 
 
+def test_a_pending_scoped_record_reports_no_state_and_walks_no_chain(monkeypatch):
+    """A purge removes a node's scope relation before the node, so a pending chain may be cut."""
+    monkeypatch.setattr(graph, "pending_blocker", Mock(return_value={"delete_job_id": OTHER, "pending_since": "t"}))
+    row = owner(type="port", ownership=None, authorization=None, state_root_uuid=OTHER, lifecycle="delete_pending")
+    record = graph._record(database(cursor(value=0)), "nodes", row)
+    assert record["lifecycle"] == "delete_pending"
+    assert not {"ownership", "authorization", "state_root_id"} & record.keys()
+
+
 def test_association_cursor_tie_break_and_limits(monkeypatch):
     monkeypatch.setattr(graph, "row_by_id", Mock(return_value=owner(uuid=EVIDENCE)))
     db = database(cursor(value=(NODE, 1)), cursor(rows=[(2, NODE)]), cursor(rows=[(2, OTHER)]))
