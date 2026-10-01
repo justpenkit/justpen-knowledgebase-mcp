@@ -1,0 +1,156 @@
+{
+  "ghsa_id": "GHSA-f82v-jwr5-mffw",
+  "cve_id": "CVE-2025-29927",
+  "url": "https://api.github.com/advisories/GHSA-f82v-jwr5-mffw",
+  "html_url": "https://github.com/advisories/GHSA-f82v-jwr5-mffw",
+  "summary": "Authorization Bypass in Next.js Middleware",
+  "description": "# Impact\nIt is possible to bypass authorization checks within a Next.js application, if the authorization check occurs in middleware.\n\n# Patches\n* For Next.js 15.x, this issue is fixed in `15.2.3`\n* For Next.js 14.x, this issue is fixed in `14.2.25`\n* For Next.js 13.x, this issue is fixed in 13.5.9\n* For Next.js 12.x, this issue is fixed in 12.3.5\n* For Next.js 11.x, consult the below workaround.\n\n_Note: Next.js deployments hosted on Vercel are automatically protected against this vulnerability._\n\n# Workaround\nIf patching to a safe version is infeasible, we recommend that you prevent external user requests which contain the `x-middleware-subrequest` header from reaching your Next.js application.\n\n## Credits\n\n- Alice Example (alice-example)\n- Bob Example (bob-example)",
+  "type": "reviewed",
+  "severity": "critical",
+  "repository_advisory_url": "https://api.github.com/repos/vercel/next.js/security-advisories/GHSA-f82v-jwr5-mffw",
+  "source_code_location": "https://github.com/vercel/next.js",
+  "identifiers": [
+    {
+      "value": "GHSA-f82v-jwr5-mffw",
+      "type": "GHSA"
+    },
+    {
+      "value": "CVE-2025-29927",
+      "type": "CVE"
+    }
+  ],
+  "references": [
+    "https://github.com/vercel/next.js/security/advisories/GHSA-f82v-jwr5-mffw",
+    "https://github.com/vercel/next.js/commit/52a078da3884efe6501613c7834a3d02a91676d2",
+    "https://github.com/vercel/next.js/commit/5fd3ae8f8542677c6294f32d18022731eab6fe48",
+    "https://nvd.nist.gov/vuln/detail/CVE-2025-29927",
+    "https://github.com/vercel/next.js/releases/tag/v12.3.5",
+    "https://github.com/vercel/next.js/releases/tag/v13.5.9",
+    "https://vercel.com/changelog/vercel-firewall-proactively-protects-against-vulnerability-with-middleware",
+    "http://www.openwall.com/lists/oss-security/2025/03/23/3",
+    "http://www.openwall.com/lists/oss-security/2025/03/23/4",
+    "https://security.netapp.com/advisory/ntap-20250328-0002",
+    "https://github.com/advisories/GHSA-f82v-jwr5-mffw"
+  ],
+  "published_at": "2025-03-21T15:20:12Z",
+  "updated_at": "2026-03-02T16:59:05Z",
+  "github_reviewed_at": "2025-03-21T15:20:12Z",
+  "nvd_published_at": "2025-03-21T15:15:42Z",
+  "withdrawn_at": null,
+  "vulnerabilities": [
+    {
+      "package": {
+        "ecosystem": "npm",
+        "name": "next"
+      },
+      "vulnerable_version_range": ">= 13.0.0, < 13.5.9",
+      "first_patched_version": "13.5.9",
+      "vulnerable_functions": []
+    },
+    {
+      "package": {
+        "ecosystem": "npm",
+        "name": "next"
+      },
+      "vulnerable_version_range": ">= 14.0.0, < 14.2.25",
+      "first_patched_version": "14.2.25",
+      "vulnerable_functions": []
+    },
+    {
+      "package": {
+        "ecosystem": "npm",
+        "name": "next"
+      },
+      "vulnerable_version_range": ">= 15.0.0, < 15.2.3",
+      "first_patched_version": "15.2.3",
+      "vulnerable_functions": []
+    },
+    {
+      "package": {
+        "ecosystem": "npm",
+        "name": "next"
+      },
+      "vulnerable_version_range": ">= 12.0.0, < 12.3.5",
+      "first_patched_version": "12.3.5",
+      "vulnerable_functions": []
+    }
+  ],
+  "cvss_severities": {
+    "cvss_v3": {
+      "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+      "score": 9.1
+    },
+    "cvss_v4": {
+      "vector_string": null,
+      "score": 0.0
+    }
+  },
+  "cwes": [
+    {
+      "cwe_id": "CWE-285",
+      "name": "Improper Authorization"
+    },
+    {
+      "cwe_id": "CWE-863",
+      "name": "Incorrect Authorization"
+    }
+  ],
+  "credits": [
+    {
+      "user": {
+        "login": "example-reporter",
+        "id": 1000001,
+        "node_id": "MDQ6VXNlcjEwMDAwMDE=",
+        "avatar_url": "https://avatars.githubusercontent.com/u/1000001?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/example-reporter",
+        "html_url": "https://github.com/example-reporter",
+        "followers_url": "https://api.github.com/users/example-reporter/followers",
+        "following_url": "https://api.github.com/users/example-reporter/following{/other_user}",
+        "gists_url": "https://api.github.com/users/example-reporter/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/example-reporter/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/example-reporter/subscriptions",
+        "organizations_url": "https://api.github.com/users/example-reporter/orgs",
+        "repos_url": "https://api.github.com/users/example-reporter/repos",
+        "events_url": "https://api.github.com/users/example-reporter/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/example-reporter/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "type": "reporter"
+    },
+    {
+      "user": {
+        "login": "example-analyst",
+        "id": 1000002,
+        "node_id": "MDQ6VXNlcjEwMDAwMDI=",
+        "avatar_url": "https://avatars.githubusercontent.com/u/1000002?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/example-analyst",
+        "html_url": "https://github.com/example-analyst",
+        "followers_url": "https://api.github.com/users/example-analyst/followers",
+        "following_url": "https://api.github.com/users/example-analyst/following{/other_user}",
+        "gists_url": "https://api.github.com/users/example-analyst/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/example-analyst/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/example-analyst/subscriptions",
+        "organizations_url": "https://api.github.com/users/example-analyst/orgs",
+        "repos_url": "https://api.github.com/users/example-analyst/repos",
+        "events_url": "https://api.github.com/users/example-analyst/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/example-analyst/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "type": "analyst"
+    }
+  ],
+  "cvss": {
+    "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+    "score": 9.1
+  },
+  "epss": {
+    "percentage": 0.99225,
+    "percentile": 0.99934
+  }
+}

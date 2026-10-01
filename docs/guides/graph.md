@@ -155,6 +155,11 @@ beside the vocabularies and the testing rule:
 | `inherits`  | A parent-scoped node. It takes both from the root of its scope chain and may only override authorization. |
 | `none`      | A vocabulary or shared record, such as `technology`. It holds no state and refuses the state fields.      |
 
+A `carries` type may also list `allowed_ownership`, which narrows the ownership
+values it accepts. `package`, a package or container image the target publishes,
+lists it so that a package is never a `dependency`: a third-party component the
+target runs is a `technology` instead.
+
 Creating a `carries` node requires `ownership`. `candidate` needs nothing more;
 `owned` and `dependency` are claims and need `evidence_add` on that node in the
 same write. Authorization starts at `unknown` unless the creating write sets it.
@@ -258,9 +263,9 @@ filter asks for them. `kb_neighbors` nodes carry their effective state too.
 
 ## Earlier catalog and schema versions
 
-Catalog v4 and schema version 4 are a clean cut. A workspace created with
-catalog v1, v2 or v3, or before schema version 4, is rejected at startup; it is
-not migrated or opened read-only. Create a new workspace for this version.
+Catalog v5 and schema version 4 are a clean cut. A workspace created with
+catalog v1, v2, v3 or v4, or before schema version 4, is rejected at startup; it
+is not migrated or opened read-only. Create a new workspace for this version.
 
 ## Mutable records
 

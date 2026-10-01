@@ -209,6 +209,8 @@ def test_every_type_section_shows_props_identity_and_checks(page: str, kind: str
             expected_scope = EMPTY if scope is None else f"`{scope['relation']}` (source)"
             assert f"**Parent scope:** {expected_scope}" in text, name
             assert f"**Inventory:** `{definition['inventory']}`" in text, name
+            if "allowed_ownership" in definition:
+                assert f"**Allowed ownership:** {_code(definition['allowed_ownership'])}" in text, name
         else:
             assert f"**Sources:** {_code(definition['sources'])}" in text, name
             assert f"**Targets:** {_code(definition['targets'])}" in text, name
@@ -267,23 +269,32 @@ def test_the_page_lists_the_registry_digests_the_fingerprint_binds(page: str) ->
 
 
 REVIEW_PAGE = "docs/reference/catalog-review.md"
-V3_NODES = {"whois_registration", "cloud_account", "cloud_resource"}
-V3_RELATIONS = {"has_registration", "hosted_on", "in_account", "authenticates", "links_to"}
+# The types each catalog version added, by version. A rename counts as an addition: `advisory`
+# replaced the v2 `cve` in v5. Every other row is a v2 type the v3 review kept or changed.
+ADDITIONS = {
+    "nodes": {3: {"whois_registration", "cloud_account", "cloud_resource"}, 5: {"advisory", "package"}},
+    "relations": {
+        3: {"has_registration", "hosted_on", "in_account", "authenticates", "links_to"},
+        5: {"aliases", "published_from", "loads_package"},
+    },
+}
+V2_SURVIVORS = {"nodes": 30, "relations": 44}
 
 
 def test_the_review_ledger_covers_every_type_and_defect() -> None:
-    """Every type has a verdict, exactly the v3 additions are marked new, and every defect row names
-    a regression test that exists."""
+    """Every type has a verdict, exactly each version's additions are marked new in that version,
+    and every defect row names a regression test that exists."""
     ledger = (ROOT / REVIEW_PAGE).read_text(encoding="utf-8")
     manifest = catalog_manifest()
-    for heading, kind, added, v2_count in (
-        ("Node types", "nodes", V3_NODES, 31),
-        ("Relation types", "relations", V3_RELATIONS, 44),
-    ):
+    for heading, kind in (("Node types", "nodes"), ("Relation types", "relations")):
         rows = {row[0].strip("`"): row[1] for row in _rows(ledger, heading)}
         assert set(rows) == set(manifest[kind]), heading
-        assert {name for name, verdict in rows.items() if verdict == "new in v3"} == added, heading
-        assert len(rows) - len(added) == v2_count, heading
+        marked: dict[int, set[str]] = {}
+        for name, verdict in rows.items():
+            if verdict.startswith("new in v"):
+                marked.setdefault(int(verdict.removeprefix("new in v")), set()).add(name)
+        assert marked == ADDITIONS[kind], heading
+        assert len(rows) - sum(len(added) for added in marked.values()) == V2_SURVIVORS[kind], heading
     defects = _rows(ledger, "Defects")
     assert {row[0] for row in defects} >= {"B1", "B2", *(f"D-{number:02d}" for number in range(1, 21))}
     for row in defects:

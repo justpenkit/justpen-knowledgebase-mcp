@@ -13,11 +13,12 @@ shared `common` limits, every format with its behavior `version` and
 `description`, `counts_deferred`, and `next_cursor`. Each entry has an `identity` object with a
 `properties` array. Parent-scoped node types also include `scope`, for example
 `{"relation":"has_open_port","endpoint":"source"}` for `port`. Each node entry
-declares `inventory` as `carries`, `inherits` or `none`, and the page's
-top-level `inventory` block lists the `ownership` and `authorization`
-vocabularies, what each declaration means, and the `testing` rule: only
-`in_scope` authorizes active testing. A pending high-degree delete can defer
-counts rather than block discovery.
+declares `inventory` as `carries`, `inherits` or `none`; a carrying type may
+also list `allowed_ownership`, which narrows the ownership values it accepts, so
+`package` refuses `dependency`. The page's top-level `inventory` block lists the
+`ownership` and `authorization` vocabularies, what each declaration means, and
+the `testing` rule: only `in_scope` authorizes active testing. A pending
+high-degree delete can defer counts rather than block discovery.
 
 **Errors:** `INVALID` for a bad kind/type/page/cursor; `LIMIT` or `BUSY` for
 bounded admission. Listing types is discovery and does not replace `kb_status`.
@@ -29,7 +30,7 @@ plus the format rules, the checks, the canonicalizations and a node-to-relation 
 this page for the conventions and the reasoning; read that one to look a type up.
 [ASM and OSINT coverage](../reference/asm-coverage.md) shows, field by field, which
 property each supported tool's output belongs in, and
-[Catalog v3 design review](../reference/catalog-review.md) records why each type
+[Catalog design review](../reference/catalog-review.md) records why each type
 is shaped as it is.
 
 ## `kb_write`
@@ -259,14 +260,34 @@ the name. For a TLS result on a named host, prefix the matcher with the host
 (`www.example.com:expired-ssl`), so two virtual hosts behind one address stay
 two findings. `unknown` severity means none was assigned; it is not below `info`.
 
-`has_weakness` classifies a `finding` or a `cve` as an instance of a CWE
+`has_weakness` classifies a `finding` or an `advisory` as an instance of a CWE
 weakness class. Both sources are real: a scanner assigns the class to its own
-finding, and the NVD assigns it to a published CVE. A `finding` title is free
-text, so two scanners reporting the same reflected XSS produce two unjoinable
-titles; the CWE id is the canonical spelling that joins them. Write it as MITRE
+finding, and the NVD or GitHub assigns it to a published advisory. A `finding`
+title is free text, so two scanners reporting the same reflected XSS produce two
+unjoinable titles; the CWE id is the canonical spelling that joins them. Write it as MITRE
 publishes it, `CWE-79`, not the lowercase `cwe-79` some tools emit. `name` is an
 attribute, not required, because a template that carries a cwe-id often carries
 no title for it.
+
+An `advisory` is one published vulnerability record, keyed on its CVE, GHSA or
+OSV database id. Vendor and distribution bulletins such as RHSA, DSA or USN are
+refused, because one bulletin bundles many vulnerabilities, and the EPSS and KEV
+properties are accepted on a CVE id only. Write the CVE id whenever one is
+known, even if a GHSA or OSV record is where the vulnerability was found, so one
+vulnerability is one node. When an advisory written earlier turns out to have a
+CVE, write the CVE advisory and link the two with `aliases`, which points toward
+the CVE; the existing `affected_by` edges stay as they are. `affected_by` reaches
+an advisory from the `service`, `endpoint`, `finding` or `package` it affects,
+and the affected versions stay in evidence.
+
+A `package` is a package or container image the target publishes, keyed on its
+versionless purl, so every release is one node. A container image keeps the
+registry repository it lives in, so same-named images in two registries are two
+packages. A package can be linked to the repository it is `published_from`, to
+a maintainer email address through `has_contact`, and, for an image in a cloud
+registry, to its `cloud_account` through `in_account`. `loads_package` links an
+endpoint to the target's own package it loads. A third-party component is never
+a package: it is a `technology` reached through `runs_technology`.
 
 `registered_through` accepts a `whois_registration` source only: the
 sponsoring registrar is a fact of one registration, so after a drop and a
@@ -467,11 +488,13 @@ rejects a well-formed `v=spf1` value.
 `storage_bucket`, `repository`, `identity_tenant` and `secret` as sources. A
 finding names one real object, and each of those is one: a bucket, a repository
 and a tenant have exactly one owner, a scoped record belongs to its parent
-domain, and a secret digest is one credential.
+domain, and a secret digest is one credential. Catalog v5 adds `package` for the
+same reason: a package the target publishes is one asset with one owner, and the
+release a finding concerns stays in its evidence.
 
 It deliberately did not gain `technology`, `tls_cipher_suite`,
 `tls_fingerprint`, `http_fingerprint`, `host_key`, `spf_record`, `dmarc_record`,
-`txt_record`, `email_address`, `phone`, `cve` or `cwe`. Those are shared
+`txt_record`, `email_address`, `phone`, `advisory` or `cwe`. Those are shared
 vocabulary or coincidence values: unrelated hosts legitimately share a
 technology slug, a stack fingerprint, or an SPF string thousands of domains
 publish verbatim, so a host-specific finding hung there would read as applying

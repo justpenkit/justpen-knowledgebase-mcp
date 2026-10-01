@@ -18,6 +18,7 @@ from justpen_knowledgebase_mcp.errors import (
     RecordConflictError,
     RejectedIdentityError,
 )
+from justpen_knowledgebase_mcp.evidence import IngestRequest
 from justpen_knowledgebase_mcp.identity import format_timestamp, parse_timestamp
 from justpen_knowledgebase_mcp.models import GetRequest, SearchRequest, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
@@ -862,6 +863,11 @@ async def test_endpoint_values_are_checked_on_the_properties_that_will_be_stored
             "self edge is not allowed",
         ),
         (
+            [{"type": "advisory", "properties": {"value": "CVE-2025-29927"}}],
+            {"type": "aliases", "target_ref": {"node_index": 0}, "properties": {}},
+            "self edge is not allowed",
+        ),
+        (
             [
                 {"type": "domain", "properties": {"value": "example.com"}},
                 {"type": "endpoint", "properties": {"url": "https://iodef.example.com/r", "method": "GET"}},
@@ -1233,7 +1239,7 @@ async def test_the_widened_endpoint_whitelists_accept_the_writes_they_were_widen
                         {"type": "subdomain", "properties": {"value": "www.example.com"}},
                         {"type": "technology", "properties": {"name": "cloudflare"}},
                         {"type": "endpoint", "properties": {"url": "https://www.example.com/", "method": "GET"}},
-                        {"type": "cve", "properties": {"value": "CVE-2026-1234"}},
+                        {"type": "advisory", "properties": {"value": "CVE-2026-1234"}},
                     ],
                     "relations": [
                         {
@@ -1276,6 +1282,109 @@ async def test_the_widened_endpoint_whitelists_accept_the_writes_they_were_widen
                     }
                 )
             )
+
+
+async def test_epss_and_kev_on_a_non_cve_advisory_are_refused_after_a_patch_too(tmp_path):
+    """R3, KTD2: only CVEs are scored by EPSS and listed in KEV. The check reruns on the merged
+    stored properties, so a GHSA written bare and later patched by ID with an EPSS score is refused."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        written = await kb.write(
+            write(
+                {
+                    "nodes": [
+                        {"type": "endpoint", "properties": {"url": "https://www.example.com/", "method": "GET"}},
+                        {"type": "advisory", "properties": {"value": "GHSA-f82v-jwr5-mffw", "cvss_score": 9.1}},
+                        {"type": "advisory", "properties": {"value": "CVE-2025-29927", "epss_score": 0.92}},
+                        {"type": "cwe", "properties": {"value": "CWE-285"}},
+                    ],
+                    "relations": [
+                        {
+                            "type": "affected_by",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 1},
+                            "properties": {},
+                        },
+                        {
+                            "type": "has_weakness",
+                            "source_ref": {"node_index": 1},
+                            "target_ref": {"node_index": 3},
+                            "properties": {},
+                        },
+                    ],
+                }
+            )
+        )
+        ghsa = written["nodes"][1]["id"]
+
+        with pytest.raises(InvalidParamsError, match="epss_score"):
+            await kb.write(write({"nodes": [{"id": ghsa, "properties": {"epss_score": 0.92}}]}))
+        with pytest.raises(InvalidParamsError, match="kev_added"):
+            await kb.write(write({"nodes": [{"id": ghsa, "properties": {"kev_added": "2025-03-24"}}]}))
+        assert "epss_score" not in (await record_of(kb, "nodes", ghsa))["properties"]
+
+
+async def test_a_cve_learned_later_reaches_the_affected_object_in_one_alias_hop(tmp_path):
+    """AE3, R5: an object written affected by a GHSA stays reachable from the CVE learned a week
+    later. The alias edge points toward the CVE, so the reverse edge is refused."""
+    endpoint = {"type": "endpoint", "properties": {"url": "https://app.acme.com/", "method": "GET"}}
+    ghsa_node = {"type": "advisory", "properties": {"value": "GHSA-f82v-jwr5-mffw"}}
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        first = await kb.write(
+            write(
+                {
+                    "nodes": [endpoint, ghsa_node],
+                    "relations": [
+                        {
+                            "type": "affected_by",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 1},
+                            "properties": {},
+                        }
+                    ],
+                }
+            )
+        )
+        app, ghsa = (node["id"] for node in first["nodes"])
+        cve_node = {"type": "advisory", "properties": {"value": "CVE-2025-29927"}}
+        with pytest.raises(InvalidParamsError, match="an alias points toward the CVE"):
+            await kb.write(
+                write(
+                    {
+                        "nodes": [cve_node],
+                        "relations": [
+                            {
+                                "type": "aliases",
+                                "source_ref": {"node_index": 0},
+                                "target_ref": {"id": ghsa},
+                                "properties": {},
+                            }
+                        ],
+                    }
+                )
+            )
+        later = await kb.write(
+            write(
+                {
+                    "nodes": [cve_node],
+                    "relations": [
+                        {
+                            "type": "aliases",
+                            "source_ref": {"id": ghsa},
+                            "target_ref": {"node_index": 0},
+                            "properties": {},
+                        }
+                    ],
+                }
+            )
+        )
+        cve = later["nodes"][0]["id"]
+
+        async def sources_of(relation: str, target: str) -> list[str]:
+            found = await kb.search(SearchRequest(kind="relations", type=relation, target_id=target))
+            return [(await record_of(kb, "relations", item["id"]))["source_id"] for item in found["items"]]
+
+        assert await sources_of("aliases", cve) == [ghsa]
+        assert await sources_of("affected_by", ghsa) == [app]
 
 
 # Inventory state. These writes build the request directly: `write()` would state `candidate` for
@@ -1331,11 +1440,21 @@ async def classified_host(kb, evidence, *ports):
 @pytest.mark.parametrize(
     ("node", "message"),
     [
-        ({"type": "subdomain", "properties": {"value": "api.acme.com"}}, r"^nodes\[1\]: ownership is required"),
+        (
+            {"type": "subdomain", "properties": {"value": "api.acme.com"}},
+            r"^nodes\[1\]: ownership is required.*give owned, dependency or candidate$",
+        ),
+        (
+            {"type": "package", "properties": {"purl": "pkg:npm/lodash"}},
+            r"^nodes\[1\]: ownership is required.*give owned or candidate$",
+        ),
         ({**ACME, "ownership": "rejected"}, r"^nodes\[1\]: .*cannot be created as rejected"),
         ({**ACME, "ownership": "owned"}, r"^nodes\[1\]: .*requires evidence_add"),
         ({**ACME, "ownership": "candidate", "authorization": "in_scope"}, r"^nodes\[1\]: .*requires evidence_add"),
-        ({"type": "cve", "properties": {"value": "CVE-2026-1234"}, "ownership": "owned"}, r"^nodes\[1\]: cve carries"),
+        (
+            {"type": "advisory", "properties": {"value": "CVE-2026-1234"}, "ownership": "owned"},
+            r"^nodes\[1\]: advisory carries no inventory state",
+        ),
     ],
 )
 async def test_a_creation_without_a_valid_state_claim_is_refused_with_zero_rows(tmp_path, node, message):
@@ -1980,6 +2099,160 @@ async def test_a_rejected_identity_and_the_subdomains_under_it_cannot_be_re_crea
         assert await node_count(kb) == before
 
 
+SDK = {"type": "package", "properties": {"purl": "pkg:npm/%40acme/sdk"}}
+
+
+async def test_a_package_is_never_a_dependency_at_creation_or_by_id(tmp_path):
+    """AE10, R10, KTD5: the refusal names the type and writes nothing; reclassifying a candidate
+    package by ID is refused too, while every other carrying type still accepts `dependency`."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        lodash = {"type": "package", "properties": {"purl": "pkg:npm/lodash"}}
+        dependency = {"ownership": "dependency", "evidence_add": [evidence]}
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[0\]: a package cannot have ownership dependency"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{**lodash, **dependency}]}))
+        assert await node_count(kb) == 0
+        (sdk,) = await candidates(kb, SDK)
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[0\]: a package cannot have ownership dependency"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": sdk, **dependency}]}))
+        assert (await stored_state(kb, sdk))[0] == "candidate"
+        written = await kb.write(WriteRequest.model_validate({"nodes": [{**ACME, **dependency}]}))
+        assert written["nodes"][0]["ownership"] == "dependency"
+
+
+async def test_a_rejected_package_keeps_only_its_identity_and_cannot_be_re_created(tmp_path):
+    """AE6, R11: a package from an unknown publisher is a candidate; once rejected it keeps its
+    purl alone, and a later identity write of the same purl is refused as a rejected identity."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        stranger = {"type": "package", "properties": {"purl": "pkg:npm/acme-sdk", "publisher": "unknown"}}
+        (identifier,) = await candidates(kb, stranger)
+        assert (await reject(kb, identifier, evidence))["ownership"] == "rejected"
+        assert (await record_of(kb, "nodes", identifier))["properties"] == {"purl": "pkg:npm/acme-sdk"}
+        with pytest.raises(RejectedIdentityError, match=r"^REJECTED_IDENTITY$") as refused:
+            await kb.write(WriteRequest.model_validate({"nodes": [{**stranger, "ownership": "candidate"}]}))
+        assert rejected_items(refused) == [("nodes[0]", identifier)]
+
+
+def linked(relation, source, target, properties=None):
+    """A relation between two node references, each a batch index or a stored ID."""
+
+    def ref(node):
+        return {"node_index": node} if isinstance(node, int) else {"id": node}
+
+    return {"type": relation, "source_ref": ref(source), "target_ref": ref(target), "properties": properties or {}}
+
+
+def image(repository):
+    name = repository.rsplit("/", 1)[1]
+    return {"type": "package", "properties": {"purl": f"pkg:oci/{name}?repository_url={repository}"}}
+
+
+AWS_ACCOUNT = {"type": "cloud_account", "properties": {"provider": "aws", "account_id": "123456789012"}}
+APP = {"type": "endpoint", "properties": {"url": "https://app.acme.com/", "method": "GET"}}
+
+
+async def test_an_image_links_to_the_account_of_its_cloud_registry_and_no_other(tmp_path):
+    """AE7, R13, KTD7: an ECR image belongs to an AWS account. A Docker Hub image and an npm package
+    belong to no account, and both are refused as invalid params rather than internal errors."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        ecr = image("123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/api")
+        written = await kb.write(write({"nodes": [ecr, AWS_ACCOUNT], "relations": [linked("in_account", 0, 1)]}))
+        account = written["nodes"][1]["id"]
+        assert written["relations"][0]["id"]
+        for package in (image("docker.io/acme/api"), {"type": "package", "properties": {"purl": "pkg:npm/acme-sdk"}}):
+            with pytest.raises(InvalidParamsError, match="only an oci image in a cloud provider's registry"):
+                await kb.write(write({"nodes": [package], "relations": [linked("in_account", 0, account)]}))
+        assert await node_count(kb) == 2
+
+
+async def test_an_endpoint_loads_the_targets_package_beside_the_technology_it_runs(tmp_path):
+    """AE5, R15: Next.js stays a technology with its version on `runs_technology`; the target's own
+    `@acme/widget` is a package the endpoint loads."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        widget = {"type": "package", "properties": {"purl": "pkg:npm/%40acme/widget"}}
+        nextjs = {"type": "technology", "properties": {"name": "next.js"}}
+        written = await kb.write(
+            write(
+                {
+                    "nodes": [APP, widget, nextjs],
+                    "relations": [
+                        linked("loads_package", 0, 1),
+                        linked("runs_technology", 0, 2, {"version": "14.1"}),
+                    ],
+                }
+            )
+        )
+        app, package, technology = (node["id"] for node in written["nodes"])
+        loads, runs = [await record_of(kb, "relations", relation["id"]) for relation in written["relations"]]
+        assert (loads["source_id"], loads["target_id"]) == (app, package)
+        assert (runs["source_id"], runs["target_id"], runs["properties"]) == (app, technology, {"version": "14.1"})
+
+
+async def test_two_releases_of_one_package_are_one_node_exposing_the_secret(tmp_path):
+    """AE4, R9, R12, R14: the package seen at 1.2.3 and at 2.0.0 is one node with no version; the
+    secret found only in 1.2.3 hangs off that node, and the evidence names the release."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        secret = {"type": "secret", "properties": {"value_sha256": "a" * 64, "detector": "aws"}}
+        first = await kb.write(
+            write(
+                {
+                    "nodes": [SDK, secret],
+                    "relations": [linked("exposes_secret", 0, 1, {"location": "package/dist/config.js"})],
+                }
+            )
+        )
+        second = await kb.write(write({"nodes": [SDK]}))
+        sdk = first["nodes"][0]["id"]
+        assert second["nodes"][0]["id"] == sdk
+        assert second["nodes"][0]["created"] is False
+        assert (await record_of(kb, "nodes", sdk))["properties"] == SDK["properties"]
+        exposure = first["relations"][0]["id"]
+        target = [{"kind": "relations", "id": exposure}]
+        text = "@acme/sdk 1.2.3 ships package/dist/config.js holding the key; 2.0.0 does not"
+        await kb.ingest_evidence(IngestRequest.model_validate({"text": text, "targets": target}))
+        found = await kb.search(SearchRequest(kind="relations", source_id=sdk, query="1.2.3"))
+        assert [item["id"] for item in found["items"]] == [exposure]
+
+
+async def test_rejecting_a_package_an_owned_endpoint_loads_purges_its_edges_and_keeps_the_neighbors(tmp_path):
+    """KTD8: `loads_package` and `published_from` are not reliance relations, so an owned endpoint
+    loading the package does not block its rejection; the purge drops every incident edge and the
+    finding under it, and leaves the repository, email and endpoint."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        repository = {
+            "type": "repository",
+            "properties": {"platform": "github", "host": "github.com", "owner": "acme", "name": "sdk"},
+        }
+        email = {"type": "email_address", "properties": {"value": "maintainer@acme.com"}}
+        finding = {
+            "type": "finding",
+            "properties": {"rule": "manual:typosquat", "matcher": "", "title": "lookalike", "severity": "info"},
+        }
+        owned_app = {**APP, "ownership": "owned", "evidence_add": [evidence]}
+        written = await kb.write(
+            write(
+                {
+                    "nodes": [SDK, repository, email, owned_app, finding],
+                    "relations": [
+                        linked("published_from", 0, 1),
+                        linked("has_contact", 0, 2, {"role": "maintainer"}),
+                        linked("loads_package", 3, 0),
+                        linked("has_finding", 0, 4),
+                    ],
+                }
+            )
+        )
+        sdk, *neighbors, finding_id = (node["id"] for node in written["nodes"])
+        assert (await reject(kb, sdk, evidence))["ownership"] == "rejected"
+        assert (await kb.search(SearchRequest(kind="relations", source_id=sdk)))["items"] == []
+        assert (await kb.search(SearchRequest(kind="relations", target_id=sdk)))["items"] == []
+        fetched = await kb.get(GetRequest(kind="nodes", ids=[*neighbors, finding_id]))
+        assert fetched["missing_ids"] == [finding_id]
+        assert (await stored_state(kb, neighbors[2]))[0] == "owned"
+
+
 async def test_a_new_subdomain_under_a_domain_the_same_batch_rejects_is_refused(tmp_path):
     """R17, R26: the batch's planned rejection counts like a stored one, and nothing is written."""
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
@@ -2204,5 +2477,5 @@ async def test_kb_get_reports_effective_state_and_names_the_root_a_scoped_record
         assert (rejected["ownership"], rejected["authorization"]) == ("rejected", "unknown")
         assert (
             not {"ownership", "authorization", "allowlist_scoped", "state_root_id"}
-            & (await record_of(kb, "nodes", ids["cve"])).keys()
+            & (await record_of(kb, "nodes", ids["advisory"])).keys()
         )

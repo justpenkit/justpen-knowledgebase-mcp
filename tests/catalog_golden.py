@@ -16,8 +16,71 @@ Record = tuple[str, dict[str, Any]]
 Endpoint = tuple[dict[str, Any], Record, Record]
 Rewrite = tuple[str, dict[str, Any], dict[str, Any]]
 
+ACME_EMAIL = {"value": "security@acme.com"}
+AWS_ACCOUNT: Record = ("cloud_account", {"provider": "aws", "account_id": "012345678901"})
+GCP_ACCOUNT: Record = ("cloud_account", {"provider": "gcp", "account_id": "my-project-123"})
+AZURE_ACCOUNT: Record = ("cloud_account", {"provider": "azure", "account_id": "72f988bf-86f1-41af-91ab-2d7cd011db47"})
+
+
+def image(repository: str) -> Record:
+    """An oci package whose `repository_url` is the registry host and repository path."""
+    return ("package", {"purl": f"pkg:oci/{repository.rsplit('/', 1)[1]}?repository_url={repository}"})
+
+
 # Format id -> (accepted values, rejected values), judged by the format validator alone.
 FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
+    "advisory_id": (
+        (
+            "CVE-2025-29927",
+            "CVE-1999-1234567",
+            "GHSA-f82v-jwr5-mffw",
+            "PYSEC-2005-1",
+            "RUSTSEC-2024-0001",
+            "GO-2024-2687",
+            "OSV-2020-58",
+            "HSEC-2023-0001",
+            "JLSEC-2025-1",
+            "OSEC-2023-01",
+            "RSEC-2023-1",
+            "EEF-CVE-2025-4748",
+            "DRUPAL-CORE-2024-001",
+            "DRUPAL-CONTRIB-2024-012",
+            "MAL-2025-191157",
+        ),
+        (
+            # Vendor and distribution bulletins, ids without a settled shape, and non-OSV databases.
+            "RHSA-2025:1234",
+            "DSA-5555-1",
+            "USN-6000-1",
+            "GSD-2021-1000011",
+            "ASB-A-123456789",
+            "PSF-2024-1",
+            "EUVD-2025-10933",
+            # Case is never folded: GHSA keeps its lowercase body, every other id is uppercase.
+            "ghsa-f82v-jwr5-mffw",
+            "GHSA-F82V-JWR5-MFFW",
+            "GHSA-f82v-jwr5-mff1",
+            "cve-2025-29927",
+            "mal-2025-191157",
+            # One wrong number shape per prefix.
+            "CVE-26-1234",
+            "CVE-2026-123",
+            "PYSEC-2005-01",
+            "RUSTSEC-2024-1",
+            "GO-2024-268",
+            "OSV-2020-0058",
+            "HSEC-2023-1",
+            "JLSEC-2025-0001",
+            "OSEC-2023-1",
+            "RSEC-2023-01",
+            "EEF-2025-4748",
+            "DRUPAL-SA-2024-001",
+            "MAL-2025-0191157",
+            "CVE-2025-29927 ",
+            "",
+            20261234,
+        ),
+    ),
     "alpn_tokens": ((["h2", "http/1.1"], [], ["h2", "h2"]), ("h2", ["h2 "], [""], ["é"], [1])),
     "asn": ((0, 64512, 4294967295), (-1, 4294967296, True, "64512")),
     "boolean": ((True, False), ("true", 1, 0, None)),
@@ -51,7 +114,6 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         ("", "cpe:/a:apache:http_server:2.4.41", "CPE:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*", "cpe:2.3:a:f5"),
     ),
     "credential_key_id": (("AKIAIOSFODNN7EXAMPLE", "sk_live:1/a+b=="), ("", "AKIA IOSFODNN", "k" * 129, "\u00e9")),
-    "cve": (("CVE-2026-1234", "CVE-1999-1234567"), ("cve-2026-1234", "CVE-26-1234", "CVE-2026-123", 20261234)),
     "cvss_score": ((0, 10, 9.8, 5.0, 7), (-0.1, 10.1, 9.85, "9.8", True, float("nan"), None)),
     "cvss_vector": (
         (
@@ -182,6 +244,72 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
             [1],
         ),
     ),
+    "package_purl": (
+        (
+            "pkg:npm/%40acme/sdk",
+            "pkg:npm/acme-sdk",
+            "pkg:pypi/acme-sdk",
+            "pkg:maven/com.acme/sdk",
+            "pkg:nuget/newtonsoft.json",
+            "pkg:gem/acme_sdk",
+            "pkg:cargo/serde_json",
+            "pkg:golang/github.com/acme/sdk",
+            "pkg:composer/acme/sdk",
+            "pkg:oci/api?repository_url=123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/api",
+            "pkg:oci/api?repository_url=123456789012.dkr.ecr.us-gov-west-1.amazonaws.com/acme/api",
+            "pkg:oci/api?repository_url=123456789012.dkr.ecr.cn-north-1.amazonaws.com.cn/acme/api",
+            "pkg:oci/api?repository_url=docker.io/acme/api",
+            "pkg:oci/nginx?repository_url=docker.io/library/nginx",
+            "pkg:oci/api?repository_url=ghcr.io/acme/api",
+        ),
+        (
+            # A version, a subpath, and every qualifier but an oci repository_url.
+            "pkg:npm/%40acme/sdk@1.2.3",
+            "pkg:golang/github.com/acme/sdk#cmd/cli",
+            "pkg:oci/api?repository_url=ghcr.io/acme/api&tag=latest",
+            "pkg:oci/api?repository_url=ghcr.io/acme/api&arch=amd64",
+            "pkg:oci/api?tag=latest",
+            "pkg:oci/api",
+            "pkg:npm/acme-sdk?repository_url=registry.npmjs.org",
+            # docker has no settled place for the registry, and unlisted types are refused.
+            "pkg:docker/acme/api",
+            "pkg:github/acme/sdk",
+            "pkg:deb/debian/curl",
+            # Non-canonical spellings are refused, not rewritten.
+            "pkg:pypi/Acme_SDK",
+            "pkg:pypi/acme_sdk",
+            "pkg:pypi/acme.sdk",
+            "pkg:pypi/acme/sdk",
+            "pkg:npm/@acme/sdk",
+            "pkg:npm/%40Acme/sdk",
+            "pkg:maven/sdk",
+            "pkg:composer/sdk",
+            "pkg:golang/sdk",
+            "pkg:golang/github.com/Acme/sdk",
+            "pkg:nuget/Newtonsoft.Json",
+            "pkg:cargo/Serde_json",
+            "pkg:cargo/serde-json",
+            "pkg:NPM/acme-sdk",
+            "pkg://npm/acme-sdk",
+            "pkg:oci/nginx?repository_url=index.docker.io/library/nginx",
+            "pkg:oci/nginx?repository_url=docker.io/nginx",
+            "pkg:oci/api?repository_url=docker.io/acme/web",
+            "pkg:oci/api?repository_url=ghcr.io%2Facme%2Fapi",
+            "pkg:oci/acme/api?repository_url=ghcr.io/acme/api",
+            "pkg:oci/API?repository_url=ghcr.io/acme/API",
+            # Only the per-component OCI grammar refuses these: the name and the host both pass.
+            "pkg:oci/api?repository_url=ghcr.io/Acme/api",
+            "pkg:oci/api?repository_url=ghcr.io/acme//api",
+            # An ECR registry's FIPS and dual-stack hosts are aliases of its canonical host.
+            "pkg:oci/api?repository_url=123456789012.dkr.ecr-fips.us-gov-west-1.amazonaws.com/acme/api",
+            "pkg:oci/api?repository_url=123456789012.dkr-ecr.eu-west-1.on.aws/acme/api",
+            "pkg:oci/api?repository_url=123456789012.dkr-ecr-fips.us-east-1.on.aws/acme/api",
+            "pkg:oci/api?repository_url=123456789012.dkr-ecr.cn-north-1.on.amazonwebservices.com.cn/acme/api",
+            "npm/acme-sdk",
+            "",
+            1,
+        ),
+    ),
     "parameter_name": (("id", "X-Request-Id", "%20foo"), ("id=1", "two words", "", "a" * 129, "café")),
     "partial_date": (("2019", "2019-01", "2019-01-07"), ("19", "2019-1", "2019-13", "2019-02-30", "2019/01", "")),
     "phone_e164": (("+14155552671", "+12"), ("14155552671", "+0155552671", "+1", "+" + "9" * 16, "+1 415 555")),
@@ -243,6 +371,19 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
 # Check id -> (records the whole validation accepts, records the check itself rejects). Every
 # rejected record satisfies its type's required map, so the rejection is the check's alone.
 CHECKS: dict[str, tuple[tuple[Record, ...], tuple[Record, ...]]] = {
+    "advisory_cve_scores.1": (
+        (
+            ("advisory", {"value": "CVE-2025-29927", "epss_score": 0.92, "epss_percentile": 0.99}),
+            ("advisory", {"value": "CVE-2021-44228", "kev_added": "2021-12-10"}),
+            ("advisory", {"value": "GHSA-f82v-jwr5-mffw", "cvss_score": 9.1, "published": "2025-03-21T15:00:00Z"}),
+        ),
+        (
+            ("advisory", {"value": "GHSA-f82v-jwr5-mffw", "epss_score": 0.92}),
+            ("advisory", {"value": "GHSA-f82v-jwr5-mffw", "epss_percentile": 0.99}),
+            ("advisory", {"value": "GHSA-f82v-jwr5-mffw", "kev_added": "2025-03-24"}),
+            ("advisory", {"value": "EEF-CVE-2025-4748", "epss_score": 0.01}),
+        ),
+    ),
     "asn_assigned.1": ((("asn", {"value": 1}), ("asn", {"value": 4294967295})), (("asn", {"value": 0}),)),
     "bucket_name_spelling.1": (
         (
@@ -406,6 +547,22 @@ CHECKS: dict[str, tuple[tuple[Record, ...], tuple[Record, ...]]] = {
 
 # Endpoint check id -> (accepted, rejected) as (relation properties, source record, target record).
 ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = {
+    "aliases_toward_cve.1": (
+        (
+            ({}, ("advisory", {"value": "GHSA-f82v-jwr5-mffw"}), ("advisory", {"value": "CVE-2025-29927"})),
+            ({}, ("advisory", {"value": "PYSEC-2024-60"}), ("advisory", {"value": "GHSA-f82v-jwr5-mffw"})),
+            ({}, ("advisory", {"value": "PYSEC-2024-60"}), ("advisory", {"value": "CVE-2025-29927"})),
+            ({}, ("advisory", {"value": "GHSA-f82v-jwr5-mffw"}), ("advisory", {"value": "GHSA-gp8f-8m3g-qvj9"})),
+            ({}, ("advisory", {"value": "OSV-2020-111"}), ("advisory", {"value": "PYSEC-2024-60"})),
+        ),
+        (
+            ({}, ("advisory", {"value": "CVE-2025-29927"}), ("advisory", {"value": "GHSA-f82v-jwr5-mffw"})),
+            ({}, ("advisory", {"value": "GHSA-f82v-jwr5-mffw"}), ("advisory", {"value": "PYSEC-2024-60"})),
+            ({}, ("advisory", {"value": "CVE-2025-29927"}), ("advisory", {"value": "CVE-2025-29928"})),
+            ({}, ("advisory", {"value": "GHSA-gp8f-8m3g-qvj9"}), ("advisory", {"value": "GHSA-f82v-jwr5-mffw"})),
+            ({}, ("advisory", {"value": "PYSEC-2024-60"}), ("advisory", {"value": "OSV-2020-111"})),
+        ),
+    ),
     "contains_cidr_proper_subnet.1": (
         (
             (
@@ -481,7 +638,7 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
             ({"role": "iodef"}, ("domain", {"value": "example.com"}), ("phone", {"value": "+14155552671"})),
         ),
     ),
-    "has_contact_registration_roles.1": (
+    "has_contact_registration_roles.2": (
         (
             (
                 {"role": "registrant"},
@@ -503,6 +660,8 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
                 ("organization", {"registry": "arin", "handle": "ORG-1"}),
                 ("email_address", {"value": "hostmaster@example.com"}),
             ),
+            ({"role": "maintainer"}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), ("email_address", ACME_EMAIL)),
+            ({"role": "security"}, ("package", {"purl": "pkg:pypi/acme-sdk"}), ("email_address", ACME_EMAIL)),
         ),
         (
             (
@@ -520,9 +679,19 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
                 ("whois_registration", {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}),
                 ("email_address", {"value": "hostmaster@example.com"}),
             ),
+            # A package's contact is a maintainer or security address, and only a package has a maintainer.
+            ({"role": "registrant"}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), ("email_address", ACME_EMAIL)),
+            ({"role": "billing"}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), ("email_address", ACME_EMAIL)),
+            ({"role": "security"}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), ("phone", {"value": "+14155552671"})),
+            (
+                {"role": "maintainer"},
+                ("package", {"purl": "pkg:npm/%40acme/sdk"}),
+                ("endpoint", {"url": "https://iodef.example.com/report", "method": "POST"}),
+            ),
+            ({"role": "maintainer"}, ("domain", {"value": "example.com"}), ("email_address", ACME_EMAIL)),
         ),
     ),
-    "in_account_provider_match.1": (
+    "in_account_provider_match.2": (
         (
             (
                 {},
@@ -534,6 +703,15 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
                 ("storage_bucket", {"provider": "gcp_gcs", "name": "example-assets"}),
                 ("cloud_account", {"provider": "gcp", "account_id": "my-project-123"}),
             ),
+            ({}, image("123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/api"), AWS_ACCOUNT),
+            ({}, image("123456789012.dkr.ecr.us-gov-west-1.amazonaws.com/acme/api"), AWS_ACCOUNT),
+            ({}, image("123456789012.dkr.ecr.cn-north-1.amazonaws.com.cn/acme/api"), AWS_ACCOUNT),
+            ({}, image("public.ecr.aws/acme/api"), AWS_ACCOUNT),
+            ({}, image("us-docker.pkg.dev/my-project-123/images/api"), GCP_ACCOUNT),
+            ({}, image("europe-west1-docker.pkg.dev/my-project-123/images/api"), GCP_ACCOUNT),
+            ({}, image("gcr.io/my-project-123/api"), GCP_ACCOUNT),
+            ({}, image("eu.gcr.io/my-project-123/api"), GCP_ACCOUNT),
+            ({}, image("acme.azurecr.io/api"), AZURE_ACCOUNT),
         ),
         (
             (
@@ -546,6 +724,14 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
                 ("storage_bucket", {"provider": "aws_s3", "name": "example-assets"}),
                 ("cloud_account", {"provider": "gcp", "account_id": "my-project-123"}),
             ),
+            ({}, image("123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/api"), GCP_ACCOUNT),
+            ({}, image("acme.azurecr.io/api"), AWS_ACCOUNT),
+            # A registry of no cloud provider, and a package that is not an image, belong to no account.
+            ({}, image("docker.io/acme/api"), AWS_ACCOUNT),
+            ({}, image("ghcr.io/acme/api"), AWS_ACCOUNT),
+            ({}, image("registry.acme.com/api"), AWS_ACCOUNT),
+            ({}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), AWS_ACCOUNT),
+            ({}, ("package", {"purl": "pkg:maven/com.acme/sdk"}), GCP_ACCOUNT),
         ),
     ),
     "has_registration_suffix_match.1": (

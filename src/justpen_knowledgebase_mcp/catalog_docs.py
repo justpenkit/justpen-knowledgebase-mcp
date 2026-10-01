@@ -26,7 +26,10 @@ DOCS: dict[str, Any] = {
         "required_nonnull": "A required property may not be null or absent.",
     },
     "inventory": {
-        "carries": "The node holds its own ownership and authorization.",
+        "carries": (
+            "The node holds its own ownership and authorization. A type that lists `allowed_ownership` accepts "
+            "only those ownership values."
+        ),
         "inherits": (
             "The node is parent-scoped and inherits ownership and authorization from its parent-scope chain, "
             "which ends at a node that carries them."
@@ -38,6 +41,13 @@ DOCS: dict[str, Any] = {
         ),
     },
     "formats": {
+        "advisory_id": (
+            "A vulnerability id from a closed prefix list, spelled exactly as its database publishes it and never "
+            "case-folded: `CVE-`, a 4-digit year and 4 to 19 digits; `GHSA-` and three `-`-joined groups of four "
+            "from `23456789cfghjmpqrvwx`; or a PYSEC, RUSTSEC, GO, OSV, HSEC, JLSEC, OSEC, RSEC, EEF, DRUPAL or MAL "
+            "id in the number shape that database issues. Vendor and distribution bulletins such as RHSA, DSA and "
+            "USN are refused; write the CVE or GHSA they cite."
+        ),
         "alpn_tokens": (
             "An array of zero or more ASCII tokens matching `[A-Za-z0-9./_-]{1,255}`; order is not "
             "identity-significant and duplicates are preserved."
@@ -75,7 +85,6 @@ DOCS: dict[str, Any] = {
             "1 to 128 characters from ASCII letters, digits and `._:/+=-`: the public identifier half of a "
             "two-part credential, such as an AWS access key id, never secret material."
         ),
-        "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
         "cvss_score": (
             "A strict JSON number from 0 through 10 with at most one decimal place, as CVSS publishes a score: "
             '`9.8` and `10` are accepted, `9.85` and `"9.8"` are not.'
@@ -167,6 +176,15 @@ DOCS: dict[str, Any] = {
             "An array of RFC 8461 `mx` patterns, each a lowercase dns_name or `*.` followed by one, sorted "
             "ascending with no duplicate, so one policy has one spelling."
         ),
+        "package_purl": (
+            "A versionless purl of at most 512 characters, `pkg:<type>/<namespace>/<name>`, of type npm, pypi, "
+            "maven, nuget, gem, cargo, golang, composer or oci, canonical, not rewritten: npm scope `%40acme`, "
+            "PyPA-normalized PyPI name, lowercase NuGet id, lowercase crate name, `_` not `-`, namespaced maven, "
+            "composer and golang. No version, subpath or qualifier but oci's required `repository_url`: "
+            "unencoded host and path ending in the name; Docker Hub as `docker.io`, official images in "
+            "`library/`; ECR as `<account>.dkr.ecr.<region>.amazonaws.com(.cn)`, no FIPS or dual-stack alias. "
+            "Write `docker` as oci."
+        ),
         "parameter_name": (
             "1 to 128 printable ASCII characters without space, `&`, `=`, or `#`; one single parameter name, "
             "never a raw query string."
@@ -250,6 +268,15 @@ DOCS: dict[str, Any] = {
         ),
     },
     "checks": {
+        "advisory_cve_scores.1": (
+            "`epss_score`, `epss_percentile` and `kev_added` are refused unless `value` is a CVE id: FIRST scores "
+            "and CISA lists CVEs only."
+        ),
+        "aliases_toward_cve.1": (
+            "The target's id family must rank at least as high as the source's: CVE above GHSA above every OSV "
+            "database id. Between equal ranks the source must be the alphabetically lower id, and two CVE ids are "
+            "refused."
+        ),
         "asn_assigned.1": "`value` 0 is rejected: AS0 is reserved and never originates routes (RFC 7607).",
         "bucket_name_spelling.1": (
             "`name` is checked against the declared `provider`: length, grammar, and the prefixes, suffixes and "
@@ -280,13 +307,18 @@ DOCS: dict[str, Any] = {
             "An `endpoint` target requires `role` `iodef` and `method` `POST` (RFC 6546), and `iodef` never "
             "targets a `phone`: a CAA iodef names a mailto address or an https report URL."
         ),
-        "has_contact_registration_roles.1": (
+        "has_contact_registration_roles.2": (
             "From a `whois_registration`, `role` must be `registrant`, `admin`, `tech` or `billing`; from a "
-            "`domain` or `subdomain`, those four roles are refused, because they belong to one registration."
+            "`domain` or `subdomain`, those four roles are refused, because they belong to one registration. "
+            "From a `package`, `role` must be `maintainer` or `security` and the target an `email_address`; "
+            "`maintainer` is refused from every other source."
         ),
-        "in_account_provider_match.1": (
+        "in_account_provider_match.2": (
             "The account's `provider` must be the source's provider: the prefix of a cloud resource's "
-            "`service`, or the provider behind a bucket's `provider`."
+            "`service`, the provider behind a bucket's `provider`, or the cloud registry host in an oci purl's "
+            "`repository_url`: ECR (`dkr.ecr.<region>.amazonaws.com(.cn)` or `public.ecr.aws`) to aws, "
+            "Artifact Registry and gcr.io to gcp, azurecr.io to azure. Any other "
+            "registry and any non-oci package belong to no account."
         ),
         "has_registration_suffix_match.1": (
             "The registration's `registry` must be the zone of its domain: the domain's `value` without its "
@@ -343,6 +375,33 @@ DOCS: dict[str, Any] = {
         ),
     },
     "nodes": {
+        "advisory": {
+            "summary": (
+                "One published vulnerability record, identified by its CVE, GHSA or OSV ecosystem id and shared by "
+                "every object it affects."
+            ),
+            "excludes": (
+                "Not an observation that something is vulnerable; that is `affected_by` from the affected object. "
+                "Not a vendor or distribution bulletin such as RHSA, DSA or USN, and not the affected products, "
+                "version ranges, references or description, which stay in evidence. Never a finding source."
+            ),
+            "notes": (
+                "When the vulnerability has a known CVE, write the CVE id, even if a GHSA or OSV record is where it "
+                "was found, so one vulnerability is one node. When a non-CVE advisory you wrote turns out to have a "
+                "CVE, write the CVE advisory and link the two with `aliases`."
+            ),
+            "properties": {
+                "value": "The advisory id, spelled exactly as its database publishes it.",
+                "cvss_score": "The CVSS base score the advisory publishes, from its highest CVSS version.",
+                "cvss_vector": "The CVSS vector string that score comes from.",
+                "epss_score": "The FIRST EPSS probability of exploitation in the next 30 days; CVE ids only.",
+                "epss_percentile": "The EPSS score's percentile among all scored CVEs; CVE ids only.",
+                "kev_added": (
+                    "The date CISA added the CVE to its Known Exploited Vulnerabilities catalog; CVE ids only."
+                ),
+                "published": "When the advisory record was published.",
+            },
+        },
         "asn": {
             "summary": "An autonomous system number: the routing identity a network is announced from.",
             "excludes": (
@@ -403,22 +462,6 @@ DOCS: dict[str, Any] = {
                 "service": "The provider service, fixed by which default hostname pattern matches.",
                 "hostname": "The canonical provider-assigned default hostname.",
                 "region": "The region the hostname encodes, when it encodes one.",
-            },
-        },
-        "cve": {
-            "summary": "A published CVE record, shared by every object affected by it.",
-            "excludes": (
-                "Not an observation that something is vulnerable; that is `affected_by` from the affected "
-                "service, endpoint or finding. Never a finding source."
-            ),
-            "properties": {
-                "value": "The CVE id, uppercase as MITRE publishes it.",
-                "cvss_score": "The CVSS base score the advisory publishes, from its highest CVSS version.",
-                "cvss_vector": "The CVSS vector string that score comes from.",
-                "epss_score": "The FIRST EPSS probability of exploitation in the next 30 days.",
-                "epss_percentile": "The EPSS score's percentile among all scored CVEs.",
-                "kev_added": "The date CISA added the CVE to its Known Exploited Vulnerabilities catalog.",
-                "published": "When the CVE record was published.",
             },
         },
         "cwe": {
@@ -486,7 +529,7 @@ DOCS: dict[str, Any] = {
         "finding": {
             "summary": "One issue a scanner or analyst reports about one object, scoped to it through `has_finding`.",
             "excludes": (
-                "Not the weakness class (`cwe`) or a published advisory (`cve`); those link through "
+                "Not the weakness class (`cwe`) or a published advisory (`advisory`); those link through "
                 "`has_weakness` and `affected_by`."
             ),
             "notes": (
@@ -588,6 +631,25 @@ DOCS: dict[str, Any] = {
                 "registry": "The RIR that issued the handle.",
                 "handle": "The RIR object handle, case preserved exactly as the registry publishes it.",
                 "name": "The organization's name as the registry publishes it; free text, so never identity.",
+            },
+        },
+        "package": {
+            "summary": (
+                "A package or container image the target publishes to a registry, keyed on its versionless purl, "
+                "so every release of it is one node. An image keeps the registry repository it lives in."
+            ),
+            "excludes": (
+                "Not a component the target runs or depends on: that is a `technology` reached through "
+                "`runs_technology`, so a package is never a `dependency`. Not a release: versions, tags and "
+                "digests stay in evidence and in a finding's matcher."
+            ),
+            "notes": (
+                "Write a package whose publisher is not yet attributed to the target as a `candidate`, and reject "
+                "it with evidence once it proves to be someone else's. Which releases contain a secret or a "
+                "vulnerability is recorded in evidence, never as a property or a node per version."
+            ),
+            "properties": {
+                "purl": "The versionless purl in its canonical spelling; an oci purl keeps only `repository_url`.",
             },
         },
         "parameter": {
@@ -750,8 +812,29 @@ DOCS: dict[str, Any] = {
     },
     "relations": {
         "affected_by": {
-            "summary": "The source is affected by the CVE: a vulnerable service, an endpoint a CVE template matched, or a finding reporting it.",
-            "excludes": "Not a CVE merely mentioned nearby; attach the evidence for the match.",
+            "summary": (
+                "The source is affected by the advisory: a vulnerable service, an endpoint a CVE template "
+                "matched, a finding reporting it, or a published package with an affected release."
+            ),
+            "excludes": "Not an advisory merely mentioned nearby; attach the evidence for the match.",
+            "notes": (
+                "When the vulnerability has a known CVE, write the CVE id as the target, even if a GHSA or OSV record "
+                "is where it was found. An edge written before the CVE was known stays; link its advisory to the "
+                "CVE with `aliases` rather than rewriting the edge."
+            ),
+            "properties": {},
+        },
+        "aliases": {
+            "summary": "The two advisories name the same vulnerability, and the target is the id a pivot starts from.",
+            "excludes": (
+                "Not a related or similar vulnerability, and not a bulletin that bundles CVEs. Never between two CVE "
+                "ids, and never an advisory to itself."
+            ),
+            "notes": (
+                "One edge per pair, pointing toward the CVE: write the CVE id as the target, a GHSA as the target of "
+                "an OSV database id, and between equal ranks the alphabetically higher id. An OSV record that aliases "
+                "two CVEs links to each, so one id per vulnerability is a convention, not a guarantee."
+            ),
             "properties": {},
         },
         "announced_by": {
@@ -833,7 +916,10 @@ DOCS: dict[str, Any] = {
         "exposes_secret": {
             "summary": "The source exposes the secret at one location.",
             "excludes": "Never the secret itself; the node holds only its digest, and plaintext-bearing keys are refused.",
-            "notes": "Link evidence only after replacing every secret-bearing scanner field with `[REDACTED]`.",
+            "notes": (
+                "Link evidence only after replacing every secret-bearing scanner field with `[REDACTED]`. From a "
+                "package, the evidence names the releases that ship the secret."
+            ),
             "properties": {"location": "Where the secret appears, such as a file path or URL path; identity-bearing."},
         },
         "federates_with": {
@@ -849,7 +935,8 @@ DOCS: dict[str, Any] = {
             "notes": (
                 "Use `published` for an address harvested from an organization's own surface with no declared "
                 "role. Registrant, admin, tech and billing contacts come from registration data and attach to "
-                "the `whois_registration`, so a re-registration does not inherit them."
+                "the `whois_registration`, so a re-registration does not inherit them. A package lists only "
+                "`maintainer` and `security` email addresses, and only a package has a `maintainer`."
             ),
             "properties": {"role": "What the contact is for; identity-bearing, so one address may hold several roles."},
         },
@@ -865,7 +952,7 @@ DOCS: dict[str, Any] = {
         },
         "has_finding": {
             "summary": "The finding is about the source object; the scope relation of `finding`.",
-            "excludes": "Never from shared vocabulary such as a technology, fingerprint or CVE, which unrelated hosts share.",
+            "excludes": "Never from shared vocabulary such as a technology, fingerprint or advisory, which unrelated hosts share.",
             "properties": {},
         },
         "has_http_fingerprint": {
@@ -960,12 +1047,18 @@ DOCS: dict[str, Any] = {
             "properties": {},
         },
         "in_account": {
-            "summary": "The cloud resource or bucket belongs to the account.",
+            "summary": "The cloud resource, bucket or container image belongs to the account.",
             "excludes": "Not the account's identity provider, which is an `identity_tenant`.",
+            "notes": (
+                "An image belongs to an account only when its oci purl names a cloud provider's registry: an ECR "
+                "image to the AWS account its `<account>.dkr.ecr.<region>.amazonaws.com(.cn)` host names, an "
+                "Artifact Registry or gcr.io image to its GCP project, "
+                "an ACR image to its Azure subscription. A Docker Hub or GHCR image has no account."
+            ),
             "properties": {},
         },
         "has_weakness": {
-            "summary": "The finding or CVE is an instance of the CWE weakness class.",
+            "summary": "The finding or advisory is an instance of the CWE weakness class.",
             "excludes": "Not a claim of exploitability.",
             "properties": {},
         },
@@ -984,6 +1077,14 @@ DOCS: dict[str, Any] = {
         "issued_by": {
             "summary": "The certificate was issued by the target certificate; a self edge marks a self-signed one.",
             "excludes": "Not trust-store validation, which depends on the observer.",
+            "properties": {},
+        },
+        "loads_package": {
+            "summary": "The endpoint loads the target's own published package, such as a script bundle from npm.",
+            "excludes": (
+                "Not a third-party component, which is a `technology` reached through `runs_technology` with its "
+                "version. Not a release: the loaded version stays in evidence."
+            ),
             "properties": {},
         },
         "operated_by": {
@@ -1015,6 +1116,14 @@ DOCS: dict[str, Any] = {
             "summary": "Traffic to the source passes through the technology acting as a WAF, CDN, reverse proxy or load balancer.",
             "excludes": "Not a range-list classification of an address, and not SaaS hosting (`runs_technology`).",
             "properties": {"kind": "The role the technology plays in front of the source."},
+        },
+        "published_from": {
+            "summary": "The package is built and published from the source repository.",
+            "excludes": (
+                "Not a repository the package depends on or mirrors, and not attribution: `owns_repository` "
+                "attributes the repository to a name."
+            ),
+            "properties": {},
         },
         "redirects_to": {
             "summary": "The endpoint answered with an HTTP redirect to the target endpoint.",

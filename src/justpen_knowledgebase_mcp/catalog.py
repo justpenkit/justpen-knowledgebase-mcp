@@ -1,4 +1,4 @@
-"""Catalog v4 manifest, discovery schema, and strict record validators."""
+"""Catalog v5 manifest, discovery schema, and strict record validators."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from .service_names import is_service_name, registry_digest, secure_required
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-CATALOG_VERSION = 4
+CATALOG_VERSION = 5
 
 _COMMON = {
     "additional_properties": True,
@@ -40,6 +40,7 @@ _COMMON = {
 # Every format id with its behavior version. The prose lives in `catalog_docs.DOCS`; the version
 # moves, and with it the fingerprint, whenever what the validator accepts changes.
 _FORMATS: dict[str, int] = {
+    "advisory_id": 1,
     "alpn_tokens": 1,
     "asn": 1,
     "boolean": 1,
@@ -52,7 +53,6 @@ _FORMATS: dict[str, int] = {
     "cloud_region": 1,
     "cpe23": 1,
     "credential_key_id": 1,
-    "cve": 1,
     "cvss_score": 1,
     "cvss_vector": 1,
     "cwe": 1,
@@ -79,6 +79,7 @@ _FORMATS: dict[str, int] = {
     "mta_sts": 1,
     "multiline_text_4096": 1,
     "mx_pattern_list": 1,
+    "package_purl": 1,
     "parameter_name": 1,
     "partial_date": 1,
     "phone_e164": 1,
@@ -177,6 +178,20 @@ _ALPN_ORDER: dict[str, object] = {
 }
 
 _NODES: dict[str, dict[str, Any]] = {
+    "advisory": {
+        "inventory": "none",
+        "identity": _identity(["value"]),
+        "required": {"value": "advisory_id"},
+        "optional": {
+            "cvss_score": "cvss_score",
+            "cvss_vector": "cvss_vector",
+            "epss_score": "probability",
+            "epss_percentile": "probability",
+            "kev_added": "calendar_date",
+            "published": "utc_timestamp",
+        },
+        "checks": ["advisory_cve_scores.1"],
+    },
     "asn": {
         "inventory": "carries",
         "identity": _identity(["value"]),
@@ -227,19 +242,6 @@ _NODES: dict[str, dict[str, Any]] = {
         },
         "optional": {"region": "cloud_region"},
         "checks": ["cloud_resource_hostname.1"],
-    },
-    "cve": {
-        "inventory": "none",
-        "identity": _identity(["value"]),
-        "required": {"value": "cve"},
-        "optional": {
-            "cvss_score": "cvss_score",
-            "cvss_vector": "cvss_vector",
-            "epss_score": "probability",
-            "epss_percentile": "probability",
-            "kev_added": "calendar_date",
-            "published": "utc_timestamp",
-        },
     },
     "cwe": {
         "inventory": "none",
@@ -349,6 +351,12 @@ _NODES: dict[str, dict[str, Any]] = {
         "identity": _identity(["registry", "handle"]),
         "required": {"registry": _RIRS, "handle": "rir_handle"},
         "optional": {"name": "printable_text_200"},
+    },
+    "package": {
+        "inventory": "carries",
+        "allowed_ownership": ["owned", "candidate", "rejected"],
+        "identity": _identity(["purl"]),
+        "required": {"purl": "package_purl"},
     },
     "parameter": {
         "inventory": "inherits",
@@ -476,7 +484,8 @@ _NODES: dict[str, dict[str, Any]] = {
 
 _D = ["domain", "subdomain"]
 _RELATIONS = {
-    "affected_by": _relation(["service", "finding", "endpoint"], ["cve"]),
+    "affected_by": _relation(["service", "finding", "endpoint", "package"], ["advisory"]),
+    "aliases": _relation(["advisory"], ["advisory"], checks=["aliases_toward_cve.1"]),
     "announced_by": _relation(["ip_cidr"], ["asn"]),
     "authenticates": _relation(
         ["secret"],
@@ -523,7 +532,7 @@ _RELATIONS = {
     ),
     "dname_to": _relation(_D, _D, self_edge=True),
     "exposes_secret": _relation(
-        ["repository", "endpoint", "storage_bucket", "cloud_resource"],
+        ["repository", "endpoint", "storage_bucket", "cloud_resource", "package"],
         ["secret"],
         required={"location": "printable_text_1024"},
         identity=_identity(["location"]),
@@ -531,11 +540,24 @@ _RELATIONS = {
     ),
     "federates_with": _relation(_D, ["identity_tenant"], optional={"namespace_type": ["managed", "federated"]}),
     "has_contact": _relation(
-        ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration"],
+        ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration", "package"],
         ["email_address", "phone", "endpoint"],
-        required={"role": ["abuse", "admin", "tech", "registrant", "billing", "noc", "security", "published", "iodef"]},
+        required={
+            "role": [
+                "abuse",
+                "admin",
+                "tech",
+                "registrant",
+                "billing",
+                "noc",
+                "security",
+                "published",
+                "iodef",
+                "maintainer",
+            ]
+        },
         identity=_identity(["role"]),
-        checks=["has_contact_registration_roles.1", "has_contact_endpoint_role.1"],
+        checks=["has_contact_registration_roles.2", "has_contact_endpoint_role.1"],
     ),
     "has_dkim_selector": _relation(_D, ["dkim_record"]),
     "has_dmarc": _relation(_D, ["dmarc_record"]),
@@ -559,6 +581,7 @@ _RELATIONS = {
             "whois_registration",
             "cloud_account",
             "cloud_resource",
+            "package",
         ],
         ["finding"],
     ),
@@ -601,10 +624,10 @@ _RELATIONS = {
     ),
     "has_tls_fingerprint": _relation(["service"], ["tls_fingerprint"]),
     "has_txt_record": _relation(_D, ["txt_record"]),
-    "has_weakness": _relation(["finding", "cve"], ["cwe"]),
+    "has_weakness": _relation(["finding", "advisory"], ["cwe"]),
     "hosted_on": _relation(["domain", "subdomain", "endpoint"], ["cloud_resource"]),
     "in_account": _relation(
-        ["cloud_resource", "storage_bucket"], ["cloud_account"], checks=["in_account_provider_match.1"]
+        ["cloud_resource", "storage_bucket", "package"], ["cloud_account"], checks=["in_account_provider_match.2"]
     ),
     "issued_by": _relation(["certificate"], ["certificate"], self_edge=True),
     "links_to": _relation(
@@ -615,6 +638,7 @@ _RELATIONS = {
         identity=_identity(["element"]),
         self_edge=True,
     ),
+    "loads_package": _relation(["endpoint"], ["package"]),
     "operated_by": _relation(["asn", "ip_cidr"], ["organization"]),
     "owns_repository": _relation(_D, ["repository"]),
     "presents_certificate": _relation(
@@ -635,6 +659,7 @@ _RELATIONS = {
         required={"kind": ["waf", "cdn", "reverse_proxy", "load_balancer"]},
         identity=_identity(["kind"]),
     ),
+    "published_from": _relation(["package"], ["repository"]),
     "redirects_to": _relation(
         ["endpoint"],
         ["endpoint"],
@@ -711,6 +736,23 @@ _INVENTORY: dict[str, list[str]] = {
 _INVENTORY_DECLARATIONS = ("carries", "inherits", "none")
 
 
+def _ensure_ownership_narrowing(name: str, definition: Mapping[str, Any]) -> None:
+    """Refuse an `allowed_ownership` list that state cannot honor.
+
+    The list narrows the ownership vocabulary, so it means nothing on a type that holds no
+    ownership, and it may name only vocabulary values. `rejected` is reached only by ID, so a list
+    without another value would leave the type uncreatable.
+    """
+    if "allowed_ownership" not in definition:
+        return
+    if definition["inventory"] != "carries":
+        raise RuntimeError(f"{name} does not carry inventory state and cannot narrow its ownership")
+    if not set(definition["allowed_ownership"]) <= set(_INVENTORY["ownership"]):
+        raise RuntimeError(f"{name} allows an ownership outside the inventory vocabulary")
+    if not set(definition["allowed_ownership"]) - {"rejected"}:
+        raise RuntimeError(f"{name} allows no ownership a node can be created with")
+
+
 def _ensure_inventory_contract() -> None:
     """Fail at import if a node type's inventory declaration leaves its state unresolvable.
 
@@ -726,6 +768,7 @@ def _ensure_inventory_contract() -> None:
             raise RuntimeError(f"{name} is parent-scoped and must be declared inherits")
         if name not in scoped and value == "inherits":
             raise RuntimeError(f"{name} is not parent-scoped and cannot be declared inherits")
+        _ensure_ownership_narrowing(name, definition)
     for child, relation in scoped.items():
         for parent in cast("list[str]", _RELATIONS[relation]["sources"]):
             if parent not in scoped and _NODES[parent]["inventory"] != "carries":
@@ -808,6 +851,128 @@ def _cross_field_tls_fingerprint(_type_name: str, properties: dict[str, Any]) ->
 def _cross_field_registrar(_type_name: str, properties: dict[str, Any]) -> None:
     if cast("int", properties["iana_id"]) < 1:
         raise ExpectedValidationError("/properties/iana_id: expected an assigned IANA registrar id")
+
+
+# FIRST scores and CISA lists CVE ids only, so these properties have no source on any other id.
+_CVE_ONLY_PROPERTIES = ("epss_score", "epss_percentile", "kev_added")
+
+
+def _advisory_prefix(value: str) -> str:
+    """The database an advisory id belongs to: the part before its first `-`."""
+    return value.split("-", 1)[0]
+
+
+def _cross_field_advisory(_type_name: str, properties: dict[str, Any]) -> None:
+    if _advisory_prefix(cast("str", properties["value"])) == "CVE":
+        return
+    for name in _CVE_ONLY_PROPERTIES:
+        if name in properties:
+            raise ExpectedValidationError(f"/properties/{name}: EPSS and KEV describe CVE ids only")
+
+
+def _padded(width: int) -> str:
+    """A sequence number zero-padded to `width` digits, written unpadded once it outgrows them."""
+    return f"(?:[0-9]{{{width}}}|[1-9][0-9]{{{width},6}})"
+
+
+_UNPADDED = "[1-9][0-9]{0,6}"
+# One grammar per accepted advisory id prefix, for the whole id: CVE, GHSA, and the OSV databases
+# that publish one record per vulnerability, each in the number shape that database issues. Vendor
+# and distribution bulletins, which bundle many CVEs, and prefixes with no settled id shape are left
+# out. No id is case-folded: GHSA keeps its lowercase body, and every other id is uppercase.
+_ADVISORY_ID_GRAMMARS: dict[str, str] = {
+    "CVE": r"CVE-[0-9]{4}-[0-9]{4,19}",
+    "GHSA": r"GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}",
+    "PYSEC": rf"PYSEC-[0-9]{{4}}-{_UNPADDED}",
+    "RUSTSEC": rf"RUSTSEC-[0-9]{{4}}-{_padded(4)}",
+    "GO": rf"GO-[0-9]{{4}}-{_padded(4)}",
+    "OSV": rf"OSV-[0-9]{{4}}-{_UNPADDED}",
+    "HSEC": rf"HSEC-[0-9]{{4}}-{_padded(4)}",
+    "JLSEC": rf"JLSEC-[0-9]{{4}}-{_UNPADDED}",
+    "OSEC": rf"OSEC-[0-9]{{4}}-{_padded(2)}",
+    "RSEC": rf"RSEC-[0-9]{{4}}-{_UNPADDED}",
+    "EEF": r"EEF-CVE-[0-9]{4}-[0-9]{4,19}",
+    "DRUPAL": rf"DRUPAL-(?:CONTRIB|CORE)-[0-9]{{4}}-{_padded(3)}",
+    "MAL": rf"MAL-[0-9]{{4}}-{_UNPADDED}",
+}
+
+
+def _valid_advisory_id(text: str) -> bool:
+    grammar = _ADVISORY_ID_GRAMMARS.get(_advisory_prefix(text))
+    return grammar is not None and re.fullmatch(grammar, text) is not None
+
+
+# One OCI distribution-spec repository path component: lowercase, separators only between runs.
+_OCI_COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+# The canonical `namespace/name` part of a versionless purl, per accepted purl type. Only `oci`
+# keeps a qualifier, so the type alone decides whether `?repository_url=` may follow. `docker` is
+# not listed: it has no settled place for the registry, so an image is written as `oci`.
+_PURL_COORDINATES: dict[str, str] = {
+    # The scope's `@` is always `%40`; names follow npm's rule for new packages, which is lowercase.
+    "npm": r"(?:%40[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*",
+    # The PyPA normalized name: lowercase, and every run of `-`, `_` and `.` one `-`.
+    "pypi": r"[a-z0-9]+(?:-[a-z0-9]+)*",
+    "maven": r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*",
+    # NuGet ids are case-insensitive; the v3 flat container's lowercase id is the canonical one.
+    "nuget": r"[a-z0-9_]+(?:[.-][a-z0-9_]+)*",
+    "gem": r"[A-Za-z0-9_][A-Za-z0-9._-]*",
+    # crates.io treats names differing in case or in `-` versus `_` as one crate; its canonical
+    # name is lowercase with every `-` an `_`.
+    "cargo": r"[a-z][a-z0-9_]{0,63}",
+    "golang": r"[a-z0-9_~-]+(?:\.[a-z0-9_~-]+)*(?:/[a-z0-9_~-]+(?:\.[a-z0-9_~-]+)*)+",
+    "composer": r"[a-z0-9](?:[_.-]?[a-z0-9]+)*/[a-z0-9](?:(?:[_.]|-{1,2})?[a-z0-9]+)*",
+    "oci": _OCI_COMPONENT,
+}
+# Docker Hub is spelled `docker.io`; these hosts name the same registry under another spelling.
+_DOCKER_HUB_ALIASES = frozenset(
+    {"index.docker.io", "registry-1.docker.io", "registry.hub.docker.com", "hub.docker.com"}
+)
+# An ECR private registry is spelled `<account>.dkr.ecr.<region>.amazonaws.com`, or `.com.cn` in the
+# China partition, which is a separate registry. Its FIPS and dual-stack hosts name the same
+# registry under another spelling.
+_ECR_ALIAS_HOST = (
+    r"[0-9]{12}\.(?:dkr\.ecr-fips\.[^.]+\.amazonaws\.com(?:\.cn)?"
+    r"|dkr-ecr(?:-fips)?\.[^.]+\.(?:on\.aws|on\.amazonwebservices\.com\.cn))"
+)
+
+
+def _purl_parts(text: str) -> tuple[str, str, str | None]:
+    """The type, the `namespace/name` coordinates and the qualifier string (None when absent) of a purl."""
+    path, separator, query = text.removeprefix("pkg:").partition("?")
+    purl_type, _slash, coordinates = path.partition("/")
+    return purl_type, coordinates, query if separator else None
+
+
+def _valid_package_purl(text: str) -> bool:
+    """A purl with no version, subpath or qualifier, except the registry repository of an image."""
+    if len(text) > 512 or not text.startswith("pkg:") or "@" in text or "#" in text:
+        return False
+    purl_type, coordinates, query = _purl_parts(text)
+    grammar = _PURL_COORDINATES.get(purl_type)
+    if grammar is None or re.fullmatch(grammar, coordinates) is None:
+        return False
+    if purl_type != "oci":
+        return query is None
+    key, _equals, repository = (query or "").partition("=")
+    return key == "repository_url" and _valid_oci_repository(repository, coordinates)
+
+
+def _valid_oci_repository(repository: str, name: str) -> bool:
+    """`<registry host>/<repository path>`, whose last component is the purl name.
+
+    Docker Hub nests nothing, so its path is the namespace and the name, `library` for an
+    official image. An alias spelling of Docker Hub or of an ECR registry is refused, so one image
+    is one package.
+    """
+    host, _slash, path = repository.partition("/")
+    if host in _DOCKER_HUB_ALIASES or re.fullmatch(_ECR_ALIAS_HOST, host) is not None or _dns_kind(host) is None:
+        return False
+    components = path.split("/")
+    if any(re.fullmatch(_OCI_COMPONENT, component) is None for component in components):
+        return False
+    if host == "docker.io" and len(components) != 2:
+        return False
+    return components[-1] == name
 
 
 # One dedicated node type per version tag. Diverting on the bare prefix left a malformed tag with
@@ -971,13 +1136,23 @@ def _endpoint_registration_suffix(_relation: Mapping[str, Any], source: Endpoint
 
 # Roles that belong to one registration episode, not to the name that outlives it.
 _REGISTRATION_ROLES = frozenset({"registrant", "admin", "tech", "billing"})
+# A registry lists a package's maintainers and its security contact by email, and nothing else.
+_PACKAGE_ROLES = frozenset({"maintainer", "security"})
 
 
 def _endpoint_contact_registration_roles(
-    relation: Mapping[str, Any], source: EndpointView, _target: EndpointView
+    relation: Mapping[str, Any], source: EndpointView, target: EndpointView
 ) -> None:
-    # An organization, registrar or repository keeps every role: RIR entities carry admin and tech
-    # contacts of their own. Only a name and its registration split the roles between them.
+    if source.type == "package":
+        if relation["role"] not in _PACKAGE_ROLES:
+            raise ExpectedValidationError("/properties/role: a package's contact is a maintainer or security contact")
+        if target.type != "email_address":
+            raise ExpectedValidationError(f"{_ENDPOINT_FAILED}: a package's contact is an email address")
+        return
+    if relation["role"] == "maintainer":
+        raise ExpectedValidationError("/properties/role: only a package has a maintainer contact")
+    # An organization, registrar or repository keeps every other role: RIR entities carry admin and
+    # tech contacts of their own. Only a name and its registration split the roles between them.
     if source.type not in ("whois_registration", "domain", "subdomain"):
         return
     if (source.type == "whois_registration") != (relation["role"] in _REGISTRATION_ROLES):
@@ -1030,6 +1205,22 @@ def _proper_subnet(
     if isinstance(source, ipaddress.IPv4Network):
         return isinstance(target, ipaddress.IPv4Network) and target != source and target.subnet_of(source)
     return isinstance(target, ipaddress.IPv6Network) and target != source and target.subnet_of(source)
+
+
+# An alias edge points toward the id a pivot should start from: CVE, then GHSA, then every OSV
+# database alike. Equal ranks go from the alphabetically lower id, so each pair has one edge.
+_ALIAS_RANKS = {"CVE": 2, "GHSA": 1}
+
+
+def _endpoint_alias_direction(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    source_id, target_id = cast("str", source.properties["value"]), cast("str", target.properties["value"])
+    source_rank, target_rank = (_ALIAS_RANKS.get(_advisory_prefix(value), 0) for value in (source_id, target_id))
+    if source_rank == target_rank == _ALIAS_RANKS["CVE"]:
+        raise ExpectedValidationError(f"{_ENDPOINT_FAILED}: two CVE ids are never aliases")
+    if source_rank > target_rank or (source_rank == target_rank and source_id >= target_id):
+        raise ExpectedValidationError(
+            f"{_ENDPOINT_FAILED}: an alias points toward the CVE, then the GHSA, then the alphabetically higher id"
+        )
 
 
 # The repository-object part of a ROID that means "not published" rather than naming an object.
@@ -1183,6 +1374,18 @@ _CLOUD_HOST_PATTERNS: dict[str, _HostPattern] = {
 # The provider each cloud_resource service and each storage_bucket provider belongs to.
 _SERVICE_PROVIDERS = ("aws", "azure", "gcp")
 _BUCKET_ACCOUNT_PROVIDER: dict[str, str] = {"aws_s3": "aws", "gcp_gcs": "gcp", "azure_blob": "azure"}
+# The provider of each cloud registry an oci image can live in, by its `repository_url` host. Every
+# other registry, Docker Hub and GHCR among them, belongs to no cloud account.
+_REGISTRY_ACCOUNT_PROVIDER: dict[str, str] = {
+    # ECR private, with its China partition host, then ECR Public. `_valid_oci_repository` refuses
+    # the FIPS and dual-stack aliases before a purl gets here.
+    rf"[0-9]{{12}}\.dkr\.ecr\.{_HOST_LABELS['aws_region']}\.amazonaws\.com(?:\.cn)?": "aws",
+    r"public\.ecr\.aws": "aws",
+    # Artifact Registry, and gcr.io with its regional hosts.
+    r"[a-z]+(?:-[a-z]+[0-9]+)?-docker\.pkg\.dev": "gcp",
+    r"(?:(?:us|eu|asia)\.)?gcr\.io": "gcp",
+    rf"{_HOST_LABELS['azure_name']}\.azurecr\.io": "azure",
+}
 
 
 def _label_grammar(label: str) -> str | None:
@@ -1230,14 +1433,29 @@ def _cross_field_cloud_resource(_type_name: str, properties: dict[str, Any]) -> 
         raise ExpectedValidationError("/properties/region: does not match the region the hostname encodes")
 
 
-def _account_provider(view: EndpointView) -> str:
-    if view.type == "storage_bucket":
-        return _BUCKET_ACCOUNT_PROVIDER[cast("str", view.properties["provider"])]
-    return cast("str", view.properties["service"]).split("_", 1)[0]
+def _image_provider(properties: Mapping[str, Any]) -> str:
+    purl_type, _coordinates, query = _purl_parts(cast("str", properties["purl"]))
+    if purl_type == "oci" and query is not None:
+        host = query.removeprefix("repository_url=").partition("/")[0]
+        for pattern, provider in _REGISTRY_ACCOUNT_PROVIDER.items():
+            if re.fullmatch(pattern, host) is not None:
+                return provider
+    raise ExpectedValidationError(
+        f"{_ENDPOINT_FAILED}: only an oci image in a cloud provider's registry belongs to an account"
+    )
+
+
+# How each `in_account` source names its provider; `_ensure_cross_field_contract` refuses a source
+# without an entry, which would otherwise fail as INTERNAL on the first edge from it.
+_ACCOUNT_PROVIDERS: dict[str, Callable[[Mapping[str, Any]], str]] = {
+    "cloud_resource": lambda properties: cast("str", properties["service"]).split("_", 1)[0],
+    "storage_bucket": lambda properties: _BUCKET_ACCOUNT_PROVIDER[cast("str", properties["provider"])],
+    "package": _image_provider,
+}
 
 
 def _endpoint_account_provider(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
-    if _account_provider(source) != target.properties["provider"]:
+    if _ACCOUNT_PROVIDERS[source.type](source.properties) != target.properties["provider"]:
         raise ExpectedValidationError("relation endpoint constraint failed: the account belongs to another provider")
 
 
@@ -1278,6 +1496,7 @@ _ensure_cloud_patterns_disjoint()
 # behavior: changing what a callable accepts means a new version suffix, which changes the
 # fingerprint, so a workspace written under the old behavior is refused rather than reinterpreted.
 _CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
+    "advisory_cve_scores.1": _cross_field_advisory,
     "asn_assigned.1": _cross_field_asn,
     "bucket_name_spelling.1": _cross_field_storage_bucket,
     "cloud_account_spelling.1": _cross_field_cloud_account,
@@ -1301,13 +1520,14 @@ _CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
 # Checks that read both endpoints' stored properties as well as the relation's own. They run after
 # the relation's properties are merged and deduplicated, so they see what will be stored.
 _ENDPOINT_CHECKS: dict[str, Callable[[Mapping[str, Any], EndpointView, EndpointView], None]] = {
+    "aliases_toward_cve.1": _endpoint_alias_direction,
     "contains_cidr_proper_subnet.1": _endpoint_contains_cidr,
     "contains_ip_member.1": _endpoint_contains_ip,
     "has_contact_endpoint_role.1": _endpoint_contact_iodef,
-    "has_contact_registration_roles.1": _endpoint_contact_registration_roles,
+    "has_contact_registration_roles.2": _endpoint_contact_registration_roles,
     "has_registration_suffix_match.1": _endpoint_registration_suffix,
     "has_subdomain_suffix.1": _endpoint_subdomain_suffix,
-    "in_account_provider_match.1": _endpoint_account_provider,
+    "in_account_provider_match.2": _endpoint_account_provider,
 }
 
 _CANONICALIZATIONS: dict[str, Callable[[dict[str, Any]], None]] = {
@@ -1582,6 +1802,11 @@ def _ensure_cross_field_contract() -> None:
         _BUCKET_ACCOUNT_PROVIDER.values()
     ) <= _enum("nodes", "cloud_account", "provider"):
         raise RuntimeError("every storage_bucket provider must map to one cloud_account provider")
+    if not set(_REGISTRY_ACCOUNT_PROVIDER.values()) <= _enum("nodes", "cloud_account", "provider"):
+        raise RuntimeError("every cloud registry must map to one cloud_account provider")
+    relations = cast("dict[str, dict[str, Any]]", _CATALOG["relations"])
+    if set(_ACCOUNT_PROVIDERS) != set(relations["in_account"]["sources"]):
+        raise RuntimeError("every in_account source needs a provider rule, and only those")
     services = {pattern.service for pattern in _CLOUD_HOST_PATTERNS.values() if pattern.canonical}
     if services != _enum("nodes", "cloud_resource", "service"):
         raise RuntimeError("every cloud_resource service needs a canonical hostname pattern, and only those")
@@ -1664,6 +1889,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
     if type(value) is not str:
         return False
     validators: dict[str, Callable[[str], bool]] = {
+        "advisory_id": _valid_advisory_id,
         "breach_token_or_empty": lambda text: text == "" or _BREACH_TOKEN.fullmatch(text) is not None,
         "bucket_name": _valid_bucket_name,
         "cidr": lambda text: _parse_cidr(text) is not None,
@@ -1672,7 +1898,6 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "calendar_date": _valid_calendar_date,
         "cpe23": lambda text: len(text) <= 512 and _CPE23.fullmatch(text) is not None,
         "credential_key_id": lambda text: re.fullmatch(r"[A-Za-z0-9._:/+=-]{1,128}", text) is not None,
-        "cve": lambda text: re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", text) is not None,
         "cvss_vector": _valid_cvss_vector,
         "cwe": lambda text: re.fullmatch(r"CWE-[0-9]{1,6}", text) is not None,
         "dkim_selector": _valid_dkim_selector,
@@ -1698,6 +1923,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "multiline_text_4096": lambda text: (
             1 <= len(text) <= 4096 and all(char in "\n\t" or char.isprintable() for char in text)
         ),
+        "package_purl": _valid_package_purl,
         "parameter_name": lambda text: (
             1 <= len(text) <= 128 and all(0x21 <= ord(char) <= 0x7E and char not in "&=#" for char in text)
         ),

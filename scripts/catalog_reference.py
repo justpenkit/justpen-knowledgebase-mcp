@@ -52,8 +52,8 @@ GATES = [
     (
         "Inventory",
         "`inventory` per node type",
-        "A new node of a `carries` type without an ownership state, and inventory state on a type whose"
-        " declaration does not allow it.",
+        "A new node of a `carries` type without an ownership state, an ownership outside the type's"
+        " `allowed_ownership`, and inventory state on a type whose declaration does not allow it.",
     ),
     (
         "Parent scope",
@@ -187,6 +187,8 @@ def _type_section(kind: str, name: str, definition: dict[str, Any]) -> list[str]
     if kind == "nodes":
         facts.append(f"**Parent scope:** {_scope(definition['identity'])}")
         facts.append(f"**Inventory:** `{definition['inventory']}`")
+        if "allowed_ownership" in definition:
+            facts.append(f"**Allowed ownership:** {_code(definition['allowed_ownership'])}")
     else:
         facts.append(f"**Sources:** {_code(definition['sources'])}")
         facts.append(f"**Targets:** {_code(definition['targets'])}")
@@ -422,8 +424,9 @@ def render_coverage() -> str:
         "# ASM and OSINT coverage",
         "",
         "Every table below is generated from the coverage fixtures under `tests/fixtures/asm/`, one per"
-        " source. Each fixture holds output derived from the tool's documented schema, a mapping that sends"
-        " every emitted field to a catalog property, to evidence or to `non storable` with a reason, and"
+        " source. Each fixture holds the source's output, either derived from its documented schema or"
+        " recorded from the live service, together with a mapping that sends every emitted field to a"
+        " catalog property, to evidence or to `non storable` with a reason, and"
         " the `kb_write` batches an agent sends for that output. The test suite holds the three to each other"
         " in both directions: an unmapped field, a mapped value that no write carries and a written value no"
         " field explains all fail. Regenerate the page with `make docs-catalog`.",

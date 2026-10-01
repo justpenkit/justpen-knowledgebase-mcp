@@ -302,7 +302,9 @@ def test_types_exposes_scoped_identity_in_manifest_and_schema():
     assert result["types"][0]["properties_schema"]["x-identity"] == identity
 
 
-@pytest.mark.parametrize(("type_name", "inventory"), [("subdomain", "carries"), ("port", "inherits"), ("cve", "none")])
+@pytest.mark.parametrize(
+    ("type_name", "inventory"), [("subdomain", "carries"), ("port", "inherits"), ("advisory", "none")]
+)
 def test_types_publish_each_node_inventory_declaration_and_the_vocabulary(type_name, inventory):
     db = database(cursor(value=(NODE, 1)))
     result = graph.graph_types(db, Mock(deadline=0), TypesRequest(kind="nodes", type=type_name))
@@ -313,6 +315,17 @@ def test_types_publish_each_node_inventory_declaration_and_the_vocabulary(type_n
     assert set(result["inventory"]["declarations"]) == {"carries", "inherits", "none"}
     assert "Only `in_scope` authorizes active testing" in result["inventory"]["testing"]
     assert TypesResult.model_validate(result).inventory == result["inventory"]
+
+
+def test_types_publish_the_ownerships_a_package_accepts():
+    """KTD5, AE10: an agent reading `kb_types` alone learns that a package is never a dependency."""
+    db = database(cursor(value=(NODE, 1)))
+    result = graph.graph_types(db, Mock(deadline=0), TypesRequest(kind="nodes", type="package"))
+    package = result["types"][0]
+
+    assert package["inventory"] == "carries"
+    assert package["allowed_ownership"] == ["owned", "candidate", "rejected"]
+    assert "allowed_ownership" in result["inventory"]["declarations"]["carries"]
 
 
 def test_relation_references_batch_and_existing_endpoints_are_immutable(monkeypatch):
@@ -518,6 +531,6 @@ def test_effective_state_walks_the_scope_chain_to_its_root():
     state = inventory.effective_state(db, {**service, "authorization_override": "in_scope"})
     assert state == inventory.EffectiveState("owned", "in_scope", NODE)
     assert [call.args[1] for call in db.execute.call_args_list] == [(3, "has_service"), (2, "has_open_port")]
-    assert inventory.effective_state(database(), owner(type="cve", ownership=None)) is None
+    assert inventory.effective_state(database(), owner(type="advisory", ownership=None)) is None
     with pytest.raises(ConflictError, match="parent relation"):
         inventory.effective_state(database(cursor()), port)

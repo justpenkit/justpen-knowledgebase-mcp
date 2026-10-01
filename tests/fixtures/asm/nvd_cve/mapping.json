@@ -42,7 +42,7 @@
     {
       "path": "vulnerabilities[].cve.id",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "value"
       }
     },
@@ -53,7 +53,7 @@
     {
       "path": "vulnerabilities[].cve.published",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "published"
       },
       "transform": [
@@ -142,7 +142,7 @@
     {
       "path": "vulnerabilities[].cve.metrics.cvssMetricV31[].cvssData.vectorString",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "cvss_vector"
       },
       "transform": [
@@ -152,7 +152,7 @@
     {
       "path": "vulnerabilities[].cve.metrics.cvssMetricV31[].cvssData.baseScore",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "cvss_score"
       },
       "transform": [
@@ -271,7 +271,7 @@
     {
       "path": "vulnerabilities[].cve.cisaExploitAdd",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "kev_added"
       }
     },
@@ -374,7 +374,7 @@
     {
       "path": "vulnerabilities[].cve.metrics.cvssMetricV40[].cvssData.baseScore",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "cvss_score"
       },
       "transform": [
@@ -386,7 +386,7 @@
     {
       "path": "vulnerabilities[].cve.metrics.cvssMetricV40[].cvssData.vectorString",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "cvss_vector"
       },
       "transform": [
@@ -412,7 +412,7 @@
     {
       "path": "vulnerabilities[].cve.metrics.cvssMetricV30[].cvssData.baseScore",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "cvss_score"
       },
       "transform": [
@@ -424,7 +424,7 @@
     {
       "path": "vulnerabilities[].cve.metrics.cvssMetricV30[].cvssData.vectorString",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "cvss_vector"
       },
       "transform": [

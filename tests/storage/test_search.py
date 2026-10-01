@@ -507,7 +507,7 @@ async def test_search_summaries_carry_effective_state_and_the_inherited_root(tmp
         assert (ssh["ownership"], ssh["authorization"], ssh["state_root_id"]) == ("owned", "out_of_scope", ids["ip"])
         assert (items[ids["ip"]]["ownership"], items[ids["ip"]]["authorization"]) == ("owned", "in_scope")
         assert "state_root_id" not in items[ids["ip"]]
-        assert not {"ownership", "authorization", "state_root_id"} & items[ids["cve"]].keys()
+        assert not {"ownership", "authorization", "state_root_id"} & items[ids["advisory"]].keys()
 
 
 # The statement shape a node search uses: its `scope_relation` table takes the first binding.

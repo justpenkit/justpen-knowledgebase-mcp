@@ -18,6 +18,7 @@ import ipaddress
 import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from email.utils import getaddresses
 from typing import cast
 
 from justpen_knowledgebase_mcp.catalog import catalog_view, validate_record
@@ -760,7 +761,57 @@ def nvd_preferred_cvss(value: object, record: Mapping[str, object]) -> object:
     if preferred is None:
         return None
     data = cast("Mapping[str, object]", preferred["cvssData"])
-    return value if value in (cvss_one_decimal(data["baseScore"], record), data["vectorString"]) else None
+    return _carried_cvss(value, data["baseScore"], data["vectorString"], record)
+
+
+def _carried_cvss(value: object, score: object, vector: object, record: Mapping[str, object]) -> object:
+    """`value` when it is the preferred metric's rounded score or its vector, else None."""
+    return value if value in (cvss_one_decimal(score, record), vector) else None
+
+
+_GITHUB_CVSS_FAMILIES = ("cvss_v4", "cvss_v3")
+
+
+@transform
+def github_preferred_cvss(value: object, record: Mapping[str, object]) -> object:
+    """Keep a (rounded) base score or vector only if the preferred GitHub CVSS family carries it, else None.
+
+    A GitHub global advisory lists `cvss_v3` and `cvss_v4` under `cvss_severities`, and an absent
+    family is a null vector with the placeholder score 0.0. The preferred family is the first with a
+    vector, v4 before v3 as in `nvd_preferred_cvss`, so the placeholder is never written.
+    """
+    severities = cast("Mapping[str, Mapping[str, object]]", record["cvss_severities"])
+    preferred = next(
+        (severities[family] for family in _GITHUB_CVSS_FAMILIES if severities.get(family, {}).get("vector_string")),
+        None,
+    )
+    if preferred is None:
+        return None
+    return _carried_cvss(value, preferred["score"], preferred["vector_string"], record)
+
+
+# ---- package transforms ----
+
+
+@transform
+def pypi_name_to_purl(value: object, _record: Mapping[str, object]) -> str:
+    """The versionless purl of a PyPI project: the PyPA normalized name, lowercase with `-`, `_`, `.` runs one `-`."""
+    return "pkg:pypi/" + re.sub(r"[-_.]+", "-", str(value)).lower()
+
+
+@transform
+def pypi_email_address(value: object, _record: Mapping[str, object]) -> str | None:
+    """The lowercase address of a core-metadata `Author-email` or `Maintainer-email`; None when empty.
+
+    The field may hold a display name (`Pallets <contact@palletsprojects.com>`). A list of several
+    addresses fails the mapping, because one row writes one address.
+    """
+    addresses = [address for _name, address in getaddresses([str(value)]) if address]
+    if not addresses:
+        return None
+    if len(addresses) > 1:
+        raise ValueError("pypi_email_address takes one address")
+    return addresses[0].lower()
 
 
 # ---- network transforms ----

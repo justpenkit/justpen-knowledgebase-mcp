@@ -1,4 +1,4 @@
-"""Catalog v4 manifest, schema, and strict validator contracts."""
+"""Catalog v5 manifest, schema, and strict validator contracts."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ NODE_TYPES = {
     "finding",
     "certificate",
     "endpoint",
-    "cve",
+    "advisory",
     "technology",
     "dmarc_record",
     "txt_record",
@@ -55,6 +55,7 @@ NODE_TYPES = {
     "organization",
     "email_address",
     "host_key",
+    "package",
     "http_fingerprint",
     "identity_tenant",
     "mta_sts_policy",
@@ -89,6 +90,7 @@ RELATION_TYPES = {
     "serves_endpoint",
     "redirects_to",
     "affected_by",
+    "aliases",
     "runs_technology",
     "protected_by",
     "has_dmarc",
@@ -116,6 +118,8 @@ RELATION_TYPES = {
     "in_account",
     "authenticates",
     "links_to",
+    "published_from",
+    "loads_package",
 }
 
 
@@ -128,18 +132,18 @@ def _invalid(kind: str, type_name: str, properties: dict[str, object]) -> None:
         validate_record(kind, type_name, properties)
 
 
-V3_FINGERPRINT = "b13948852d5624c5b7c4e51fe33a0216473ca8b68e8356fcb97982f0acad513a"
+V4_FINGERPRINT = "2a82213a7a4019e9b6a8bcd6b86584fa237143de9d3af8f15d8f5e77f3495f33"
 
 
-def test_manifest_has_only_catalog_v4_types_and_stable_fingerprint() -> None:
+def test_manifest_has_only_catalog_v5_types_and_stable_fingerprint() -> None:
     manifest = catalog_manifest()
 
-    assert CATALOG_VERSION == 4
-    assert manifest["version"] == 4
+    assert CATALOG_VERSION == 5
+    assert manifest["version"] == 5
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT != V3_FINGERPRINT
-    assert CATALOG_FINGERPRINT == "2a82213a7a4019e9b6a8bcd6b86584fa237143de9d3af8f15d8f5e77f3495f33"
+    assert CATALOG_FINGERPRINT != V4_FINGERPRINT
+    assert CATALOG_FINGERPRINT == "67d6e1c8cea13662aae415f2f390b86024c9a78306f61da0cb258813d34fa8b2"
 
 
 INVENTORY = {
@@ -156,6 +160,7 @@ INVENTORY = {
         "ip_address",
         "ip_cidr",
         "organization",
+        "package",
         "phone",
         "repository",
         "secret",
@@ -164,7 +169,7 @@ INVENTORY = {
     },
     "inherits": {"dkim_record", "finding", "mta_sts_policy", "parameter", "port", "service", "whois_registration"},
     "none": {
-        "cve",
+        "advisory",
         "cwe",
         "dmarc_record",
         "http_fingerprint",
@@ -187,11 +192,43 @@ def test_every_node_type_declares_exactly_one_inventory_value() -> None:
         declared.setdefault(definition["inventory"], set()).add(name)
 
     assert declared == INVENTORY
-    assert {value: len(names) for value, names in declared.items()} == {"carries": 17, "inherits": 7, "none": 10}
+    assert {value: len(names) for value, names in declared.items()} == {"carries": 18, "inherits": 7, "none": 10}
     assert catalog_manifest()["inventory"] == {
         "ownership": ["owned", "dependency", "candidate", "rejected"],
         "authorization": ["in_scope", "out_of_scope", "unknown"],
     }
+
+
+def test_only_a_package_narrows_the_ownerships_it_accepts() -> None:
+    """KTD5, R10: a package is never a dependency; every other carrying type keeps all four."""
+    narrowed = {
+        name: definition["allowed_ownership"]
+        for name, definition in catalog_manifest()["nodes"].items()
+        if "allowed_ownership" in definition
+    }
+
+    assert narrowed == {"package": ["owned", "candidate", "rejected"]}
+
+
+@pytest.mark.parametrize(
+    ("type_name", "allowed", "message"),
+    [
+        ("advisory", ["owned", "candidate", "rejected"], "advisory does not carry inventory state"),
+        ("port", ["owned", "candidate", "rejected"], "port does not carry inventory state"),
+        ("package", ["owned", "sometimes"], "package allows an ownership outside"),
+        # `rejected` is reached only by ID, so these lists would leave a package uncreatable.
+        ("package", [], "package allows no ownership a node can be created with"),
+        ("package", ["rejected"], "package allows no ownership a node can be created with"),
+    ],
+)
+def test_inventory_contract_refuses_an_ownership_list_state_cannot_honor(
+    monkeypatch: pytest.MonkeyPatch, type_name: str, allowed: list[str], message: str
+) -> None:
+    monkeypatch.setitem(
+        catalog_module._NODES, type_name, {**catalog_module._NODES[type_name], "allowed_ownership": allowed}
+    )
+    with pytest.raises(RuntimeError, match=message):
+        catalog_module._ensure_inventory_contract()
 
 
 @pytest.mark.parametrize(
@@ -292,6 +329,8 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("asn", {"value": 15169, "name": "GOOGLE", "country": "US", "rir": "arin"}),
         ("ip_cidr", {"value": "8.8.8.0/24", "version": 4, "netname": "GOGL", "country": "US", "rir": "arin"}),
         ("organization", {"registry": "arin", "handle": "GOGL", "name": "Google LLC"}),
+        ("package", {"purl": "pkg:npm/%40acme/sdk"}),
+        ("package", {"purl": "pkg:oci/api?repository_url=123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/api"}),
         ("spf_record", {"value": "v=spf1"}),
         ("spf_record", {"value": "v=spf1  include:example.com -all"}),
         ("spf_record", {"value": "v=spf1 " + "a" * 4089}),
@@ -316,8 +355,10 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("endpoint", {"url": "https://www.example.com/my-page/bootstrap-5.3.0.min.css?cache-bust=1", "method": "GET"}),
         ("endpoint", {"url": "https://my_service.example.com/", "method": "GET"}),
         ("endpoint", {"url": "https://_acme.dev_env.example.com:8443/a", "method": "GET"}),
-        ("cve", {"value": "CVE-2026-1234"}),
-        ("cve", {"value": "CVE-1999-1234567"}),
+        ("advisory", {"value": "CVE-2026-1234"}),
+        ("advisory", {"value": "CVE-1999-1234567"}),
+        ("advisory", {"value": "GHSA-f82v-jwr5-mffw"}),
+        ("advisory", {"value": "MAL-2025-191157"}),
         ("technology", {"name": "nginx"}),
         ("technology", {"name": "a"}),
         ("technology", {"name": "a" * 63}),
@@ -362,7 +403,7 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("cwe", {"value": "CWE-999999"}),
         ("cwe", {"value": "CWE-89", "name": "SQL Injection"}),
         (
-            "cve",
+            "advisory",
             {
                 "value": "CVE-2021-44228",
                 "cvss_score": 10,
@@ -570,10 +611,11 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("endpoint", {"url": "https://example.com/search?q=%zz", "method": "GET"}),
         ("endpoint", {"url": "https://example.com/search?q=\u00e9", "method": "GET"}),
         ("endpoint", {"url": "https://example.com?q=1", "method": "GET"}),
-        ("cve", {"value": "cve-2026-1234"}),
-        ("cve", {"value": "CVE-26-1234"}),
-        ("cve", {"value": "CVE-2026-123"}),
-        ("cve", {"value": 20261234}),
+        ("advisory", {"value": "cve-2026-1234"}),
+        ("advisory", {"value": "CVE-26-1234"}),
+        ("advisory", {"value": "CVE-2026-123"}),
+        ("advisory", {"value": 20261234}),
+        ("advisory", {"value": "RHSA-2025:1234"}),
         ("technology", {"name": "Nginx"}),
         ("technology", {"name": "NGINX"}),
         ("technology", {"name": ""}),
@@ -644,6 +686,8 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("registrar", {"iana_id": 65536, "name": "over"}),
         ("registrar", {"iana_id": 292}),
         ("registrar", {"iana_id": "292", "name": "string id"}),
+        ("package", {"purl": "pkg:npm/%40acme/sdk@1.2.3"}),
+        ("package", {"value": "pkg:npm/%40acme/sdk"}),
         ("cwe", {"value": "cwe-79"}),
         ("cwe", {"value": "CWE-"}),
         ("cwe", {"value": "CWE-0079x"}),
@@ -651,10 +695,13 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("cwe", {"value": "79"}),
         ("cwe", {"value": 79}),
         ("cwe", {"value": "CWE-79", "name": ""}),
-        ("cve", {"value": "CVE-2021-44228", "cvss_score": 9.85}),
-        ("cve", {"value": "CVE-2021-44228", "epss_score": "0.97"}),
-        ("cve", {"value": "CVE-2021-44228", "kev_added": "2021-12-10T00:00:00Z"}),
-        ("cve", {"value": "CVE-2021-44228", "published": "2021-12-10T10:15:09.143"}),
+        ("advisory", {"value": "CVE-2021-44228", "cvss_score": 9.85}),
+        ("advisory", {"value": "CVE-2021-44228", "epss_score": "0.97"}),
+        ("advisory", {"value": "CVE-2021-44228", "kev_added": "2021-12-10T00:00:00Z"}),
+        ("advisory", {"value": "CVE-2021-44228", "published": "2021-12-10T10:15:09.143"}),
+        ("advisory", {"value": "GHSA-f82v-jwr5-mffw", "epss_score": 0.97}),
+        ("advisory", {"value": "GHSA-f82v-jwr5-mffw", "epss_percentile": 0.99}),
+        ("advisory", {"value": "GHSA-f82v-jwr5-mffw", "kev_added": "2025-03-24"}),
         ("domain", {"value": "example.com", "wildcard": "yes"}),
         ("ip_address", {"value": "104.16.0.1", "version": 4, "cdn_provider": "Cloudflare"}),
         ("certificate", {"der_sha256": "b" * 64, "serial": "3A:2F"}),
@@ -912,24 +959,26 @@ def test_relation_endpoint_matrices_are_exact() -> None:
                 "whois_registration",
                 "cloud_account",
                 "cloud_resource",
+                "package",
             ],
             ["finding"],
         ),
         "hosted_on": (["domain", "subdomain", "endpoint"], ["cloud_resource"]),
-        "in_account": (["cloud_resource", "storage_bucket"], ["cloud_account"]),
+        "in_account": (["cloud_resource", "storage_bucket", "package"], ["cloud_account"]),
         "has_registration": (["domain"], ["whois_registration"]),
         "presents_certificate": (["service"], ["certificate"]),
         "presents_host_key": (["service"], ["host_key"]),
         "serves_endpoint": (["service"], ["endpoint"]),
         "redirects_to": (["endpoint"], ["endpoint"]),
-        "affected_by": (["service", "finding", "endpoint"], ["cve"]),
+        "affected_by": (["service", "finding", "endpoint", "package"], ["advisory"]),
+        "aliases": (["advisory"], ["advisory"]),
         "runs_technology": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "protected_by": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "backed_by_bucket": (["domain", "subdomain", "endpoint"], ["storage_bucket"]),
-        "exposes_secret": (["repository", "endpoint", "storage_bucket", "cloud_resource"], ["secret"]),
+        "exposes_secret": (["repository", "endpoint", "storage_bucket", "cloud_resource", "package"], ["secret"]),
         "federates_with": (d, ["identity_tenant"]),
         "has_contact": (
-            ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration"],
+            ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration", "package"],
             ["email_address", "phone", "endpoint"],
         ),
         "authenticates": (
@@ -954,13 +1003,15 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "has_parameter": (["endpoint"], ["parameter"]),
         "has_tls_fingerprint": (["service"], ["tls_fingerprint"]),
         "registered_through": (["whois_registration"], ["registrar"]),
-        "has_weakness": (["finding", "cve"], ["cwe"]),
+        "has_weakness": (["finding", "advisory"], ["cwe"]),
         "operated_by": (["asn", "ip_cidr"], ["organization"]),
         "has_txt_record": (d, ["txt_record"]),
         "supports_tls_cipher": (["service"], ["tls_cipher_suite"]),
         "covers_name": (["certificate"], d),
         "has_svcb_binding": (d, d),
         "issued_by": (["certificate"], ["certificate"]),
+        "published_from": (["package"], ["repository"]),
+        "loads_package": (["endpoint"], ["package"]),
     }
     relations = catalog_manifest()["relations"]
 
@@ -1004,6 +1055,9 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         ("redirects_to", {"status": 301}),
         ("redirects_to", {"status": 308}),
         ("affected_by", {}),
+        ("aliases", {}),
+        ("published_from", {}),
+        ("loads_package", {}),
         ("runs_technology", {}),
         ("runs_technology", {"version": "1.18.0", "cpe": CPE_NGINX}),
         ("protected_by", {"kind": "waf"}),
@@ -1019,6 +1073,7 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         ("issued_by", {}),
         ("presents_certificate", {"mode": "quic", "server_name": "example.com", "alpn_offered": ["h3"]}),
         ("has_contact", {"role": "abuse"}),
+        ("has_contact", {"role": "maintainer"}),
         ("has_contact", {"role": "published", "name": "security team"}),
         ("backed_by_bucket", {}),
         ("exposes_secret", {"location": "src/config.py"}),
@@ -1301,7 +1356,7 @@ def test_shared_vocabulary_nodes_are_never_a_finding_source() -> None:
         "txt_record",
         "email_address",
         "phone",
-        "cve",
+        "advisory",
         "cwe",
     }
     sources = set(catalog_manifest()["relations"]["has_finding"]["sources"])
@@ -1528,6 +1583,78 @@ def test_golden_format_cases(rule: str, value: object, *, accepted: bool) -> Non
     assert catalog_module._valid_field(copy.deepcopy(value), rule) is accepted
 
 
+def test_an_advisory_id_passes_a_closed_prefix_allow_list() -> None:
+    """KTD1, AE1: CVE, GHSA and the OSV databases that publish one record per vulnerability, each
+    with its own id grammar. A vendor bulletin is refused with the rule named."""
+    assert set(catalog_module._ADVISORY_ID_GRAMMARS) == {
+        "CVE",
+        "GHSA",
+        "PYSEC",
+        "RUSTSEC",
+        "GO",
+        "OSV",
+        "HSEC",
+        "JLSEC",
+        "OSEC",
+        "RSEC",
+        "EEF",
+        "DRUPAL",
+        "MAL",
+    }
+    validate_record("nodes", "advisory", {"value": "CVE-2025-29927"})
+    validate_record("nodes", "advisory", {"value": "GHSA-f82v-jwr5-mffw"})
+    with pytest.raises(ExpectedValidationError) as failure:
+        validate_record("nodes", "advisory", {"value": "RHSA-2025:1234"})
+
+    assert failure.value.message == "/properties/value: expected advisory_id"
+
+
+def test_a_package_purl_passes_a_closed_type_allow_list() -> None:
+    """KTD4: each listed purl type has its own canonical-name rule; `docker` is not listed, so an
+    image is written as `oci`, and a refused purl names the rule."""
+    assert set(catalog_module._PURL_COORDINATES) == {
+        "npm",
+        "pypi",
+        "maven",
+        "nuget",
+        "gem",
+        "cargo",
+        "golang",
+        "composer",
+        "oci",
+    }
+    with pytest.raises(ExpectedValidationError) as failure:
+        validate_record("nodes", "package", {"purl": "pkg:docker/acme/api"})
+
+    assert failure.value.message == "/properties/purl: expected package_purl"
+
+
+def test_one_image_name_in_two_registries_is_two_packages() -> None:
+    """AE9, R9: the registry repository is identity, so the target's ECR `api` image and a Docker
+    Hub `api` image are two nodes; a tag is never part of the purl, so every tag is one node."""
+    ecr = "pkg:oci/api?repository_url=123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/api"
+    hub = "pkg:oci/api?repository_url=docker.io/acme/api"
+
+    assert identity_key("nodes", "package", {"purl": ecr}) != identity_key("nodes", "package", {"purl": hub})
+    _invalid("nodes", "package", {"purl": ecr + "&tag=1.4"})
+
+
+@pytest.mark.parametrize(
+    ("table", "replacement", "message"),
+    [
+        ("_ACCOUNT_PROVIDERS", {"cloud_resource": str, "storage_bucket": str}, "every in_account source"),
+        ("_REGISTRY_ACCOUNT_PROVIDER", {r"quay\.io": "redhat"}, "every cloud registry"),
+    ],
+)
+def test_the_import_guard_refuses_an_in_account_source_without_a_cloud_provider(
+    monkeypatch: pytest.MonkeyPatch, table: str, replacement: dict[str, object], message: str
+) -> None:
+    """KTD7: a source with no provider rule would raise KeyError as INTERNAL on its first edge."""
+    monkeypatch.setattr(catalog_module, table, replacement)
+    with pytest.raises(RuntimeError, match=message):
+        catalog_module._ensure_cross_field_contract()
+
+
 @pytest.mark.parametrize(
     ("rule_id", "record", "accepted"),
     [
@@ -1583,6 +1710,27 @@ def test_golden_endpoint_check_cases(
         else:
             with pytest.raises(ExpectedValidationError):
                 check_endpoint_values(relation, relation_props, *views)
+
+
+@pytest.mark.parametrize(
+    ("source", "target", "message"),
+    [
+        ("CVE-2025-29927", "GHSA-f82v-jwr5-mffw", "an alias points toward the CVE"),
+        ("GHSA-f82v-jwr5-mffw", "PYSEC-2024-60", "an alias points toward the CVE"),
+        ("CVE-2025-29927", "CVE-2025-29928", "two CVE ids are never aliases"),
+    ],
+)
+def test_an_alias_against_the_direction_rule_is_refused_by_name(source: str, target: str, message: str) -> None:
+    """KTD3: each pair has one edge, pointing toward the CVE, and two CVEs are two vulnerabilities."""
+    views = (EndpointView("advisory", {"value": source}), EndpointView("advisory", {"value": target}))
+    with pytest.raises(ExpectedValidationError, match=message):
+        check_endpoint_values("aliases", {}, *views)
+
+
+def test_the_advisory_descriptions_teach_the_cve_preference() -> None:
+    """R6, KTD9: no check can see an advisory's aliases, so `kb_types` prose carries the rule."""
+    for kind, type_name in (("nodes", "advisory"), ("relations", "aliases"), ("relations", "affected_by")):
+        assert "write the CVE id" in catalog_module.type_description(kind, type_name)["notes"], type_name
 
 
 @pytest.mark.parametrize(
@@ -1811,13 +1959,15 @@ def _catalog_with(kind: str, type_name: str, **changes: object) -> dict[str, obj
     [
         (_catalog_with("nodes", "domain", optional={"value": "dns_name"}), "declares \\['value'\\] twice"),
         (
-            _catalog_with("nodes", "domain", identity={"properties": ["value", "note"]}, optional={"note": "cve"}),
+            _catalog_with(
+                "nodes", "domain", identity={"properties": ["value", "note"]}, optional={"note": "advisory_id"}
+            ),
             "identity names a property outside its required map",
         ),
         (
             {
                 **_catalog_with("nodes", "domain", optional={"label": "printable_text_200"}),
-                "relations": _catalog_with("relations", "resolves_to", optional={"label": "cve"})["relations"],
+                "relations": _catalog_with("relations", "resolves_to", optional={"label": "advisory_id"})["relations"],
             },
             "optional label has one rule on",
         ),
@@ -1845,7 +1995,7 @@ def test_ac10_attribute_properties_are_declared() -> None:
     wildcard DNS and CPE/version each have a declared, validated home."""
     manifest = catalog_manifest()
     expected = {
-        ("nodes", "cve"): {"cvss_score", "cvss_vector", "epss_score", "epss_percentile", "kev_added", "published"},
+        ("nodes", "advisory"): {"cvss_score", "cvss_vector", "epss_score", "epss_percentile", "kev_added", "published"},
         ("nodes", "finding"): {"cvss_score", "cvss_vector", "confidence", "tags", "scanner", "description"},
         ("nodes", "endpoint"): {"status", "title", "content_length", "content_type", "webserver"},
         ("nodes", "ip_address"): {"cdn_provider", "waf_provider", "cloud_provider"},
@@ -1942,7 +2092,7 @@ def test_every_type_declares_identity_checks_and_description() -> None:
                 assert definition["sources"], type_name
                 assert definition["targets"], type_name
     assert manifest["relations"]["has_registration"]["checks"] == ["has_registration_suffix_match.1"]
-    assert manifest["relations"]["in_account"]["checks"] == ["in_account_provider_match.1"]
+    assert manifest["relations"]["in_account"]["checks"] == ["in_account_provider_match.2"]
     assert "secret_plaintext_keys.1" in manifest["relations"]["authenticates"]["checks"]
 
 

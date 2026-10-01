@@ -438,7 +438,7 @@
     {
       "path": "{type=FINDING}.data_json.cves",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "value"
       },
       "each": true,
