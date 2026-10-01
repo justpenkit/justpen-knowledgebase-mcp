@@ -470,6 +470,22 @@ CHECKS: dict[str, tuple[tuple[Record, ...], tuple[Record, ...]]] = {
 
 # Endpoint check id -> (accepted, rejected) as (relation properties, source record, target record).
 ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = {
+    "aliases_toward_cve.1": (
+        (
+            ({}, ("advisory", {"value": "GHSA-f82v-jwr5-mffw"}), ("advisory", {"value": "CVE-2025-29927"})),
+            ({}, ("advisory", {"value": "PYSEC-2024-60"}), ("advisory", {"value": "GHSA-f82v-jwr5-mffw"})),
+            ({}, ("advisory", {"value": "PYSEC-2024-60"}), ("advisory", {"value": "CVE-2025-29927"})),
+            ({}, ("advisory", {"value": "GHSA-f82v-jwr5-mffw"}), ("advisory", {"value": "GHSA-gp8f-8m3g-qvj9"})),
+            ({}, ("advisory", {"value": "OSV-2020-111"}), ("advisory", {"value": "PYSEC-2024-60"})),
+        ),
+        (
+            ({}, ("advisory", {"value": "CVE-2025-29927"}), ("advisory", {"value": "GHSA-f82v-jwr5-mffw"})),
+            ({}, ("advisory", {"value": "GHSA-f82v-jwr5-mffw"}), ("advisory", {"value": "PYSEC-2024-60"})),
+            ({}, ("advisory", {"value": "CVE-2025-29927"}), ("advisory", {"value": "CVE-2025-29928"})),
+            ({}, ("advisory", {"value": "GHSA-gp8f-8m3g-qvj9"}), ("advisory", {"value": "GHSA-f82v-jwr5-mffw"})),
+            ({}, ("advisory", {"value": "PYSEC-2024-60"}), ("advisory", {"value": "OSV-2020-111"})),
+        ),
+    ),
     "contains_cidr_proper_subnet.1": (
         (
             (

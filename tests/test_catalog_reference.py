@@ -271,7 +271,7 @@ REVIEW_PAGE = "docs/reference/catalog-review.md"
 # replaced the v2 `cve` in v5. Every other row is a v2 type the v3 review kept or changed.
 ADDITIONS = {
     "nodes": {3: {"whois_registration", "cloud_account", "cloud_resource"}, 5: {"advisory"}},
-    "relations": {3: {"has_registration", "hosted_on", "in_account", "authenticates", "links_to"}},
+    "relations": {3: {"has_registration", "hosted_on", "in_account", "authenticates", "links_to"}, 5: {"aliases"}},
 }
 V2_SURVIVORS = {"nodes": 30, "relations": 44}
 

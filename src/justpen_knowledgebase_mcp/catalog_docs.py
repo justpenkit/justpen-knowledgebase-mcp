@@ -260,6 +260,11 @@ DOCS: dict[str, Any] = {
             "`epss_score`, `epss_percentile` and `kev_added` are refused unless `value` is a CVE id: FIRST scores "
             "and CISA lists CVEs only."
         ),
+        "aliases_toward_cve.1": (
+            "The target's id family must rank at least as high as the source's: CVE above GHSA above every OSV "
+            "database id. Between equal ranks the source must be the alphabetically lower id, and two CVE ids are "
+            "refused."
+        ),
         "asn_assigned.1": "`value` 0 is rejected: AS0 is reserved and never originates routes (RFC 7607).",
         "bucket_name_spelling.1": (
             "`name` is checked against the declared `provider`: length, grammar, and the prefixes, suffixes and "
@@ -362,6 +367,11 @@ DOCS: dict[str, Any] = {
                 "Not an observation that something is vulnerable; that is `affected_by` from the affected object. "
                 "Not a vendor or distribution bulletin such as RHSA, DSA or USN, and not the affected products, "
                 "version ranges, references or description, which stay in evidence. Never a finding source."
+            ),
+            "notes": (
+                "When the vulnerability has a known CVE, write the CVE id, even if a GHSA or OSV record is where it "
+                "was found, so one vulnerability is one node. When a non-CVE advisory you wrote turns out to have a "
+                "CVE, write the CVE advisory and link the two with `aliases`."
             ),
             "properties": {
                 "value": "The advisory id, spelled exactly as its database publishes it.",
@@ -771,6 +781,24 @@ DOCS: dict[str, Any] = {
                 "matched, or a finding reporting it."
             ),
             "excludes": "Not an advisory merely mentioned nearby; attach the evidence for the match.",
+            "notes": (
+                "When the vulnerability has a known CVE, write the CVE id as the target, even if a GHSA or OSV record "
+                "is where it was found. An edge written before the CVE was known stays; link its advisory to the "
+                "CVE with `aliases` rather than rewriting the edge."
+            ),
+            "properties": {},
+        },
+        "aliases": {
+            "summary": "The two advisories name the same vulnerability, and the target is the id a pivot starts from.",
+            "excludes": (
+                "Not a related or similar vulnerability, and not a bulletin that bundles CVEs. Never between two CVE "
+                "ids, and never an advisory to itself."
+            ),
+            "notes": (
+                "One edge per pair, pointing toward the CVE: write the CVE id as the target, a GHSA as the target of "
+                "an OSV database id, and between equal ranks the alphabetically higher id. An OSV record that aliases "
+                "two CVEs links to each, so one id per vulnerability is a convention, not a guarantee."
+            ),
             "properties": {},
         },
         "announced_by": {

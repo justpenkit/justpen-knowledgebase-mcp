@@ -478,6 +478,7 @@ _NODES: dict[str, dict[str, Any]] = {
 _D = ["domain", "subdomain"]
 _RELATIONS = {
     "affected_by": _relation(["service", "finding", "endpoint"], ["advisory"]),
+    "aliases": _relation(["advisory"], ["advisory"], checks=["aliases_toward_cve.1"]),
     "announced_by": _relation(["ip_cidr"], ["asn"]),
     "authenticates": _relation(
         ["secret"],
@@ -1077,6 +1078,22 @@ def _proper_subnet(
     return isinstance(target, ipaddress.IPv6Network) and target != source and target.subnet_of(source)
 
 
+# An alias edge points toward the id a pivot should start from: CVE, then GHSA, then every OSV
+# database alike. Equal ranks go from the alphabetically lower id, so each pair has one edge.
+_ALIAS_RANKS = {"CVE": 2, "GHSA": 1}
+
+
+def _endpoint_alias_direction(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
+    source_id, target_id = cast("str", source.properties["value"]), cast("str", target.properties["value"])
+    source_rank, target_rank = (_ALIAS_RANKS.get(value.split("-", 1)[0], 0) for value in (source_id, target_id))
+    if source_rank == target_rank == _ALIAS_RANKS["CVE"]:
+        raise ExpectedValidationError(f"{_ENDPOINT_FAILED}: two CVE ids are never aliases")
+    if source_rank > target_rank or (source_rank == target_rank and source_id >= target_id):
+        raise ExpectedValidationError(
+            f"{_ENDPOINT_FAILED}: an alias points toward the CVE, then the GHSA, then the alphabetically higher id"
+        )
+
+
 # The repository-object part of a ROID that means "not published" rather than naming an object.
 _PLACEHOLDER_ROID_PARTS = frozenset({"redacted", "none", "na", "unknown", "private", "withheld", "notdisclosed"})
 
@@ -1347,6 +1364,7 @@ _CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
 # Checks that read both endpoints' stored properties as well as the relation's own. They run after
 # the relation's properties are merged and deduplicated, so they see what will be stored.
 _ENDPOINT_CHECKS: dict[str, Callable[[Mapping[str, Any], EndpointView, EndpointView], None]] = {
+    "aliases_toward_cve.1": _endpoint_alias_direction,
     "contains_cidr_proper_subnet.1": _endpoint_contains_cidr,
     "contains_ip_member.1": _endpoint_contains_ip,
     "has_contact_endpoint_role.1": _endpoint_contact_iodef,

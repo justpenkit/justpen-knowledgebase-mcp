@@ -862,6 +862,11 @@ async def test_endpoint_values_are_checked_on_the_properties_that_will_be_stored
             "self edge is not allowed",
         ),
         (
+            [{"type": "advisory", "properties": {"value": "CVE-2025-29927"}}],
+            {"type": "aliases", "target_ref": {"node_index": 0}, "properties": {}},
+            "self edge is not allowed",
+        ),
+        (
             [
                 {"type": "domain", "properties": {"value": "example.com"}},
                 {"type": "endpoint", "properties": {"url": "https://iodef.example.com/r", "method": "GET"}},
@@ -1315,6 +1320,70 @@ async def test_epss_and_kev_on_a_non_cve_advisory_are_refused_after_a_patch_too(
         with pytest.raises(InvalidParamsError, match="kev_added"):
             await kb.write(write({"nodes": [{"id": ghsa, "properties": {"kev_added": "2025-03-24"}}]}))
         assert "epss_score" not in (await record_of(kb, "nodes", ghsa))["properties"]
+
+
+async def test_a_cve_learned_later_reaches_the_affected_object_in_one_alias_hop(tmp_path):
+    """AE3, R5: an object written affected by a GHSA stays reachable from the CVE learned a week
+    later. The alias edge points toward the CVE, so the reverse edge is refused."""
+    endpoint = {"type": "endpoint", "properties": {"url": "https://app.acme.com/", "method": "GET"}}
+    ghsa_node = {"type": "advisory", "properties": {"value": "GHSA-f82v-jwr5-mffw"}}
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        first = await kb.write(
+            write(
+                {
+                    "nodes": [endpoint, ghsa_node],
+                    "relations": [
+                        {
+                            "type": "affected_by",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 1},
+                            "properties": {},
+                        }
+                    ],
+                }
+            )
+        )
+        app, ghsa = (node["id"] for node in first["nodes"])
+        cve_node = {"type": "advisory", "properties": {"value": "CVE-2025-29927"}}
+        with pytest.raises(InvalidParamsError, match="an alias points toward the CVE"):
+            await kb.write(
+                write(
+                    {
+                        "nodes": [cve_node],
+                        "relations": [
+                            {
+                                "type": "aliases",
+                                "source_ref": {"node_index": 0},
+                                "target_ref": {"id": ghsa},
+                                "properties": {},
+                            }
+                        ],
+                    }
+                )
+            )
+        later = await kb.write(
+            write(
+                {
+                    "nodes": [cve_node],
+                    "relations": [
+                        {
+                            "type": "aliases",
+                            "source_ref": {"id": ghsa},
+                            "target_ref": {"node_index": 0},
+                            "properties": {},
+                        }
+                    ],
+                }
+            )
+        )
+        cve = later["nodes"][0]["id"]
+
+        async def sources_of(relation: str, target: str) -> list[str]:
+            found = await kb.search(SearchRequest(kind="relations", type=relation, target_id=target))
+            return [(await record_of(kb, "relations", item["id"]))["source_id"] for item in found["items"]]
+
+        assert await sources_of("aliases", cve) == [ghsa]
+        assert await sources_of("affected_by", ghsa) == [app]
 
 
 # Inventory state. These writes build the request directly: `write()` would state `candidate` for

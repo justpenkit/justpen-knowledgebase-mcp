@@ -89,6 +89,7 @@ RELATION_TYPES = {
     "serves_endpoint",
     "redirects_to",
     "affected_by",
+    "aliases",
     "runs_technology",
     "protected_by",
     "has_dmarc",
@@ -139,7 +140,7 @@ def test_manifest_has_only_catalog_v4_types_and_stable_fingerprint() -> None:
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
     assert CATALOG_FINGERPRINT != V3_FINGERPRINT
-    assert CATALOG_FINGERPRINT == "d250279bfab89ceaf7a47d5d2e3f1bb333631a3637a82eeb8cac643be7ff1706"
+    assert CATALOG_FINGERPRINT == "74c20866f177cb0ec7fdb54a29a467a519d0ea9e86cfdfc624891267e5154cf4"
 
 
 INVENTORY = {
@@ -929,6 +930,7 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "serves_endpoint": (["service"], ["endpoint"]),
         "redirects_to": (["endpoint"], ["endpoint"]),
         "affected_by": (["service", "finding", "endpoint"], ["advisory"]),
+        "aliases": (["advisory"], ["advisory"]),
         "runs_technology": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "protected_by": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "backed_by_bucket": (["domain", "subdomain", "endpoint"], ["storage_bucket"]),
@@ -1010,6 +1012,7 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         ("redirects_to", {"status": 301}),
         ("redirects_to", {"status": 308}),
         ("affected_by", {}),
+        ("aliases", {}),
         ("runs_technology", {}),
         ("runs_technology", {"version": "1.18.0", "cpe": CPE_NGINX}),
         ("protected_by", {"kind": "waf"}),
@@ -1615,6 +1618,27 @@ def test_golden_endpoint_check_cases(
         else:
             with pytest.raises(ExpectedValidationError):
                 check_endpoint_values(relation, relation_props, *views)
+
+
+@pytest.mark.parametrize(
+    ("source", "target", "message"),
+    [
+        ("CVE-2025-29927", "GHSA-f82v-jwr5-mffw", "an alias points toward the CVE"),
+        ("GHSA-f82v-jwr5-mffw", "PYSEC-2024-60", "an alias points toward the CVE"),
+        ("CVE-2025-29927", "CVE-2025-29928", "two CVE ids are never aliases"),
+    ],
+)
+def test_an_alias_against_the_direction_rule_is_refused_by_name(source: str, target: str, message: str) -> None:
+    """KTD3: each pair has one edge, pointing toward the CVE, and two CVEs are two vulnerabilities."""
+    views = (EndpointView("advisory", {"value": source}), EndpointView("advisory", {"value": target}))
+    with pytest.raises(ExpectedValidationError, match=message):
+        check_endpoint_values("aliases", {}, *views)
+
+
+def test_the_advisory_descriptions_teach_the_cve_preference() -> None:
+    """R6, KTD9: no check can see an advisory's aliases, so `kb_types` prose carries the rule."""
+    for kind, type_name in (("nodes", "advisory"), ("relations", "aliases"), ("relations", "affected_by")):
+        assert "write the CVE id" in catalog_module.type_description(kind, type_name)["notes"], type_name
 
 
 @pytest.mark.parametrize(

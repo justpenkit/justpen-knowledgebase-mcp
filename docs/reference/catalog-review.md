@@ -81,6 +81,7 @@ found, each with the regression test that holds the fix.
 | Relation               | Verdict   | Why                                                                                                                                         |
 | ---------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `affected_by`          | kept      | From a service, endpoint or finding to an advisory.                                                                                         |
+| `aliases`              | new in v5 | Two advisory ids for one vulnerability. One edge per pair, pointing toward the CVE, then the GHSA; two CVE ids are refused.                 |
 | `announced_by`         | kept      | A network announced by an AS; distinct from `operated_by`.                                                                                  |
 | `authenticates`        | new in v3 | From a secret to what it logs in to, keyed on (username, breach token). One pair in two breaches is two edges. The plaintext check applies. |
 | `backed_by_bucket`     | kept      | A name or URL that serves from a bucket.                                                                                                    |
