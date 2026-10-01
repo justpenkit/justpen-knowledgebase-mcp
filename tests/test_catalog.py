@@ -216,6 +216,9 @@ def test_only_a_package_narrows_the_ownerships_it_accepts() -> None:
         ("advisory", ["owned", "candidate", "rejected"], "advisory does not carry inventory state"),
         ("port", ["owned", "candidate", "rejected"], "port does not carry inventory state"),
         ("package", ["owned", "sometimes"], "package allows an ownership outside"),
+        # `rejected` is reached only by ID, so these lists would leave a package uncreatable.
+        ("package", [], "package allows no ownership a node can be created with"),
+        ("package", ["rejected"], "package allows no ownership a node can be created with"),
     ],
 )
 def test_inventory_contract_refuses_an_ownership_list_state_cannot_honor(

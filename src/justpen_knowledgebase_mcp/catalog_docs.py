@@ -178,11 +178,12 @@ DOCS: dict[str, Any] = {
         ),
         "package_purl": (
             "A versionless purl of at most 512 characters, `pkg:<type>/<namespace>/<name>`, of type npm, pypi, "
-            "maven, nuget, gem, cargo, golang, composer or oci, in its canonical spelling and never rewritten: an "
-            "npm scope as `%40acme`, a PyPI name normalized by the PyPA rule, a namespace for maven, composer and "
-            "golang. No version, subpath or qualifier, except the `repository_url` an oci purl requires: the "
-            "registry host and repository path, unencoded and ending in the name, with Docker Hub as `docker.io` "
-            "and its official images under `library/`. A `docker` purl is refused; write it as oci."
+            "maven, nuget, gem, cargo, golang, composer or oci, canonical, not rewritten: npm scope `%40acme`, "
+            "PyPA-normalized PyPI name, lowercase NuGet id, lowercase crate name, `_` not `-`, namespaced maven, "
+            "composer and golang. No version, subpath or qualifier but oci's required `repository_url`: "
+            "unencoded host and path ending in the name; Docker Hub as `docker.io`, official images in "
+            "`library/`; ECR as `<account>.dkr.ecr.<region>.amazonaws.com(.cn)`, no FIPS or dual-stack alias. "
+            "Write `docker` as oci."
         ),
         "parameter_name": (
             "1 to 128 printable ASCII characters without space, `&`, `=`, or `#`; one single parameter name, "
@@ -315,7 +316,8 @@ DOCS: dict[str, Any] = {
         "in_account_provider_match.2": (
             "The account's `provider` must be the source's provider: the prefix of a cloud resource's "
             "`service`, the provider behind a bucket's `provider`, or the cloud registry host in an oci purl's "
-            "`repository_url`: ECR to aws, Artifact Registry and gcr.io to gcp, azurecr.io to azure. Any other "
+            "`repository_url`: ECR (`dkr.ecr.<region>.amazonaws.com(.cn)` or `public.ecr.aws`) to aws, "
+            "Artifact Registry and gcr.io to gcp, azurecr.io to azure. Any other "
             "registry and any non-oci package belong to no account."
         ),
         "has_registration_suffix_match.1": (
@@ -1049,7 +1051,8 @@ DOCS: dict[str, Any] = {
             "excludes": "Not the account's identity provider, which is an `identity_tenant`.",
             "notes": (
                 "An image belongs to an account only when its oci purl names a cloud provider's registry: an ECR "
-                "image to the AWS account its host names, an Artifact Registry or gcr.io image to its GCP project, "
+                "image to the AWS account its `<account>.dkr.ecr.<region>.amazonaws.com(.cn)` host names, an "
+                "Artifact Registry or gcr.io image to its GCP project, "
                 "an ACR image to its Azure subscription. A Docker Hub or GHCR image has no account."
             ),
             "properties": {},

@@ -48,6 +48,7 @@ async def test_initialize_instructions_carry_the_inventory_rules(tmp_path, mode)
     assert inventory_description()["testing"] in instructions
     assert "Only `in_scope` authorizes active testing" in instructions
     assert "in evidence" in instructions
+    assert "allowed_ownership" in instructions
     assert "never write them as nodes" in instructions
     assert "`allowlist_scoped`" in instructions
     assert "`CONFLICT: REJECTED_IDENTITY`" in instructions

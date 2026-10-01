@@ -379,6 +379,14 @@ def test_transform_golden_cases() -> None:
     }
     assert apply(9.1, ["cvss_one_decimal", "github_preferred_cvss"], v3_only) == 9.1
     assert apply(0.0, ["cvss_one_decimal", "github_preferred_cvss"], v3_only) is None
+    neither: dict[str, Any] = {
+        "cvss_severities": {
+            "cvss_v3": {"vector_string": None, "score": 0.0},
+            "cvss_v4": {"vector_string": None, "score": 0.0},
+        }
+    }
+    assert apply(0.0, ["cvss_one_decimal", "github_preferred_cvss"], neither) is None
+    assert apply(None, ["github_preferred_cvss"], neither) is None
 
 
 def _batch_of(name: str, file_name: str) -> dict[str, Any]:

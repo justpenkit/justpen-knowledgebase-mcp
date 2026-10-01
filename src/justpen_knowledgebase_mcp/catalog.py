@@ -737,9 +737,11 @@ _INVENTORY_DECLARATIONS = ("carries", "inherits", "none")
 
 
 def _ensure_ownership_narrowing(name: str, definition: Mapping[str, Any]) -> None:
-    """Refuse an `allowed_ownership` list on a type that holds no ownership, or naming a non-vocabulary value.
+    """Refuse an `allowed_ownership` list that state cannot honor.
 
-    The list narrows the ownership vocabulary, so it means nothing anywhere else.
+    The list narrows the ownership vocabulary, so it means nothing on a type that holds no
+    ownership, and it may name only vocabulary values. `rejected` is reached only by ID, so a list
+    without another value would leave the type uncreatable.
     """
     if "allowed_ownership" not in definition:
         return
@@ -747,6 +749,8 @@ def _ensure_ownership_narrowing(name: str, definition: Mapping[str, Any]) -> Non
         raise RuntimeError(f"{name} does not carry inventory state and cannot narrow its ownership")
     if not set(definition["allowed_ownership"]) <= set(_INVENTORY["ownership"]):
         raise RuntimeError(f"{name} allows an ownership outside the inventory vocabulary")
+    if not set(definition["allowed_ownership"]) - {"rejected"}:
+        raise RuntimeError(f"{name} allows no ownership a node can be created with")
 
 
 def _ensure_inventory_contract() -> None:
@@ -909,9 +913,12 @@ _PURL_COORDINATES: dict[str, str] = {
     # The PyPA normalized name: lowercase, and every run of `-`, `_` and `.` one `-`.
     "pypi": r"[a-z0-9]+(?:-[a-z0-9]+)*",
     "maven": r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*",
-    "nuget": r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*",
+    # NuGet ids are case-insensitive; the v3 flat container's lowercase id is the canonical one.
+    "nuget": r"[a-z0-9_]+(?:[.-][a-z0-9_]+)*",
     "gem": r"[A-Za-z0-9_][A-Za-z0-9._-]*",
-    "cargo": r"[A-Za-z][A-Za-z0-9_-]{0,63}",
+    # crates.io treats names differing in case or in `-` versus `_` as one crate; its canonical
+    # name is lowercase with every `-` an `_`.
+    "cargo": r"[a-z][a-z0-9_]{0,63}",
     "golang": r"[a-z0-9_~-]+(?:\.[a-z0-9_~-]+)*(?:/[a-z0-9_~-]+(?:\.[a-z0-9_~-]+)*)+",
     "composer": r"[a-z0-9](?:[_.-]?[a-z0-9]+)*/[a-z0-9](?:(?:[_.]|-{1,2})?[a-z0-9]+)*",
     "oci": _OCI_COMPONENT,
@@ -919,6 +926,13 @@ _PURL_COORDINATES: dict[str, str] = {
 # Docker Hub is spelled `docker.io`; these hosts name the same registry under another spelling.
 _DOCKER_HUB_ALIASES = frozenset(
     {"index.docker.io", "registry-1.docker.io", "registry.hub.docker.com", "hub.docker.com"}
+)
+# An ECR private registry is spelled `<account>.dkr.ecr.<region>.amazonaws.com`, or `.com.cn` in the
+# China partition, which is a separate registry. Its FIPS and dual-stack hosts name the same
+# registry under another spelling.
+_ECR_ALIAS_HOST = (
+    r"[0-9]{12}\.(?:dkr\.ecr-fips\.[^.]+\.amazonaws\.com(?:\.cn)?"
+    r"|dkr-ecr(?:-fips)?\.[^.]+\.(?:on\.aws|on\.amazonwebservices\.com\.cn))"
 )
 
 
@@ -947,10 +961,11 @@ def _valid_oci_repository(repository: str, name: str) -> bool:
     """`<registry host>/<repository path>`, whose last component is the purl name.
 
     Docker Hub nests nothing, so its path is the namespace and the name, `library` for an
-    official image.
+    official image. An alias spelling of Docker Hub or of an ECR registry is refused, so one image
+    is one package.
     """
     host, _slash, path = repository.partition("/")
-    if host in _DOCKER_HUB_ALIASES or _dns_kind(host) is None:
+    if host in _DOCKER_HUB_ALIASES or re.fullmatch(_ECR_ALIAS_HOST, host) is not None or _dns_kind(host) is None:
         return False
     components = path.split("/")
     if any(re.fullmatch(_OCI_COMPONENT, component) is None for component in components):
@@ -1362,9 +1377,9 @@ _BUCKET_ACCOUNT_PROVIDER: dict[str, str] = {"aws_s3": "aws", "gcp_gcs": "gcp", "
 # The provider of each cloud registry an oci image can live in, by its `repository_url` host. Every
 # other registry, Docker Hub and GHCR among them, belongs to no cloud account.
 _REGISTRY_ACCOUNT_PROVIDER: dict[str, str] = {
-    # ECR private, with its FIPS, China and dual-stack hosts, then ECR Public.
-    rf"[0-9]{{12}}\.dkr\.ecr(?:-fips)?\.{_HOST_LABELS['aws_region']}\.amazonaws\.com(?:\.cn)?": "aws",
-    rf"[0-9]{{12}}\.dkr-ecr(?:-fips)?\.{_HOST_LABELS['aws_region']}\.on\.aws": "aws",
+    # ECR private, with its China partition host, then ECR Public. `_valid_oci_repository` refuses
+    # the FIPS and dual-stack aliases before a purl gets here.
+    rf"[0-9]{{12}}\.dkr\.ecr\.{_HOST_LABELS['aws_region']}\.amazonaws\.com(?:\.cn)?": "aws",
     r"public\.ecr\.aws": "aws",
     # Artifact Registry, and gcr.io with its regional hosts.
     r"[a-z]+(?:-[a-z]+[0-9]+)?-docker\.pkg\.dev": "gcp",

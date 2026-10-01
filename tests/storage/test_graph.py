@@ -1440,7 +1440,14 @@ async def classified_host(kb, evidence, *ports):
 @pytest.mark.parametrize(
     ("node", "message"),
     [
-        ({"type": "subdomain", "properties": {"value": "api.acme.com"}}, r"^nodes\[1\]: ownership is required"),
+        (
+            {"type": "subdomain", "properties": {"value": "api.acme.com"}},
+            r"^nodes\[1\]: ownership is required.*give owned, dependency or candidate$",
+        ),
+        (
+            {"type": "package", "properties": {"purl": "pkg:npm/lodash"}},
+            r"^nodes\[1\]: ownership is required.*give owned or candidate$",
+        ),
         ({**ACME, "ownership": "rejected"}, r"^nodes\[1\]: .*cannot be created as rejected"),
         ({**ACME, "ownership": "owned"}, r"^nodes\[1\]: .*requires evidence_add"),
         ({**ACME, "ownership": "candidate", "authorization": "in_scope"}, r"^nodes\[1\]: .*requires evidence_add"),
