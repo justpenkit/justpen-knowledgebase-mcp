@@ -15,10 +15,12 @@ from itertools import pairwise
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
+from .advisory_ids import advisory_prefix, valid_advisory_id
 from .catalog_docs import CAPS as _DOC_CAPS, DOCS as _DOCS
 from .errors import ExpectedValidationError
 from .mutations import validate_properties
 from .psl import classify_dns_name, rules_digest
+from .purls import purl_parts, valid_package_purl
 from .service_names import is_service_name, registry_digest, secure_required
 
 if TYPE_CHECKING:
@@ -857,132 +859,12 @@ def _cross_field_registrar(_type_name: str, properties: dict[str, Any]) -> None:
 _CVE_ONLY_PROPERTIES = ("epss_score", "epss_percentile", "kev_added")
 
 
-def _advisory_prefix(value: str) -> str:
-    """The database an advisory id belongs to: the part before its first `-`."""
-    return value.split("-", 1)[0]
-
-
 def _cross_field_advisory(_type_name: str, properties: dict[str, Any]) -> None:
-    if _advisory_prefix(cast("str", properties["value"])) == "CVE":
+    if advisory_prefix(cast("str", properties["value"])) == "CVE":
         return
     for name in _CVE_ONLY_PROPERTIES:
         if name in properties:
             raise ExpectedValidationError(f"/properties/{name}: EPSS and KEV describe CVE ids only")
-
-
-def _padded(width: int) -> str:
-    """A sequence number zero-padded to `width` digits, written unpadded once it outgrows them."""
-    return f"(?:[0-9]{{{width}}}|[1-9][0-9]{{{width},6}})"
-
-
-_UNPADDED = "[1-9][0-9]{0,6}"
-# One grammar per accepted advisory id prefix, for the whole id: CVE, GHSA, and the OSV databases
-# that publish one record per vulnerability, each in the number shape that database issues. Vendor
-# and distribution bulletins, which bundle many CVEs, and prefixes with no settled id shape are left
-# out. No id is case-folded: GHSA keeps its lowercase body, and every other id is uppercase.
-_ADVISORY_ID_GRAMMARS: dict[str, str] = {
-    "CVE": r"CVE-[0-9]{4}-[0-9]{4,19}",
-    "GHSA": r"GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}",
-    "PYSEC": rf"PYSEC-[0-9]{{4}}-{_UNPADDED}",
-    "RUSTSEC": rf"RUSTSEC-[0-9]{{4}}-{_padded(4)}",
-    "GO": rf"GO-[0-9]{{4}}-{_padded(4)}",
-    "OSV": rf"OSV-[0-9]{{4}}-{_UNPADDED}",
-    "HSEC": rf"HSEC-[0-9]{{4}}-{_padded(4)}",
-    "JLSEC": rf"JLSEC-[0-9]{{4}}-{_UNPADDED}",
-    "OSEC": rf"OSEC-[0-9]{{4}}-{_padded(2)}",
-    "RSEC": rf"RSEC-[0-9]{{4}}-{_UNPADDED}",
-    "EEF": r"EEF-CVE-[0-9]{4}-[0-9]{4,19}",
-    "DRUPAL": rf"DRUPAL-(?:CONTRIB|CORE)-[0-9]{{4}}-{_padded(3)}",
-    "MAL": rf"MAL-[0-9]{{4}}-{_UNPADDED}",
-}
-
-
-def _valid_advisory_id(text: str) -> bool:
-    grammar = _ADVISORY_ID_GRAMMARS.get(_advisory_prefix(text))
-    return grammar is not None and re.fullmatch(grammar, text) is not None
-
-
-# One OCI distribution-spec repository path component: lowercase, separators only between runs.
-_OCI_COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
-# The canonical `namespace/name` part of a versionless purl, per accepted purl type. Only `oci`
-# keeps a qualifier, so the type alone decides whether `?repository_url=` may follow. `docker` is
-# not listed: it has no settled place for the registry, so an image is written as `oci`.
-_PURL_COORDINATES: dict[str, str] = {
-    # The scope's `@` is always `%40`, and npm scopes are lowercase. The name is case-sensitive and
-    # written as published: npm lowercases only new names, so legacy ones such as `JSONStream` remain.
-    "npm": r"(?:%40[a-z0-9~-][a-z0-9._~-]*/)?[A-Za-z0-9~-][A-Za-z0-9._~-]*",
-    # The PyPA normalized name: lowercase, and every run of `-`, `_` and `.` one `-`.
-    "pypi": r"[a-z0-9]+(?:-[a-z0-9]+)*",
-    "maven": r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*",
-    # NuGet ids are case-insensitive; the v3 flat container's lowercase id is the canonical one.
-    "nuget": r"[a-z0-9_]+(?:[.-][a-z0-9_]+)*",
-    "gem": r"[A-Za-z0-9_][A-Za-z0-9._-]*",
-    # crates.io treats names differing in case or in `-` versus `_` as one crate; its canonical
-    # name is lowercase with every `-` an `_`.
-    "cargo": r"[a-z][a-z0-9_]{0,63}",
-    # The purl spec lowercases a golang namespace and name, so a Go module path is written lowercased.
-    "golang": r"[a-z0-9_~-]+(?:\.[a-z0-9_~-]+)*(?:/[a-z0-9_~-]+(?:\.[a-z0-9_~-]+)*)+",
-    "composer": r"[a-z0-9](?:[_.-]?[a-z0-9]+)*/[a-z0-9](?:(?:[_.]|-{1,2})?[a-z0-9]+)*",
-    "oci": _OCI_COMPONENT,
-}
-# Docker Hub is spelled `docker.io`; these hosts name the same registry under another spelling.
-_DOCKER_HUB_ALIASES = frozenset(
-    {"index.docker.io", "registry-1.docker.io", "registry.hub.docker.com", "hub.docker.com"}
-)
-# An ECR private registry is spelled `<account>.dkr.ecr.<region>.amazonaws.com`, or `.com.cn` in the
-# China partition, which is a separate registry. Its FIPS and dual-stack hosts name the same
-# registry under another spelling.
-_ECR_ALIAS_HOST = (
-    r"[0-9]{12}\.(?:dkr\.ecr-fips\.[^.]+\.amazonaws\.com(?:\.cn)?"
-    r"|dkr-ecr(?:-fips)?\.[^.]+\.(?:on\.aws|on\.amazonwebservices\.com\.cn))"
-)
-
-
-def _purl_parts(text: str) -> tuple[str, str, str | None]:
-    """The type, the `namespace/name` coordinates and the qualifier string (None when absent) of a purl."""
-    path, separator, query = text.removeprefix("pkg:").partition("?")
-    purl_type, _slash, coordinates = path.partition("/")
-    return purl_type, coordinates, query if separator else None
-
-
-def _valid_package_purl(text: str) -> bool:
-    """A purl with no version, subpath or qualifier, except the registry repository of an image."""
-    if len(text) > 512 or not text.startswith("pkg:") or "@" in text or "#" in text:
-        return False
-    purl_type, coordinates, query = _purl_parts(text)
-    grammar = _PURL_COORDINATES.get(purl_type)
-    if grammar is None or re.fullmatch(grammar, coordinates) is None:
-        return False
-    if purl_type != "oci":
-        return query is None
-    key, _equals, repository = (query or "").partition("=")
-    return key == "repository_url" and _valid_oci_repository(repository, coordinates)
-
-
-def _valid_oci_repository(repository: str, name: str) -> bool:
-    """`<registry host>[:<port>]/<repository path>`, whose last component is the purl name.
-
-    Docker Hub nests nothing, so its path is the namespace and the name, `library` for an
-    official image. An alias spelling of Docker Hub or of an ECR registry is refused, so one image
-    is one package. A port is 1 to 65535 without leading zeros, and never the default 443, which
-    would spell the registry a second way.
-    """
-    host, _slash, path = repository.partition("/")
-    hostname, colon, port = host.partition(":")
-    if colon and (re.fullmatch(r"[1-9][0-9]{0,4}", port) is None or int(port) > 65535 or int(port) == 443):
-        return False
-    if (
-        hostname in _DOCKER_HUB_ALIASES
-        or re.fullmatch(_ECR_ALIAS_HOST, hostname) is not None
-        or _dns_kind(hostname) is None
-    ):
-        return False
-    components = path.split("/")
-    if any(re.fullmatch(_OCI_COMPONENT, component) is None for component in components):
-        return False
-    if host == "docker.io" and len(components) != 2:
-        return False
-    return components[-1] == name
 
 
 # One dedicated node type per version tag. Diverting on the bare prefix left a malformed tag with
@@ -1224,7 +1106,7 @@ _ALIAS_RANKS = {"CVE": 2, "GHSA": 1}
 
 def _endpoint_alias_direction(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
     source_id, target_id = cast("str", source.properties["value"]), cast("str", target.properties["value"])
-    source_rank, target_rank = (_ALIAS_RANKS.get(_advisory_prefix(value), 0) for value in (source_id, target_id))
+    source_rank, target_rank = (_ALIAS_RANKS.get(advisory_prefix(value), 0) for value in (source_id, target_id))
     if source_rank == target_rank == _ALIAS_RANKS["CVE"]:
         raise ExpectedValidationError(f"{_ENDPOINT_FAILED}: two CVE ids are never aliases")
     if source_rank > target_rank or (source_rank == target_rank and source_id >= target_id):
@@ -1388,7 +1270,7 @@ _BUCKET_ACCOUNT_PROVIDER: dict[str, str] = {"aws_s3": "aws", "gcp_gcs": "gcp", "
 # other registry, Docker Hub, GHCR and any host written with a port among them, belongs to no cloud
 # account.
 _REGISTRY_ACCOUNT_PROVIDER: dict[str, str] = {
-    # ECR private, with its China partition host, then ECR Public. `_valid_oci_repository` refuses
+    # ECR private, with its China partition host, then ECR Public. `purls.valid_package_purl` refuses
     # the FIPS and dual-stack aliases before a purl gets here.
     rf"[0-9]{{12}}\.dkr\.ecr\.{_HOST_LABELS['aws_region']}\.amazonaws\.com(?:\.cn)?": "aws",
     r"public\.ecr\.aws": "aws",
@@ -1445,7 +1327,7 @@ def _cross_field_cloud_resource(_type_name: str, properties: dict[str, Any]) -> 
 
 
 def _image_provider(properties: Mapping[str, Any]) -> str:
-    purl_type, _coordinates, query = _purl_parts(cast("str", properties["purl"]))
+    purl_type, _coordinates, query = purl_parts(cast("str", properties["purl"]))
     if purl_type == "oci" and query is not None:
         host = query.removeprefix("repository_url=").partition("/")[0]
         for pattern, provider in _REGISTRY_ACCOUNT_PROVIDER.items():
@@ -1900,7 +1782,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
     if type(value) is not str:
         return False
     validators: dict[str, Callable[[str], bool]] = {
-        "advisory_id": _valid_advisory_id,
+        "advisory_id": valid_advisory_id,
         "breach_token_or_empty": lambda text: text == "" or _BREACH_TOKEN.fullmatch(text) is not None,
         "bucket_name": _valid_bucket_name,
         "cidr": lambda text: _parse_cidr(text) is not None,
@@ -1934,7 +1816,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "multiline_text_4096": lambda text: (
             1 <= len(text) <= 4096 and all(char in "\n\t" or char.isprintable() for char in text)
         ),
-        "package_purl": _valid_package_purl,
+        "package_purl": lambda text: valid_package_purl(text, lambda host: _dns_kind(host) is not None),
         "parameter_name": lambda text: (
             1 <= len(text) <= 128 and all(0x21 <= ord(char) <= 0x7E and char not in "&=#" for char in text)
         ),

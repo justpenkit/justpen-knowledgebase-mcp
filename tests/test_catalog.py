@@ -11,7 +11,7 @@ from typing import Any, cast
 import pytest
 
 import justpen_knowledgebase_mcp.catalog as catalog_module
-from justpen_knowledgebase_mcp import psl, service_names
+from justpen_knowledgebase_mcp import advisory_ids, psl, purls, service_names
 from justpen_knowledgebase_mcp.catalog import (
     CATALOG_FINGERPRINT,
     CATALOG_VERSION,
@@ -1586,7 +1586,7 @@ def test_golden_format_cases(rule: str, value: object, *, accepted: bool) -> Non
 def test_an_advisory_id_passes_a_closed_prefix_allow_list() -> None:
     """KTD1, AE1: CVE, GHSA and the OSV databases that publish one record per vulnerability, each
     with its own id grammar. A vendor bulletin is refused with the rule named."""
-    assert set(catalog_module._ADVISORY_ID_GRAMMARS) == {
+    assert set(advisory_ids._ADVISORY_ID_GRAMMARS) == {
         "CVE",
         "GHSA",
         "PYSEC",
@@ -1612,7 +1612,7 @@ def test_an_advisory_id_passes_a_closed_prefix_allow_list() -> None:
 def test_a_package_purl_passes_a_closed_type_allow_list() -> None:
     """KTD4: each listed purl type has its own canonical-name rule; `docker` is not listed, so an
     image is written as `oci`, and a refused purl names the rule."""
-    assert set(catalog_module._PURL_COORDINATES) == {
+    assert set(purls._PURL_COORDINATES) == {
         "npm",
         "pypi",
         "maven",
