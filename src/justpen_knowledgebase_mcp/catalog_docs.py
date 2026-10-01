@@ -649,7 +649,8 @@ DOCS: dict[str, Any] = {
                 "vulnerability is recorded in evidence, never as a property or a node per version. A Go module "
                 "path is written lowercased, as the purl spec requires: `github.com/Azure/azure-sdk-for-go` is "
                 "`pkg:golang/github.com/azure/azure-sdk-for-go`. An oci registry host never carries the default "
-                "port 443: `docker.io:443` is written `docker.io`."
+                "port 443: `docker.io:443` is written `docker.io`. An internal registry may be a dotted IPv4 "
+                "address; `localhost` is refused."
             ),
             "properties": {
                 "purl": "The versionless purl in its canonical spelling; an oci purl keeps only `repository_url`.",
