@@ -16,6 +16,17 @@ Record = tuple[str, dict[str, Any]]
 Endpoint = tuple[dict[str, Any], Record, Record]
 Rewrite = tuple[str, dict[str, Any], dict[str, Any]]
 
+ACME_EMAIL = {"value": "security@acme.com"}
+AWS_ACCOUNT: Record = ("cloud_account", {"provider": "aws", "account_id": "012345678901"})
+GCP_ACCOUNT: Record = ("cloud_account", {"provider": "gcp", "account_id": "my-project-123"})
+AZURE_ACCOUNT: Record = ("cloud_account", {"provider": "azure", "account_id": "72f988bf-86f1-41af-91ab-2d7cd011db47"})
+
+
+def image(repository: str) -> Record:
+    """An oci package whose `repository_url` is the registry host and repository path."""
+    return ("package", {"purl": f"pkg:oci/{repository.rsplit('/', 1)[1]}?repository_url={repository}"})
+
+
 # Format id -> (accepted values, rejected values), judged by the format validator alone.
 FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
     "advisory_id": (
@@ -614,7 +625,7 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
             ({"role": "iodef"}, ("domain", {"value": "example.com"}), ("phone", {"value": "+14155552671"})),
         ),
     ),
-    "has_contact_registration_roles.1": (
+    "has_contact_registration_roles.2": (
         (
             (
                 {"role": "registrant"},
@@ -636,6 +647,8 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
                 ("organization", {"registry": "arin", "handle": "ORG-1"}),
                 ("email_address", {"value": "hostmaster@example.com"}),
             ),
+            ({"role": "maintainer"}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), ("email_address", ACME_EMAIL)),
+            ({"role": "security"}, ("package", {"purl": "pkg:pypi/acme-sdk"}), ("email_address", ACME_EMAIL)),
         ),
         (
             (
@@ -653,9 +666,19 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
                 ("whois_registration", {"registry": "com", "registry_domain_id": "2336799_DOMAIN_COM-VRSN"}),
                 ("email_address", {"value": "hostmaster@example.com"}),
             ),
+            # A package's contact is a maintainer or security address, and only a package has a maintainer.
+            ({"role": "registrant"}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), ("email_address", ACME_EMAIL)),
+            ({"role": "billing"}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), ("email_address", ACME_EMAIL)),
+            ({"role": "security"}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), ("phone", {"value": "+14155552671"})),
+            (
+                {"role": "maintainer"},
+                ("package", {"purl": "pkg:npm/%40acme/sdk"}),
+                ("endpoint", {"url": "https://iodef.example.com/report", "method": "POST"}),
+            ),
+            ({"role": "maintainer"}, ("domain", {"value": "example.com"}), ("email_address", ACME_EMAIL)),
         ),
     ),
-    "in_account_provider_match.1": (
+    "in_account_provider_match.2": (
         (
             (
                 {},
@@ -667,6 +690,16 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
                 ("storage_bucket", {"provider": "gcp_gcs", "name": "example-assets"}),
                 ("cloud_account", {"provider": "gcp", "account_id": "my-project-123"}),
             ),
+            ({}, image("123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/api"), AWS_ACCOUNT),
+            ({}, image("123456789012.dkr.ecr-fips.us-gov-west-1.amazonaws.com/acme/api"), AWS_ACCOUNT),
+            ({}, image("123456789012.dkr.ecr.cn-north-1.amazonaws.com.cn/acme/api"), AWS_ACCOUNT),
+            ({}, image("123456789012.dkr-ecr.eu-west-1.on.aws/acme/api"), AWS_ACCOUNT),
+            ({}, image("public.ecr.aws/acme/api"), AWS_ACCOUNT),
+            ({}, image("us-docker.pkg.dev/my-project-123/images/api"), GCP_ACCOUNT),
+            ({}, image("europe-west1-docker.pkg.dev/my-project-123/images/api"), GCP_ACCOUNT),
+            ({}, image("gcr.io/my-project-123/api"), GCP_ACCOUNT),
+            ({}, image("eu.gcr.io/my-project-123/api"), GCP_ACCOUNT),
+            ({}, image("acme.azurecr.io/api"), AZURE_ACCOUNT),
         ),
         (
             (
@@ -679,6 +712,14 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
                 ("storage_bucket", {"provider": "aws_s3", "name": "example-assets"}),
                 ("cloud_account", {"provider": "gcp", "account_id": "my-project-123"}),
             ),
+            ({}, image("123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/api"), GCP_ACCOUNT),
+            ({}, image("acme.azurecr.io/api"), AWS_ACCOUNT),
+            # A registry of no cloud provider, and a package that is not an image, belong to no account.
+            ({}, image("docker.io/acme/api"), AWS_ACCOUNT),
+            ({}, image("ghcr.io/acme/api"), AWS_ACCOUNT),
+            ({}, image("registry.acme.com/api"), AWS_ACCOUNT),
+            ({}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), AWS_ACCOUNT),
+            ({}, ("package", {"purl": "pkg:maven/com.acme/sdk"}), GCP_ACCOUNT),
         ),
     ),
     "has_registration_suffix_match.1": (

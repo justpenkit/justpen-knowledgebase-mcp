@@ -79,58 +79,60 @@ found, each with the regression test that holds the fix.
 
 ## Relation types
 
-| Relation               | Verdict   | Why                                                                                                                                         |
-| ---------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `affected_by`          | kept      | From a service, endpoint or finding to an advisory.                                                                                         |
-| `aliases`              | new in v5 | Two advisory ids for one vulnerability. One edge per pair, pointing toward the CVE, then the GHSA; two CVE ids are refused.                 |
-| `announced_by`         | kept      | A network announced by an AS; distinct from `operated_by`.                                                                                  |
-| `authenticates`        | new in v3 | From a secret to what it logs in to, keyed on (username, breach token). One pair in two breaches is two edges. The plaintext check applies. |
-| `backed_by_bucket`     | kept      | A name or URL that serves from a bucket.                                                                                                    |
-| `caa_issue`            | kept      | CAA issue, with parameter names folded because the list is identity-bearing.                                                                |
-| `caa_issuewild`        | kept      | CAA issuewild, as above.                                                                                                                    |
-| `cname_to`             | kept      | A CNAME record; self edges are allowed.                                                                                                     |
-| `contains_cidr`        | kept      | Proper-subnet containment, checked on the merged edge.                                                                                      |
-| `contains_ip`          | kept      | Address containment, checked on the merged edge.                                                                                            |
-| `covers_name`          | kept      | Exact and wildcard coverage are two identities.                                                                                             |
-| `dname_to`             | kept      | A DNAME record.                                                                                                                             |
-| `exposes_secret`       | changed   | Keyed on location. The plaintext check now applies to the edge too (D-06, D-12). A cloud resource may expose a secret.                      |
-| `federates_with`       | changed   | The realm's `namespace_type` is declared.                                                                                                   |
-| `has_contact`          | changed   | Registration roles attach to the registration. A CAA `iodef` report URL is an endpoint target, restricted to POST (D-20).                   |
-| `has_dkim_selector`    | kept      | The scope relation of `dkim_record`.                                                                                                        |
-| `has_dmarc`            | kept      | Attaches the policy to the name itself, not to a `_dmarc` node.                                                                             |
-| `has_finding`          | changed   | A registration, cloud account and cloud resource may carry findings. Shared vocabulary never does.                                          |
-| `has_http_fingerprint` | kept      | From an endpoint to a response fingerprint.                                                                                                 |
-| `has_mail_exchange`    | kept      | Keyed on the preference.                                                                                                                    |
-| `has_mta_sts_policy`   | kept      | The scope relation of `mta_sts_policy`.                                                                                                     |
-| `has_nameserver`       | kept      | An NS delegation.                                                                                                                           |
-| `has_open_port`        | kept      | The scope relation of `port`.                                                                                                               |
-| `has_parameter`        | kept      | The scope relation of `parameter`.                                                                                                          |
-| `has_registration`     | new in v3 | The scope relation of `whois_registration`. It pins the registration's zone to its domain.                                                  |
-| `has_service`          | kept      | The scope relation of `service`.                                                                                                            |
-| `has_soa_primary`      | kept      | The SOA primary server.                                                                                                                     |
-| `has_spf`              | kept      | Attaches an SPF record.                                                                                                                     |
-| `has_srv_target`       | kept      | Keyed on the SRV fields.                                                                                                                    |
-| `has_subdomain`        | kept      | Naming structure, checked on the merged edge.                                                                                               |
-| `has_svcb_binding`     | kept      | HTTPS and SVCB records, written only after the SvcParams are parsed.                                                                        |
-| `has_tls_fingerprint`  | kept      | From a service to its stack fingerprint.                                                                                                    |
-| `has_txt_record`       | kept      | Attaches a generic TXT value.                                                                                                               |
-| `has_weakness`         | kept      | Finding or advisory to CWE.                                                                                                                 |
-| `hosted_on`            | new in v3 | A name or URL that serves from a cloud resource, typically through a CNAME to its default hostname.                                         |
-| `in_account`           | new in v3 | A resource or bucket that belongs to an account, with the provider matched on the edge.                                                     |
-| `issued_by`            | kept      | A self edge records a self-signed certificate.                                                                                              |
-| `links_to`             | new in v3 | Crawl links keyed on the referencing element, so an anchor and a script include are two edges.                                              |
-| `operated_by`          | kept      | Number-resource holding, keyed on the RIR handle.                                                                                           |
-| `owns_repository`      | kept      | An attribution claim that needs evidence.                                                                                                   |
-| `presents_certificate` | changed   | `name_mismatch` is declared, because it is a fact of one presentation.                                                                      |
-| `presents_host_key`    | kept      | From an SSH service to its host key.                                                                                                        |
-| `protected_by`         | kept      | A CDN or WAF in the request path. Range-list classification is an address attribute instead.                                                |
-| `redirects_to`         | kept      | Keyed on the redirect status.                                                                                                               |
-| `registered_through`   | changed   | From a registration, not a domain, so each registration keeps its own registrar.                                                            |
-| `resolves_to`          | kept      | A or AAAA resolution.                                                                                                                       |
-| `reverse_resolves_to`  | kept      | PTR resolution.                                                                                                                             |
-| `runs_technology`      | changed   | Carries the per-host version and versioned CPE.                                                                                             |
-| `serves_endpoint`      | kept      | From a service to an endpoint.                                                                                                              |
-| `supports_tls_cipher`  | kept      | From a service to an accepted suite.                                                                                                        |
+| Relation               | Verdict   | Why                                                                                                                                                                          |
+| ---------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `affected_by`          | kept      | From a service, endpoint, finding or published package to an advisory.                                                                                                       |
+| `aliases`              | new in v5 | Two advisory ids for one vulnerability. One edge per pair, pointing toward the CVE, then the GHSA; two CVE ids are refused.                                                  |
+| `announced_by`         | kept      | A network announced by an AS; distinct from `operated_by`.                                                                                                                   |
+| `authenticates`        | new in v3 | From a secret to what it logs in to, keyed on (username, breach token). One pair in two breaches is two edges. The plaintext check applies.                                  |
+| `backed_by_bucket`     | kept      | A name or URL that serves from a bucket.                                                                                                                                     |
+| `caa_issue`            | kept      | CAA issue, with parameter names folded because the list is identity-bearing.                                                                                                 |
+| `caa_issuewild`        | kept      | CAA issuewild, as above.                                                                                                                                                     |
+| `cname_to`             | kept      | A CNAME record; self edges are allowed.                                                                                                                                      |
+| `contains_cidr`        | kept      | Proper-subnet containment, checked on the merged edge.                                                                                                                       |
+| `contains_ip`          | kept      | Address containment, checked on the merged edge.                                                                                                                             |
+| `covers_name`          | kept      | Exact and wildcard coverage are two identities.                                                                                                                              |
+| `dname_to`             | kept      | A DNAME record.                                                                                                                                                              |
+| `exposes_secret`       | changed   | Keyed on location. The plaintext check now applies to the edge too (D-06, D-12). A cloud resource or package may expose a secret.                                            |
+| `federates_with`       | changed   | The realm's `namespace_type` is declared.                                                                                                                                    |
+| `has_contact`          | changed   | Registration roles attach to the registration. A CAA `iodef` report URL is an endpoint target, restricted to POST (D-20). A package has only maintainer and security emails. |
+| `has_dkim_selector`    | kept      | The scope relation of `dkim_record`.                                                                                                                                         |
+| `has_dmarc`            | kept      | Attaches the policy to the name itself, not to a `_dmarc` node.                                                                                                              |
+| `has_finding`          | changed   | A registration, cloud account, cloud resource and package may carry findings. Shared vocabulary never does.                                                                  |
+| `has_http_fingerprint` | kept      | From an endpoint to a response fingerprint.                                                                                                                                  |
+| `has_mail_exchange`    | kept      | Keyed on the preference.                                                                                                                                                     |
+| `has_mta_sts_policy`   | kept      | The scope relation of `mta_sts_policy`.                                                                                                                                      |
+| `has_nameserver`       | kept      | An NS delegation.                                                                                                                                                            |
+| `has_open_port`        | kept      | The scope relation of `port`.                                                                                                                                                |
+| `has_parameter`        | kept      | The scope relation of `parameter`.                                                                                                                                           |
+| `has_registration`     | new in v3 | The scope relation of `whois_registration`. It pins the registration's zone to its domain.                                                                                   |
+| `has_service`          | kept      | The scope relation of `service`.                                                                                                                                             |
+| `has_soa_primary`      | kept      | The SOA primary server.                                                                                                                                                      |
+| `has_spf`              | kept      | Attaches an SPF record.                                                                                                                                                      |
+| `has_srv_target`       | kept      | Keyed on the SRV fields.                                                                                                                                                     |
+| `has_subdomain`        | kept      | Naming structure, checked on the merged edge.                                                                                                                                |
+| `has_svcb_binding`     | kept      | HTTPS and SVCB records, written only after the SvcParams are parsed.                                                                                                         |
+| `has_tls_fingerprint`  | kept      | From a service to its stack fingerprint.                                                                                                                                     |
+| `has_txt_record`       | kept      | Attaches a generic TXT value.                                                                                                                                                |
+| `has_weakness`         | kept      | Finding or advisory to CWE.                                                                                                                                                  |
+| `hosted_on`            | new in v3 | A name or URL that serves from a cloud resource, typically through a CNAME to its default hostname.                                                                          |
+| `in_account`           | new in v3 | A resource, bucket or cloud-registry image that belongs to an account, with the provider matched on the edge.                                                                |
+| `issued_by`            | kept      | A self edge records a self-signed certificate.                                                                                                                               |
+| `links_to`             | new in v3 | Crawl links keyed on the referencing element, so an anchor and a script include are two edges.                                                                               |
+| `loads_package`        | new in v5 | From an endpoint to the target's own package it loads. A third-party component stays a `technology`.                                                                         |
+| `operated_by`          | kept      | Number-resource holding, keyed on the RIR handle.                                                                                                                            |
+| `owns_repository`      | kept      | An attribution claim that needs evidence.                                                                                                                                    |
+| `presents_certificate` | changed   | `name_mismatch` is declared, because it is a fact of one presentation.                                                                                                       |
+| `presents_host_key`    | kept      | From an SSH service to its host key.                                                                                                                                         |
+| `protected_by`         | kept      | A CDN or WAF in the request path. Range-list classification is an address attribute instead.                                                                                 |
+| `published_from`       | new in v5 | From a package to the repository it is published from. Not a reliance relation, so it never blocks a rejection.                                                              |
+| `redirects_to`         | kept      | Keyed on the redirect status.                                                                                                                                                |
+| `registered_through`   | changed   | From a registration, not a domain, so each registration keeps its own registrar.                                                                                             |
+| `resolves_to`          | kept      | A or AAAA resolution.                                                                                                                                                        |
+| `reverse_resolves_to`  | kept      | PTR resolution.                                                                                                                                                              |
+| `runs_technology`      | changed   | Carries the per-host version and versioned CPE.                                                                                                                              |
+| `serves_endpoint`      | kept      | From a service to an endpoint.                                                                                                                                               |
+| `supports_tls_cipher`  | kept      | From a service to an accepted suite.                                                                                                                                         |
 
 ## What is not modeled
 

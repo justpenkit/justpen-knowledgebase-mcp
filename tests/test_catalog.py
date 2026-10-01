@@ -118,6 +118,8 @@ RELATION_TYPES = {
     "in_account",
     "authenticates",
     "links_to",
+    "published_from",
+    "loads_package",
 }
 
 
@@ -141,7 +143,7 @@ def test_manifest_has_only_catalog_v4_types_and_stable_fingerprint() -> None:
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
     assert CATALOG_FINGERPRINT != V3_FINGERPRINT
-    assert CATALOG_FINGERPRINT == "431b0e698a4e0cad7b863fe9194a52be4688c0bcae67fcdbc96997c6ac8f56b0"
+    assert CATALOG_FINGERPRINT == "05d1156694278481ef633b4698ff8c4eae5bf6cc15ac024a6aebbd88b0137599"
 
 
 INVENTORY = {
@@ -954,25 +956,26 @@ def test_relation_endpoint_matrices_are_exact() -> None:
                 "whois_registration",
                 "cloud_account",
                 "cloud_resource",
+                "package",
             ],
             ["finding"],
         ),
         "hosted_on": (["domain", "subdomain", "endpoint"], ["cloud_resource"]),
-        "in_account": (["cloud_resource", "storage_bucket"], ["cloud_account"]),
+        "in_account": (["cloud_resource", "storage_bucket", "package"], ["cloud_account"]),
         "has_registration": (["domain"], ["whois_registration"]),
         "presents_certificate": (["service"], ["certificate"]),
         "presents_host_key": (["service"], ["host_key"]),
         "serves_endpoint": (["service"], ["endpoint"]),
         "redirects_to": (["endpoint"], ["endpoint"]),
-        "affected_by": (["service", "finding", "endpoint"], ["advisory"]),
+        "affected_by": (["service", "finding", "endpoint", "package"], ["advisory"]),
         "aliases": (["advisory"], ["advisory"]),
         "runs_technology": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "protected_by": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "backed_by_bucket": (["domain", "subdomain", "endpoint"], ["storage_bucket"]),
-        "exposes_secret": (["repository", "endpoint", "storage_bucket", "cloud_resource"], ["secret"]),
+        "exposes_secret": (["repository", "endpoint", "storage_bucket", "cloud_resource", "package"], ["secret"]),
         "federates_with": (d, ["identity_tenant"]),
         "has_contact": (
-            ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration"],
+            ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration", "package"],
             ["email_address", "phone", "endpoint"],
         ),
         "authenticates": (
@@ -1004,6 +1007,8 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "covers_name": (["certificate"], d),
         "has_svcb_binding": (d, d),
         "issued_by": (["certificate"], ["certificate"]),
+        "published_from": (["package"], ["repository"]),
+        "loads_package": (["endpoint"], ["package"]),
     }
     relations = catalog_manifest()["relations"]
 
@@ -1048,6 +1053,8 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         ("redirects_to", {"status": 308}),
         ("affected_by", {}),
         ("aliases", {}),
+        ("published_from", {}),
+        ("loads_package", {}),
         ("runs_technology", {}),
         ("runs_technology", {"version": "1.18.0", "cpe": CPE_NGINX}),
         ("protected_by", {"kind": "waf"}),
@@ -1063,6 +1070,7 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         ("issued_by", {}),
         ("presents_certificate", {"mode": "quic", "server_name": "example.com", "alpn_offered": ["h3"]}),
         ("has_contact", {"role": "abuse"}),
+        ("has_contact", {"role": "maintainer"}),
         ("has_contact", {"role": "published", "name": "security team"}),
         ("backed_by_bucket", {}),
         ("exposes_secret", {"location": "src/config.py"}),
@@ -1629,6 +1637,22 @@ def test_one_image_name_in_two_registries_is_two_packages() -> None:
 
 
 @pytest.mark.parametrize(
+    ("table", "replacement", "message"),
+    [
+        ("_ACCOUNT_PROVIDERS", {"cloud_resource": str, "storage_bucket": str}, "every in_account source"),
+        ("_REGISTRY_ACCOUNT_PROVIDER", {r"quay\.io": "redhat"}, "every cloud registry"),
+    ],
+)
+def test_the_import_guard_refuses_an_in_account_source_without_a_cloud_provider(
+    monkeypatch: pytest.MonkeyPatch, table: str, replacement: dict[str, object], message: str
+) -> None:
+    """KTD7: a source with no provider rule would raise KeyError as INTERNAL on its first edge."""
+    monkeypatch.setattr(catalog_module, table, replacement)
+    with pytest.raises(RuntimeError, match=message):
+        catalog_module._ensure_cross_field_contract()
+
+
+@pytest.mark.parametrize(
     ("rule_id", "record", "accepted"),
     [
         (rule_id, record, accepted)
@@ -2065,7 +2089,7 @@ def test_every_type_declares_identity_checks_and_description() -> None:
                 assert definition["sources"], type_name
                 assert definition["targets"], type_name
     assert manifest["relations"]["has_registration"]["checks"] == ["has_registration_suffix_match.1"]
-    assert manifest["relations"]["in_account"]["checks"] == ["in_account_provider_match.1"]
+    assert manifest["relations"]["in_account"]["checks"] == ["in_account_provider_match.2"]
     assert "secret_plaintext_keys.1" in manifest["relations"]["authenticates"]["checks"]
 
 

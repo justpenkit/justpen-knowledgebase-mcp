@@ -306,13 +306,17 @@ DOCS: dict[str, Any] = {
             "An `endpoint` target requires `role` `iodef` and `method` `POST` (RFC 6546), and `iodef` never "
             "targets a `phone`: a CAA iodef names a mailto address or an https report URL."
         ),
-        "has_contact_registration_roles.1": (
+        "has_contact_registration_roles.2": (
             "From a `whois_registration`, `role` must be `registrant`, `admin`, `tech` or `billing`; from a "
-            "`domain` or `subdomain`, those four roles are refused, because they belong to one registration."
+            "`domain` or `subdomain`, those four roles are refused, because they belong to one registration. "
+            "From a `package`, `role` must be `maintainer` or `security` and the target an `email_address`; "
+            "`maintainer` is refused from every other source."
         ),
-        "in_account_provider_match.1": (
+        "in_account_provider_match.2": (
             "The account's `provider` must be the source's provider: the prefix of a cloud resource's "
-            "`service`, or the provider behind a bucket's `provider`."
+            "`service`, the provider behind a bucket's `provider`, or the cloud registry host in an oci purl's "
+            "`repository_url`: ECR to aws, Artifact Registry and gcr.io to gcp, azurecr.io to azure. Any other "
+            "registry and any non-oci package belong to no account."
         ),
         "has_registration_suffix_match.1": (
             "The registration's `registry` must be the zone of its domain: the domain's `value` without its "
@@ -808,7 +812,7 @@ DOCS: dict[str, Any] = {
         "affected_by": {
             "summary": (
                 "The source is affected by the advisory: a vulnerable service, an endpoint a CVE template "
-                "matched, or a finding reporting it."
+                "matched, a finding reporting it, or a published package with an affected release."
             ),
             "excludes": "Not an advisory merely mentioned nearby; attach the evidence for the match.",
             "notes": (
@@ -910,7 +914,10 @@ DOCS: dict[str, Any] = {
         "exposes_secret": {
             "summary": "The source exposes the secret at one location.",
             "excludes": "Never the secret itself; the node holds only its digest, and plaintext-bearing keys are refused.",
-            "notes": "Link evidence only after replacing every secret-bearing scanner field with `[REDACTED]`.",
+            "notes": (
+                "Link evidence only after replacing every secret-bearing scanner field with `[REDACTED]`. From a "
+                "package, the evidence names the releases that ship the secret."
+            ),
             "properties": {"location": "Where the secret appears, such as a file path or URL path; identity-bearing."},
         },
         "federates_with": {
@@ -926,7 +933,8 @@ DOCS: dict[str, Any] = {
             "notes": (
                 "Use `published` for an address harvested from an organization's own surface with no declared "
                 "role. Registrant, admin, tech and billing contacts come from registration data and attach to "
-                "the `whois_registration`, so a re-registration does not inherit them."
+                "the `whois_registration`, so a re-registration does not inherit them. A package lists only "
+                "`maintainer` and `security` email addresses, and only a package has a `maintainer`."
             ),
             "properties": {"role": "What the contact is for; identity-bearing, so one address may hold several roles."},
         },
@@ -1037,8 +1045,13 @@ DOCS: dict[str, Any] = {
             "properties": {},
         },
         "in_account": {
-            "summary": "The cloud resource or bucket belongs to the account.",
+            "summary": "The cloud resource, bucket or container image belongs to the account.",
             "excludes": "Not the account's identity provider, which is an `identity_tenant`.",
+            "notes": (
+                "An image belongs to an account only when its oci purl names a cloud provider's registry: an ECR "
+                "image to the AWS account its host names, an Artifact Registry or gcr.io image to its GCP project, "
+                "an ACR image to its Azure subscription. A Docker Hub or GHCR image has no account."
+            ),
             "properties": {},
         },
         "has_weakness": {
@@ -1061,6 +1074,14 @@ DOCS: dict[str, Any] = {
         "issued_by": {
             "summary": "The certificate was issued by the target certificate; a self edge marks a self-signed one.",
             "excludes": "Not trust-store validation, which depends on the observer.",
+            "properties": {},
+        },
+        "loads_package": {
+            "summary": "The endpoint loads the target's own published package, such as a script bundle from npm.",
+            "excludes": (
+                "Not a third-party component, which is a `technology` reached through `runs_technology` with its "
+                "version. Not a release: the loaded version stays in evidence."
+            ),
             "properties": {},
         },
         "operated_by": {
@@ -1092,6 +1113,14 @@ DOCS: dict[str, Any] = {
             "summary": "Traffic to the source passes through the technology acting as a WAF, CDN, reverse proxy or load balancer.",
             "excludes": "Not a range-list classification of an address, and not SaaS hosting (`runs_technology`).",
             "properties": {"kind": "The role the technology plays in front of the source."},
+        },
+        "published_from": {
+            "summary": "The package is built and published from the source repository.",
+            "excludes": (
+                "Not a repository the package depends on or mirrors, and not attribution: `owns_repository` "
+                "attributes the repository to a name."
+            ),
+            "properties": {},
         },
         "redirects_to": {
             "summary": "The endpoint answered with an HTTP redirect to the target endpoint.",

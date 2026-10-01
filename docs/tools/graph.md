@@ -467,7 +467,9 @@ rejects a well-formed `v=spf1` value.
 `storage_bucket`, `repository`, `identity_tenant` and `secret` as sources. A
 finding names one real object, and each of those is one: a bucket, a repository
 and a tenant have exactly one owner, a scoped record belongs to its parent
-domain, and a secret digest is one credential.
+domain, and a secret digest is one credential. Catalog v5 adds `package` for the
+same reason: a package the target publishes is one asset with one owner, and the
+release a finding concerns stays in its evidence.
 
 It deliberately did not gain `technology`, `tls_cipher_suite`,
 `tls_fingerprint`, `http_fingerprint`, `host_key`, `spf_record`, `dmarc_record`,

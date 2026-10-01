@@ -18,6 +18,7 @@ from justpen_knowledgebase_mcp.errors import (
     RecordConflictError,
     RejectedIdentityError,
 )
+from justpen_knowledgebase_mcp.evidence import IngestRequest
 from justpen_knowledgebase_mcp.identity import format_timestamp, parse_timestamp
 from justpen_knowledgebase_mcp.models import GetRequest, SearchRequest, TypesRequest, WriteRequest
 from justpen_knowledgebase_mcp.service import KnowledgeBase
@@ -2124,6 +2125,125 @@ async def test_a_rejected_package_keeps_only_its_identity_and_cannot_be_re_creat
         with pytest.raises(RejectedIdentityError, match=r"^REJECTED_IDENTITY$") as refused:
             await kb.write(WriteRequest.model_validate({"nodes": [{**stranger, "ownership": "candidate"}]}))
         assert rejected_items(refused) == [("nodes[0]", identifier)]
+
+
+def linked(relation, source, target, properties=None):
+    """A relation between two node references, each a batch index or a stored ID."""
+
+    def ref(node):
+        return {"node_index": node} if isinstance(node, int) else {"id": node}
+
+    return {"type": relation, "source_ref": ref(source), "target_ref": ref(target), "properties": properties or {}}
+
+
+def image(repository):
+    name = repository.rsplit("/", 1)[1]
+    return {"type": "package", "properties": {"purl": f"pkg:oci/{name}?repository_url={repository}"}}
+
+
+AWS_ACCOUNT = {"type": "cloud_account", "properties": {"provider": "aws", "account_id": "123456789012"}}
+APP = {"type": "endpoint", "properties": {"url": "https://app.acme.com/", "method": "GET"}}
+
+
+async def test_an_image_links_to_the_account_of_its_cloud_registry_and_no_other(tmp_path):
+    """AE7, R13, KTD7: an ECR image belongs to an AWS account. A Docker Hub image and an npm package
+    belong to no account, and both are refused as invalid params rather than internal errors."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        ecr = image("123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/api")
+        written = await kb.write(write({"nodes": [ecr, AWS_ACCOUNT], "relations": [linked("in_account", 0, 1)]}))
+        account = written["nodes"][1]["id"]
+        assert written["relations"][0]["id"]
+        for package in (image("docker.io/acme/api"), {"type": "package", "properties": {"purl": "pkg:npm/acme-sdk"}}):
+            with pytest.raises(InvalidParamsError, match="only an oci image in a cloud provider's registry"):
+                await kb.write(write({"nodes": [package], "relations": [linked("in_account", 0, account)]}))
+        assert await node_count(kb) == 2
+
+
+async def test_an_endpoint_loads_the_targets_package_beside_the_technology_it_runs(tmp_path):
+    """AE5, R15: Next.js stays a technology with its version on `runs_technology`; the target's own
+    `@acme/widget` is a package the endpoint loads."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        widget = {"type": "package", "properties": {"purl": "pkg:npm/%40acme/widget"}}
+        nextjs = {"type": "technology", "properties": {"name": "next.js"}}
+        written = await kb.write(
+            write(
+                {
+                    "nodes": [APP, widget, nextjs],
+                    "relations": [
+                        linked("loads_package", 0, 1),
+                        linked("runs_technology", 0, 2, {"version": "14.1"}),
+                    ],
+                }
+            )
+        )
+        app, package, technology = (node["id"] for node in written["nodes"])
+        loads, runs = [await record_of(kb, "relations", relation["id"]) for relation in written["relations"]]
+        assert (loads["source_id"], loads["target_id"]) == (app, package)
+        assert (runs["source_id"], runs["target_id"], runs["properties"]) == (app, technology, {"version": "14.1"})
+
+
+async def test_two_releases_of_one_package_are_one_node_exposing_the_secret(tmp_path):
+    """AE4, R9, R12, R14: the package seen at 1.2.3 and at 2.0.0 is one node with no version; the
+    secret found only in 1.2.3 hangs off that node, and the evidence names the release."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        secret = {"type": "secret", "properties": {"value_sha256": "a" * 64, "detector": "aws"}}
+        first = await kb.write(
+            write(
+                {
+                    "nodes": [SDK, secret],
+                    "relations": [linked("exposes_secret", 0, 1, {"location": "package/dist/config.js"})],
+                }
+            )
+        )
+        second = await kb.write(write({"nodes": [SDK]}))
+        sdk = first["nodes"][0]["id"]
+        assert second["nodes"][0]["id"] == sdk
+        assert second["nodes"][0]["created"] is False
+        assert (await record_of(kb, "nodes", sdk))["properties"] == SDK["properties"]
+        exposure = first["relations"][0]["id"]
+        target = [{"kind": "relations", "id": exposure}]
+        text = "@acme/sdk 1.2.3 ships package/dist/config.js holding the key; 2.0.0 does not"
+        await kb.ingest_evidence(IngestRequest.model_validate({"text": text, "targets": target}))
+        found = await kb.search(SearchRequest(kind="relations", source_id=sdk, query="1.2.3"))
+        assert [item["id"] for item in found["items"]] == [exposure]
+
+
+async def test_rejecting_a_package_an_owned_endpoint_loads_purges_its_edges_and_keeps_the_neighbors(tmp_path):
+    """KTD8: `loads_package` and `published_from` are not reliance relations, so an owned endpoint
+    loading the package does not block its rejection; the purge drops every incident edge and the
+    finding under it, and leaves the repository, email and endpoint."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        repository = {
+            "type": "repository",
+            "properties": {"platform": "github", "host": "github.com", "owner": "acme", "name": "sdk"},
+        }
+        email = {"type": "email_address", "properties": {"value": "maintainer@acme.com"}}
+        finding = {
+            "type": "finding",
+            "properties": {"rule": "manual:typosquat", "matcher": "", "title": "lookalike", "severity": "info"},
+        }
+        owned_app = {**APP, "ownership": "owned", "evidence_add": [evidence]}
+        written = await kb.write(
+            write(
+                {
+                    "nodes": [SDK, repository, email, owned_app, finding],
+                    "relations": [
+                        linked("published_from", 0, 1),
+                        linked("has_contact", 0, 2, {"role": "maintainer"}),
+                        linked("loads_package", 3, 0),
+                        linked("has_finding", 0, 4),
+                    ],
+                }
+            )
+        )
+        sdk, *neighbors, finding_id = (node["id"] for node in written["nodes"])
+        assert (await reject(kb, sdk, evidence))["ownership"] == "rejected"
+        assert (await kb.search(SearchRequest(kind="relations", source_id=sdk)))["items"] == []
+        assert (await kb.search(SearchRequest(kind="relations", target_id=sdk)))["items"] == []
+        fetched = await kb.get(GetRequest(kind="nodes", ids=[*neighbors, finding_id]))
+        assert fetched["missing_ids"] == [finding_id]
+        assert (await stored_state(kb, neighbors[2]))[0] == "owned"
 
 
 async def test_a_new_subdomain_under_a_domain_the_same_batch_rejects_is_refused(tmp_path):

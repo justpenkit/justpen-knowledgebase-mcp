@@ -484,7 +484,7 @@ _NODES: dict[str, dict[str, Any]] = {
 
 _D = ["domain", "subdomain"]
 _RELATIONS = {
-    "affected_by": _relation(["service", "finding", "endpoint"], ["advisory"]),
+    "affected_by": _relation(["service", "finding", "endpoint", "package"], ["advisory"]),
     "aliases": _relation(["advisory"], ["advisory"], checks=["aliases_toward_cve.1"]),
     "announced_by": _relation(["ip_cidr"], ["asn"]),
     "authenticates": _relation(
@@ -532,7 +532,7 @@ _RELATIONS = {
     ),
     "dname_to": _relation(_D, _D, self_edge=True),
     "exposes_secret": _relation(
-        ["repository", "endpoint", "storage_bucket", "cloud_resource"],
+        ["repository", "endpoint", "storage_bucket", "cloud_resource", "package"],
         ["secret"],
         required={"location": "printable_text_1024"},
         identity=_identity(["location"]),
@@ -540,11 +540,24 @@ _RELATIONS = {
     ),
     "federates_with": _relation(_D, ["identity_tenant"], optional={"namespace_type": ["managed", "federated"]}),
     "has_contact": _relation(
-        ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration"],
+        ["organization", "registrar", "domain", "subdomain", "repository", "whois_registration", "package"],
         ["email_address", "phone", "endpoint"],
-        required={"role": ["abuse", "admin", "tech", "registrant", "billing", "noc", "security", "published", "iodef"]},
+        required={
+            "role": [
+                "abuse",
+                "admin",
+                "tech",
+                "registrant",
+                "billing",
+                "noc",
+                "security",
+                "published",
+                "iodef",
+                "maintainer",
+            ]
+        },
         identity=_identity(["role"]),
-        checks=["has_contact_registration_roles.1", "has_contact_endpoint_role.1"],
+        checks=["has_contact_registration_roles.2", "has_contact_endpoint_role.1"],
     ),
     "has_dkim_selector": _relation(_D, ["dkim_record"]),
     "has_dmarc": _relation(_D, ["dmarc_record"]),
@@ -568,6 +581,7 @@ _RELATIONS = {
             "whois_registration",
             "cloud_account",
             "cloud_resource",
+            "package",
         ],
         ["finding"],
     ),
@@ -613,7 +627,7 @@ _RELATIONS = {
     "has_weakness": _relation(["finding", "advisory"], ["cwe"]),
     "hosted_on": _relation(["domain", "subdomain", "endpoint"], ["cloud_resource"]),
     "in_account": _relation(
-        ["cloud_resource", "storage_bucket"], ["cloud_account"], checks=["in_account_provider_match.1"]
+        ["cloud_resource", "storage_bucket", "package"], ["cloud_account"], checks=["in_account_provider_match.2"]
     ),
     "issued_by": _relation(["certificate"], ["certificate"], self_edge=True),
     "links_to": _relation(
@@ -624,6 +638,7 @@ _RELATIONS = {
         identity=_identity(["element"]),
         self_edge=True,
     ),
+    "loads_package": _relation(["endpoint"], ["package"]),
     "operated_by": _relation(["asn", "ip_cidr"], ["organization"]),
     "owns_repository": _relation(_D, ["repository"]),
     "presents_certificate": _relation(
@@ -644,6 +659,7 @@ _RELATIONS = {
         required={"kind": ["waf", "cdn", "reverse_proxy", "load_balancer"]},
         identity=_identity(["kind"]),
     ),
+    "published_from": _relation(["package"], ["repository"]),
     "redirects_to": _relation(
         ["endpoint"],
         ["endpoint"],
@@ -1094,13 +1110,23 @@ def _endpoint_registration_suffix(_relation: Mapping[str, Any], source: Endpoint
 
 # Roles that belong to one registration episode, not to the name that outlives it.
 _REGISTRATION_ROLES = frozenset({"registrant", "admin", "tech", "billing"})
+# A registry lists a package's maintainers and its security contact by email, and nothing else.
+_PACKAGE_ROLES = frozenset({"maintainer", "security"})
 
 
 def _endpoint_contact_registration_roles(
-    relation: Mapping[str, Any], source: EndpointView, _target: EndpointView
+    relation: Mapping[str, Any], source: EndpointView, target: EndpointView
 ) -> None:
-    # An organization, registrar or repository keeps every role: RIR entities carry admin and tech
-    # contacts of their own. Only a name and its registration split the roles between them.
+    if source.type == "package":
+        if relation["role"] not in _PACKAGE_ROLES:
+            raise ExpectedValidationError("/properties/role: a package's contact is a maintainer or security contact")
+        if target.type != "email_address":
+            raise ExpectedValidationError(f"{_ENDPOINT_FAILED}: a package's contact is an email address")
+        return
+    if relation["role"] == "maintainer":
+        raise ExpectedValidationError("/properties/role: only a package has a maintainer contact")
+    # An organization, registrar or repository keeps every other role: RIR entities carry admin and
+    # tech contacts of their own. Only a name and its registration split the roles between them.
     if source.type not in ("whois_registration", "domain", "subdomain"):
         return
     if (source.type == "whois_registration") != (relation["role"] in _REGISTRATION_ROLES):
@@ -1322,6 +1348,18 @@ _CLOUD_HOST_PATTERNS: dict[str, _HostPattern] = {
 # The provider each cloud_resource service and each storage_bucket provider belongs to.
 _SERVICE_PROVIDERS = ("aws", "azure", "gcp")
 _BUCKET_ACCOUNT_PROVIDER: dict[str, str] = {"aws_s3": "aws", "gcp_gcs": "gcp", "azure_blob": "azure"}
+# The provider of each cloud registry an oci image can live in, by its `repository_url` host. Every
+# other registry, Docker Hub and GHCR among them, belongs to no cloud account.
+_REGISTRY_ACCOUNT_PROVIDER: dict[str, str] = {
+    # ECR private, with its FIPS, China and dual-stack hosts, then ECR Public.
+    rf"[0-9]{{12}}\.dkr\.ecr(?:-fips)?\.{_HOST_LABELS['aws_region']}\.amazonaws\.com(?:\.cn)?": "aws",
+    rf"[0-9]{{12}}\.dkr-ecr(?:-fips)?\.{_HOST_LABELS['aws_region']}\.on\.aws": "aws",
+    r"public\.ecr\.aws": "aws",
+    # Artifact Registry, and gcr.io with its regional hosts.
+    r"[a-z]+(?:-[a-z]+[0-9]+)?-docker\.pkg\.dev": "gcp",
+    r"(?:(?:us|eu|asia)\.)?gcr\.io": "gcp",
+    rf"{_HOST_LABELS['azure_name']}\.azurecr\.io": "azure",
+}
 
 
 def _label_grammar(label: str) -> str | None:
@@ -1369,14 +1407,29 @@ def _cross_field_cloud_resource(_type_name: str, properties: dict[str, Any]) -> 
         raise ExpectedValidationError("/properties/region: does not match the region the hostname encodes")
 
 
-def _account_provider(view: EndpointView) -> str:
-    if view.type == "storage_bucket":
-        return _BUCKET_ACCOUNT_PROVIDER[cast("str", view.properties["provider"])]
-    return cast("str", view.properties["service"]).split("_", 1)[0]
+def _image_provider(properties: Mapping[str, Any]) -> str:
+    path, _separator, query = cast("str", properties["purl"]).removeprefix("pkg:").partition("?")
+    if path.startswith("oci/"):
+        host = query.removeprefix("repository_url=").partition("/")[0]
+        for pattern, provider in _REGISTRY_ACCOUNT_PROVIDER.items():
+            if re.fullmatch(pattern, host) is not None:
+                return provider
+    raise ExpectedValidationError(
+        f"{_ENDPOINT_FAILED}: only an oci image in a cloud provider's registry belongs to an account"
+    )
+
+
+# How each `in_account` source names its provider; `_ensure_cross_field_contract` refuses a source
+# without an entry, which would otherwise fail as INTERNAL on the first edge from it.
+_ACCOUNT_PROVIDERS: dict[str, Callable[[Mapping[str, Any]], str]] = {
+    "cloud_resource": lambda properties: cast("str", properties["service"]).split("_", 1)[0],
+    "storage_bucket": lambda properties: _BUCKET_ACCOUNT_PROVIDER[cast("str", properties["provider"])],
+    "package": _image_provider,
+}
 
 
 def _endpoint_account_provider(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
-    if _account_provider(source) != target.properties["provider"]:
+    if _ACCOUNT_PROVIDERS[source.type](source.properties) != target.properties["provider"]:
         raise ExpectedValidationError("relation endpoint constraint failed: the account belongs to another provider")
 
 
@@ -1445,10 +1498,10 @@ _ENDPOINT_CHECKS: dict[str, Callable[[Mapping[str, Any], EndpointView, EndpointV
     "contains_cidr_proper_subnet.1": _endpoint_contains_cidr,
     "contains_ip_member.1": _endpoint_contains_ip,
     "has_contact_endpoint_role.1": _endpoint_contact_iodef,
-    "has_contact_registration_roles.1": _endpoint_contact_registration_roles,
+    "has_contact_registration_roles.2": _endpoint_contact_registration_roles,
     "has_registration_suffix_match.1": _endpoint_registration_suffix,
     "has_subdomain_suffix.1": _endpoint_subdomain_suffix,
-    "in_account_provider_match.1": _endpoint_account_provider,
+    "in_account_provider_match.2": _endpoint_account_provider,
 }
 
 _CANONICALIZATIONS: dict[str, Callable[[dict[str, Any]], None]] = {
@@ -1723,6 +1776,11 @@ def _ensure_cross_field_contract() -> None:
         _BUCKET_ACCOUNT_PROVIDER.values()
     ) <= _enum("nodes", "cloud_account", "provider"):
         raise RuntimeError("every storage_bucket provider must map to one cloud_account provider")
+    if not set(_REGISTRY_ACCOUNT_PROVIDER.values()) <= _enum("nodes", "cloud_account", "provider"):
+        raise RuntimeError("every cloud registry must map to one cloud_account provider")
+    relations = cast("dict[str, dict[str, Any]]", _CATALOG["relations"])
+    if set(_ACCOUNT_PROVIDERS) != set(relations["in_account"]["sources"]):
+        raise RuntimeError("every in_account source needs a provider rule, and only those")
     services = {pattern.service for pattern in _CLOUD_HOST_PATTERNS.values() if pattern.canonical}
     if services != _enum("nodes", "cloud_resource", "service"):
         raise RuntimeError("every cloud_resource service needs a canonical hostname pattern, and only those")
