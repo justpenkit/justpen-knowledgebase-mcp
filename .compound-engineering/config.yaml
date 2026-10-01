@@ -150,15 +150,17 @@ work_engine_mode: prefer          # off | prefer | require (default: off)
 work_engine_preferences:
   - harness: claude
     model: sonnet                 # latest Sonnet; the session model keeps verification, commits and review
+  - harness: codex
+    model: gpt-6-sol              # fallback when the Claude worker is unavailable; sends code to OpenAI
 
 # Reasoning effort for the external worker, per harness. Each value is one of
 # that harness's own effort levels. An unset harness keeps its own default:
 # Codex and Claude at high, native Grok at xhigh, OpenCode with no variant.
 # Cursor routes take no effort. A map in config.local.yaml replaces this one.
 
-# work_engine_effort:
-#   codex: xhigh
-#   claude: max
+work_engine_effort:
+  claude: medium
+  codex: medium
 
 # --- ce-promote ---
 # Written automatically when you decline the Spiral setup offer in /ce-promote.
