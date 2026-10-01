@@ -163,7 +163,7 @@ Constants a write carries that no field holds:
 | `{type=FINDING}.data_json.description`                   | `finding.matcher`              | `digest16`                                                  | documented, absent from the fixture                                                                                                                     |
 | `{type=FINDING}.data_json.path`                          | evidence                       | —                                                           | documented, absent from the fixture                                                                                                                     |
 | `{type=FINDING}.data_json.full_url`                      | evidence                       | —                                                           | documented, absent from the fixture                                                                                                                     |
-| `{type=FINDING}.data_json.cves`                          | `cve.value`                    | —                                                           | each member; documented, absent from the fixture                                                                                                        |
+| `{type=FINDING}.data_json.cves`                          | `advisory.value`               | —                                                           | each member; documented, absent from the fixture                                                                                                        |
 | `{type=FINDING}.data_json.archive_url`                   | evidence                       | —                                                           | documented, absent from the fixture                                                                                                                     |
 | `{type=FINDING,module=nuclei}.data_json.description`     | `finding.rule`                 | `bbot_nuclei_template`                                      | redacted before ingest                                                                                                                                  |
 | `{type=FINDING,module=nuclei}.data_json.description`     | `finding.matcher`              | `bbot_nuclei_matcher`                                       | redacted before ingest                                                                                                                                  |
@@ -356,9 +356,9 @@ Constants a write carries that no field holds:
 | `total`             | non storable                   | —             | paging of the API response                  |
 | `offset`            | non storable                   | —             | paging of the API response                  |
 | `limit`             | non storable                   | —             | paging of the API response                  |
-| `data[].cve`        | `cve.value`                    | —             | —                                           |
-| `data[].epss`       | `cve.epss_score`               | `float_value` | —                                           |
-| `data[].percentile` | `cve.epss_percentile`          | `float_value` | —                                           |
+| `data[].cve`        | `advisory.value`               | —             | —                                           |
+| `data[].epss`       | `advisory.epss_score`          | `float_value` | —                                           |
+| `data[].percentile` | `advisory.epss_percentile`     | `float_value` | —                                           |
 | `data[].date`       | `observed_at` (write metadata) | `rfc3339_utc` | —                                           |
 
 Constants a write carries that no field holds:
@@ -842,12 +842,12 @@ Constants a write carries that no field holds:
 | `info.reference`                      | evidence                       | —                               | —                                                                                                                                   |
 | `info.severity`                       | `finding.severity`             | —                               | —                                                                                                                                   |
 | `info.metadata.*`                     | evidence                       | —                               | —                                                                                                                                   |
-| `info.classification.cve-id`          | `cve.value`                    | `upper`                         | each member                                                                                                                         |
+| `info.classification.cve-id`          | `advisory.value`               | `upper`                         | each member                                                                                                                         |
 | `info.classification.cwe-id`          | `cwe.value`                    | `upper`                         | each member                                                                                                                         |
 | `info.classification.cvss-metrics`    | `finding.cvss_vector`          | —                               | —                                                                                                                                   |
 | `info.classification.cvss-score`      | `finding.cvss_score`           | `cvss_one_decimal`              | —                                                                                                                                   |
-| `info.classification.epss-score`      | `cve.epss_score`               | —                               | —                                                                                                                                   |
-| `info.classification.epss-percentile` | `cve.epss_percentile`          | —                               | —                                                                                                                                   |
+| `info.classification.epss-score`      | `advisory.epss_score`          | —                               | —                                                                                                                                   |
+| `info.classification.epss-percentile` | `advisory.epss_percentile`     | —                               | —                                                                                                                                   |
 | `info.classification.cpe`             | evidence                       | —                               | —                                                                                                                                   |
 | `info.remediation`                    | evidence                       | —                               | —                                                                                                                                   |
 | `matcher-name`                        | non storable                   | —                               | read into finding.matcher by nuclei_matcher on the template-id rows                                                                 |
@@ -900,9 +900,9 @@ Constants a write carries that no field holds:
 | `format`                                                                          | non storable                   | —                                        | the API's constant response format name      |
 | `version`                                                                         | non storable                   | —                                        | the API's version, not a fact about the CVE  |
 | `timestamp`                                                                       | `observed_at` (write metadata) | `rfc3339_utc`                            | —                                            |
-| `vulnerabilities[].cve.id`                                                        | `cve.value`                    | —                                        | —                                            |
+| `vulnerabilities[].cve.id`                                                        | `advisory.value`               | —                                        | —                                            |
 | `vulnerabilities[].cve.sourceIdentifier`                                          | evidence                       | —                                        | —                                            |
-| `vulnerabilities[].cve.published`                                                 | `cve.published`                | `rfc3339_utc`                            | —                                            |
+| `vulnerabilities[].cve.published`                                                 | `advisory.published`           | `rfc3339_utc`                            | —                                            |
 | `vulnerabilities[].cve.lastModified`                                              | evidence                       | —                                        | —                                            |
 | `vulnerabilities[].cve.vulnStatus`                                                | evidence                       | —                                        | —                                            |
 | `vulnerabilities[].cve.cveTags`                                                   | evidence                       | —                                        | —                                            |
@@ -920,8 +920,8 @@ Constants a write carries that no field holds:
 | `vulnerabilities[].cve.metrics.cvssMetricV31[].source`                            | evidence                       | —                                        | —                                            |
 | `vulnerabilities[].cve.metrics.cvssMetricV31[].type`                              | evidence                       | —                                        | —                                            |
 | `vulnerabilities[].cve.metrics.cvssMetricV31[].cvssData.*`                        | evidence                       | —                                        | —                                            |
-| `vulnerabilities[].cve.metrics.cvssMetricV31[].cvssData.vectorString`             | `cve.cvss_vector`              | `nvd_preferred_cvss`                     | —                                            |
-| `vulnerabilities[].cve.metrics.cvssMetricV31[].cvssData.baseScore`                | `cve.cvss_score`               | `cvss_one_decimal`, `nvd_preferred_cvss` | —                                            |
+| `vulnerabilities[].cve.metrics.cvssMetricV31[].cvssData.vectorString`             | `advisory.cvss_vector`         | `nvd_preferred_cvss`                     | —                                            |
+| `vulnerabilities[].cve.metrics.cvssMetricV31[].cvssData.baseScore`                | `advisory.cvss_score`          | `cvss_one_decimal`, `nvd_preferred_cvss` | —                                            |
 | `vulnerabilities[].cve.metrics.cvssMetricV31[].exploitabilityScore`               | evidence                       | —                                        | —                                            |
 | `vulnerabilities[].cve.metrics.cvssMetricV31[].impactScore`                       | evidence                       | —                                        | —                                            |
 | `vulnerabilities[].cve.metrics.cvssMetricV2[].source`                             | evidence                       | —                                        | —                                            |
@@ -949,7 +949,7 @@ Constants a write carries that no field holds:
 | `vulnerabilities[].cve.metrics.ssvcV203[].ssvcData.options[].*`                   | evidence                       | —                                        | —                                            |
 | `vulnerabilities[].cve.metrics.ssvcV203[].ssvcData.role`                          | evidence                       | —                                        | —                                            |
 | `vulnerabilities[].cve.metrics.ssvcV203[].ssvcData.version`                       | evidence                       | —                                        | —                                            |
-| `vulnerabilities[].cve.cisaExploitAdd`                                            | `cve.kev_added`                | —                                        | —                                            |
+| `vulnerabilities[].cve.cisaExploitAdd`                                            | `advisory.kev_added`           | —                                        | —                                            |
 | `vulnerabilities[].cve.cisaActionDue`                                             | evidence                       | —                                        | —                                            |
 | `vulnerabilities[].cve.cisaRequiredAction`                                        | evidence                       | —                                        | —                                            |
 | `vulnerabilities[].cve.cisaVulnerabilityName`                                     | evidence                       | —                                        | —                                            |
@@ -970,13 +970,13 @@ Constants a write carries that no field holds:
 | `vulnerabilities[].cve.references[].tags`                                         | non storable                   | —                                        | advisory links, not asset facts              |
 | `vulnerabilities[].cve.affected[].affectedData[].defaultStatus`                   | non storable                   | —                                        | advisory applicability data, not asset facts |
 | `vulnerabilities[].cve.affected[].affectedData[].versions[].lessThanOrEqual`      | non storable                   | —                                        | advisory applicability data, not asset facts |
-| `vulnerabilities[].cve.metrics.cvssMetricV40[].cvssData.baseScore`                | `cve.cvss_score`               | `cvss_one_decimal`, `nvd_preferred_cvss` | documented, absent from the fixture          |
-| `vulnerabilities[].cve.metrics.cvssMetricV40[].cvssData.vectorString`             | `cve.cvss_vector`              | `nvd_preferred_cvss`                     | documented, absent from the fixture          |
+| `vulnerabilities[].cve.metrics.cvssMetricV40[].cvssData.baseScore`                | `advisory.cvss_score`          | `cvss_one_decimal`, `nvd_preferred_cvss` | documented, absent from the fixture          |
+| `vulnerabilities[].cve.metrics.cvssMetricV40[].cvssData.vectorString`             | `advisory.cvss_vector`         | `nvd_preferred_cvss`                     | documented, absent from the fixture          |
 | `vulnerabilities[].cve.metrics.cvssMetricV40[].cvssData.*`                        | evidence                       | —                                        | documented, absent from the fixture          |
 | `vulnerabilities[].cve.metrics.cvssMetricV40[].source`                            | evidence                       | —                                        | documented, absent from the fixture          |
 | `vulnerabilities[].cve.metrics.cvssMetricV40[].type`                              | evidence                       | —                                        | documented, absent from the fixture          |
-| `vulnerabilities[].cve.metrics.cvssMetricV30[].cvssData.baseScore`                | `cve.cvss_score`               | `cvss_one_decimal`, `nvd_preferred_cvss` | documented, absent from the fixture          |
-| `vulnerabilities[].cve.metrics.cvssMetricV30[].cvssData.vectorString`             | `cve.cvss_vector`              | `nvd_preferred_cvss`                     | documented, absent from the fixture          |
+| `vulnerabilities[].cve.metrics.cvssMetricV30[].cvssData.baseScore`                | `advisory.cvss_score`          | `cvss_one_decimal`, `nvd_preferred_cvss` | documented, absent from the fixture          |
+| `vulnerabilities[].cve.metrics.cvssMetricV30[].cvssData.vectorString`             | `advisory.cvss_vector`         | `nvd_preferred_cvss`                     | documented, absent from the fixture          |
 | `vulnerabilities[].cve.metrics.cvssMetricV30[].cvssData.*`                        | evidence                       | —                                        | documented, absent from the fixture          |
 | `vulnerabilities[].cve.metrics.cvssMetricV30[].source`                            | evidence                       | —                                        | documented, absent from the fixture          |
 | `vulnerabilities[].cve.metrics.cvssMetricV30[].type`                              | evidence                       | —                                        | documented, absent from the fixture          |

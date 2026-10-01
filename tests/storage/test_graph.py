@@ -1233,7 +1233,7 @@ async def test_the_widened_endpoint_whitelists_accept_the_writes_they_were_widen
                         {"type": "subdomain", "properties": {"value": "www.example.com"}},
                         {"type": "technology", "properties": {"name": "cloudflare"}},
                         {"type": "endpoint", "properties": {"url": "https://www.example.com/", "method": "GET"}},
-                        {"type": "cve", "properties": {"value": "CVE-2026-1234"}},
+                        {"type": "advisory", "properties": {"value": "CVE-2026-1234"}},
                     ],
                     "relations": [
                         {
@@ -1276,6 +1276,45 @@ async def test_the_widened_endpoint_whitelists_accept_the_writes_they_were_widen
                     }
                 )
             )
+
+
+async def test_epss_and_kev_on_a_non_cve_advisory_are_refused_after_a_patch_too(tmp_path):
+    """R3, KTD2: only CVEs are scored by EPSS and listed in KEV. The check reruns on the merged
+    stored properties, so a GHSA written bare and later patched by ID with an EPSS score is refused."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        written = await kb.write(
+            write(
+                {
+                    "nodes": [
+                        {"type": "endpoint", "properties": {"url": "https://www.example.com/", "method": "GET"}},
+                        {"type": "advisory", "properties": {"value": "GHSA-f82v-jwr5-mffw", "cvss_score": 9.1}},
+                        {"type": "advisory", "properties": {"value": "CVE-2025-29927", "epss_score": 0.92}},
+                        {"type": "cwe", "properties": {"value": "CWE-285"}},
+                    ],
+                    "relations": [
+                        {
+                            "type": "affected_by",
+                            "source_ref": {"node_index": 0},
+                            "target_ref": {"node_index": 1},
+                            "properties": {},
+                        },
+                        {
+                            "type": "has_weakness",
+                            "source_ref": {"node_index": 1},
+                            "target_ref": {"node_index": 3},
+                            "properties": {},
+                        },
+                    ],
+                }
+            )
+        )
+        ghsa = written["nodes"][1]["id"]
+
+        with pytest.raises(InvalidParamsError, match="epss_score"):
+            await kb.write(write({"nodes": [{"id": ghsa, "properties": {"epss_score": 0.92}}]}))
+        with pytest.raises(InvalidParamsError, match="kev_added"):
+            await kb.write(write({"nodes": [{"id": ghsa, "properties": {"kev_added": "2025-03-24"}}]}))
+        assert "epss_score" not in (await record_of(kb, "nodes", ghsa))["properties"]
 
 
 # Inventory state. These writes build the request directly: `write()` would state `candidate` for
@@ -1335,7 +1374,10 @@ async def classified_host(kb, evidence, *ports):
         ({**ACME, "ownership": "rejected"}, r"^nodes\[1\]: .*cannot be created as rejected"),
         ({**ACME, "ownership": "owned"}, r"^nodes\[1\]: .*requires evidence_add"),
         ({**ACME, "ownership": "candidate", "authorization": "in_scope"}, r"^nodes\[1\]: .*requires evidence_add"),
-        ({"type": "cve", "properties": {"value": "CVE-2026-1234"}, "ownership": "owned"}, r"^nodes\[1\]: cve carries"),
+        (
+            {"type": "advisory", "properties": {"value": "CVE-2026-1234"}, "ownership": "owned"},
+            r"^nodes\[1\]: advisory carries no inventory state",
+        ),
     ],
 )
 async def test_a_creation_without_a_valid_state_claim_is_refused_with_zero_rows(tmp_path, node, message):
@@ -2204,5 +2246,5 @@ async def test_kb_get_reports_effective_state_and_names_the_root_a_scoped_record
         assert (rejected["ownership"], rejected["authorization"]) == ("rejected", "unknown")
         assert (
             not {"ownership", "authorization", "allowlist_scoped", "state_root_id"}
-            & (await record_of(kb, "nodes", ids["cve"])).keys()
+            & (await record_of(kb, "nodes", ids["advisory"])).keys()
         )

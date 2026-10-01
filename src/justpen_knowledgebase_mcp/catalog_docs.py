@@ -38,6 +38,13 @@ DOCS: dict[str, Any] = {
         ),
     },
     "formats": {
+        "advisory_id": (
+            "A vulnerability id from a closed prefix list, spelled exactly as its database publishes it and never "
+            "case-folded: `CVE-`, a 4-digit year and 4 to 19 digits; `GHSA-` and three `-`-joined groups of four "
+            "from `23456789cfghjmpqrvwx`; or a PYSEC, RUSTSEC, GO, OSV, HSEC, JLSEC, OSEC, RSEC, EEF, DRUPAL or MAL "
+            "id in the number shape that database issues. Vendor and distribution bulletins such as RHSA, DSA and "
+            "USN are refused; write the CVE or GHSA they cite."
+        ),
         "alpn_tokens": (
             "An array of zero or more ASCII tokens matching `[A-Za-z0-9./_-]{1,255}`; order is not "
             "identity-significant and duplicates are preserved."
@@ -75,7 +82,6 @@ DOCS: dict[str, Any] = {
             "1 to 128 characters from ASCII letters, digits and `._:/+=-`: the public identifier half of a "
             "two-part credential, such as an AWS access key id, never secret material."
         ),
-        "cve": "A string matching `CVE-[0-9]{4}-[0-9]{4,}` exactly.",
         "cvss_score": (
             "A strict JSON number from 0 through 10 with at most one decimal place, as CVSS publishes a score: "
             '`9.8` and `10` are accepted, `9.85` and `"9.8"` are not.'
@@ -250,6 +256,10 @@ DOCS: dict[str, Any] = {
         ),
     },
     "checks": {
+        "advisory_cve_scores.1": (
+            "`epss_score`, `epss_percentile` and `kev_added` are refused unless `value` is a CVE id: FIRST scores "
+            "and CISA lists CVEs only."
+        ),
         "asn_assigned.1": "`value` 0 is rejected: AS0 is reserved and never originates routes (RFC 7607).",
         "bucket_name_spelling.1": (
             "`name` is checked against the declared `provider`: length, grammar, and the prefixes, suffixes and "
@@ -343,6 +353,28 @@ DOCS: dict[str, Any] = {
         ),
     },
     "nodes": {
+        "advisory": {
+            "summary": (
+                "One published vulnerability record, identified by its CVE, GHSA or OSV ecosystem id and shared by "
+                "every object it affects."
+            ),
+            "excludes": (
+                "Not an observation that something is vulnerable; that is `affected_by` from the affected object. "
+                "Not a vendor or distribution bulletin such as RHSA, DSA or USN, and not the affected products, "
+                "version ranges, references or description, which stay in evidence. Never a finding source."
+            ),
+            "properties": {
+                "value": "The advisory id, spelled exactly as its database publishes it.",
+                "cvss_score": "The CVSS base score the advisory publishes, from its highest CVSS version.",
+                "cvss_vector": "The CVSS vector string that score comes from.",
+                "epss_score": "The FIRST EPSS probability of exploitation in the next 30 days; CVE ids only.",
+                "epss_percentile": "The EPSS score's percentile among all scored CVEs; CVE ids only.",
+                "kev_added": (
+                    "The date CISA added the CVE to its Known Exploited Vulnerabilities catalog; CVE ids only."
+                ),
+                "published": "When the advisory record was published.",
+            },
+        },
         "asn": {
             "summary": "An autonomous system number: the routing identity a network is announced from.",
             "excludes": (
@@ -403,22 +435,6 @@ DOCS: dict[str, Any] = {
                 "service": "The provider service, fixed by which default hostname pattern matches.",
                 "hostname": "The canonical provider-assigned default hostname.",
                 "region": "The region the hostname encodes, when it encodes one.",
-            },
-        },
-        "cve": {
-            "summary": "A published CVE record, shared by every object affected by it.",
-            "excludes": (
-                "Not an observation that something is vulnerable; that is `affected_by` from the affected "
-                "service, endpoint or finding. Never a finding source."
-            ),
-            "properties": {
-                "value": "The CVE id, uppercase as MITRE publishes it.",
-                "cvss_score": "The CVSS base score the advisory publishes, from its highest CVSS version.",
-                "cvss_vector": "The CVSS vector string that score comes from.",
-                "epss_score": "The FIRST EPSS probability of exploitation in the next 30 days.",
-                "epss_percentile": "The EPSS score's percentile among all scored CVEs.",
-                "kev_added": "The date CISA added the CVE to its Known Exploited Vulnerabilities catalog.",
-                "published": "When the CVE record was published.",
             },
         },
         "cwe": {
@@ -486,7 +502,7 @@ DOCS: dict[str, Any] = {
         "finding": {
             "summary": "One issue a scanner or analyst reports about one object, scoped to it through `has_finding`.",
             "excludes": (
-                "Not the weakness class (`cwe`) or a published advisory (`cve`); those link through "
+                "Not the weakness class (`cwe`) or a published advisory (`advisory`); those link through "
                 "`has_weakness` and `affected_by`."
             ),
             "notes": (
@@ -750,8 +766,11 @@ DOCS: dict[str, Any] = {
     },
     "relations": {
         "affected_by": {
-            "summary": "The source is affected by the CVE: a vulnerable service, an endpoint a CVE template matched, or a finding reporting it.",
-            "excludes": "Not a CVE merely mentioned nearby; attach the evidence for the match.",
+            "summary": (
+                "The source is affected by the advisory: a vulnerable service, an endpoint a CVE template "
+                "matched, or a finding reporting it."
+            ),
+            "excludes": "Not an advisory merely mentioned nearby; attach the evidence for the match.",
             "properties": {},
         },
         "announced_by": {
@@ -865,7 +884,7 @@ DOCS: dict[str, Any] = {
         },
         "has_finding": {
             "summary": "The finding is about the source object; the scope relation of `finding`.",
-            "excludes": "Never from shared vocabulary such as a technology, fingerprint or CVE, which unrelated hosts share.",
+            "excludes": "Never from shared vocabulary such as a technology, fingerprint or advisory, which unrelated hosts share.",
             "properties": {},
         },
         "has_http_fingerprint": {
@@ -965,7 +984,7 @@ DOCS: dict[str, Any] = {
             "properties": {},
         },
         "has_weakness": {
-            "summary": "The finding or CVE is an instance of the CWE weakness class.",
+            "summary": "The finding or advisory is an instance of the CWE weakness class.",
             "excludes": "Not a claim of exploitability.",
             "properties": {},
         },

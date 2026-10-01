@@ -42,14 +42,14 @@
     {
       "path": "data[].cve",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "value"
       }
     },
     {
       "path": "data[].epss",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "epss_score"
       },
       "transform": [
@@ -59,7 +59,7 @@
     {
       "path": "data[].percentile",
       "sink": {
-        "node": "cve",
+        "node": "advisory",
         "property": "epss_percentile"
       },
       "transform": [

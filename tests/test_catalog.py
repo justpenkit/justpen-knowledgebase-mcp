@@ -42,7 +42,7 @@ NODE_TYPES = {
     "finding",
     "certificate",
     "endpoint",
-    "cve",
+    "advisory",
     "technology",
     "dmarc_record",
     "txt_record",
@@ -139,7 +139,7 @@ def test_manifest_has_only_catalog_v4_types_and_stable_fingerprint() -> None:
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
     assert CATALOG_FINGERPRINT != V3_FINGERPRINT
-    assert CATALOG_FINGERPRINT == "2a82213a7a4019e9b6a8bcd6b86584fa237143de9d3af8f15d8f5e77f3495f33"
+    assert CATALOG_FINGERPRINT == "d250279bfab89ceaf7a47d5d2e3f1bb333631a3637a82eeb8cac643be7ff1706"
 
 
 INVENTORY = {
@@ -164,7 +164,7 @@ INVENTORY = {
     },
     "inherits": {"dkim_record", "finding", "mta_sts_policy", "parameter", "port", "service", "whois_registration"},
     "none": {
-        "cve",
+        "advisory",
         "cwe",
         "dmarc_record",
         "http_fingerprint",
@@ -316,8 +316,10 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("endpoint", {"url": "https://www.example.com/my-page/bootstrap-5.3.0.min.css?cache-bust=1", "method": "GET"}),
         ("endpoint", {"url": "https://my_service.example.com/", "method": "GET"}),
         ("endpoint", {"url": "https://_acme.dev_env.example.com:8443/a", "method": "GET"}),
-        ("cve", {"value": "CVE-2026-1234"}),
-        ("cve", {"value": "CVE-1999-1234567"}),
+        ("advisory", {"value": "CVE-2026-1234"}),
+        ("advisory", {"value": "CVE-1999-1234567"}),
+        ("advisory", {"value": "GHSA-f82v-jwr5-mffw"}),
+        ("advisory", {"value": "MAL-2025-191157"}),
         ("technology", {"name": "nginx"}),
         ("technology", {"name": "a"}),
         ("technology", {"name": "a" * 63}),
@@ -362,7 +364,7 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("cwe", {"value": "CWE-999999"}),
         ("cwe", {"value": "CWE-89", "name": "SQL Injection"}),
         (
-            "cve",
+            "advisory",
             {
                 "value": "CVE-2021-44228",
                 "cvss_score": 10,
@@ -570,10 +572,11 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("endpoint", {"url": "https://example.com/search?q=%zz", "method": "GET"}),
         ("endpoint", {"url": "https://example.com/search?q=\u00e9", "method": "GET"}),
         ("endpoint", {"url": "https://example.com?q=1", "method": "GET"}),
-        ("cve", {"value": "cve-2026-1234"}),
-        ("cve", {"value": "CVE-26-1234"}),
-        ("cve", {"value": "CVE-2026-123"}),
-        ("cve", {"value": 20261234}),
+        ("advisory", {"value": "cve-2026-1234"}),
+        ("advisory", {"value": "CVE-26-1234"}),
+        ("advisory", {"value": "CVE-2026-123"}),
+        ("advisory", {"value": 20261234}),
+        ("advisory", {"value": "RHSA-2025:1234"}),
         ("technology", {"name": "Nginx"}),
         ("technology", {"name": "NGINX"}),
         ("technology", {"name": ""}),
@@ -651,10 +654,13 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("cwe", {"value": "79"}),
         ("cwe", {"value": 79}),
         ("cwe", {"value": "CWE-79", "name": ""}),
-        ("cve", {"value": "CVE-2021-44228", "cvss_score": 9.85}),
-        ("cve", {"value": "CVE-2021-44228", "epss_score": "0.97"}),
-        ("cve", {"value": "CVE-2021-44228", "kev_added": "2021-12-10T00:00:00Z"}),
-        ("cve", {"value": "CVE-2021-44228", "published": "2021-12-10T10:15:09.143"}),
+        ("advisory", {"value": "CVE-2021-44228", "cvss_score": 9.85}),
+        ("advisory", {"value": "CVE-2021-44228", "epss_score": "0.97"}),
+        ("advisory", {"value": "CVE-2021-44228", "kev_added": "2021-12-10T00:00:00Z"}),
+        ("advisory", {"value": "CVE-2021-44228", "published": "2021-12-10T10:15:09.143"}),
+        ("advisory", {"value": "GHSA-f82v-jwr5-mffw", "epss_score": 0.97}),
+        ("advisory", {"value": "GHSA-f82v-jwr5-mffw", "epss_percentile": 0.99}),
+        ("advisory", {"value": "GHSA-f82v-jwr5-mffw", "kev_added": "2025-03-24"}),
         ("domain", {"value": "example.com", "wildcard": "yes"}),
         ("ip_address", {"value": "104.16.0.1", "version": 4, "cdn_provider": "Cloudflare"}),
         ("certificate", {"der_sha256": "b" * 64, "serial": "3A:2F"}),
@@ -922,7 +928,7 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "presents_host_key": (["service"], ["host_key"]),
         "serves_endpoint": (["service"], ["endpoint"]),
         "redirects_to": (["endpoint"], ["endpoint"]),
-        "affected_by": (["service", "finding", "endpoint"], ["cve"]),
+        "affected_by": (["service", "finding", "endpoint"], ["advisory"]),
         "runs_technology": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "protected_by": (["service", "endpoint", "domain", "subdomain"], ["technology"]),
         "backed_by_bucket": (["domain", "subdomain", "endpoint"], ["storage_bucket"]),
@@ -954,7 +960,7 @@ def test_relation_endpoint_matrices_are_exact() -> None:
         "has_parameter": (["endpoint"], ["parameter"]),
         "has_tls_fingerprint": (["service"], ["tls_fingerprint"]),
         "registered_through": (["whois_registration"], ["registrar"]),
-        "has_weakness": (["finding", "cve"], ["cwe"]),
+        "has_weakness": (["finding", "advisory"], ["cwe"]),
         "operated_by": (["asn", "ip_cidr"], ["organization"]),
         "has_txt_record": (d, ["txt_record"]),
         "supports_tls_cipher": (["service"], ["tls_cipher_suite"]),
@@ -1301,7 +1307,7 @@ def test_shared_vocabulary_nodes_are_never_a_finding_source() -> None:
         "txt_record",
         "email_address",
         "phone",
-        "cve",
+        "advisory",
         "cwe",
     }
     sources = set(catalog_manifest()["relations"]["has_finding"]["sources"])
@@ -1526,6 +1532,32 @@ def test_every_format_check_and_canonicalization_has_golden_cases() -> None:
 )
 def test_golden_format_cases(rule: str, value: object, *, accepted: bool) -> None:
     assert catalog_module._valid_field(copy.deepcopy(value), rule) is accepted
+
+
+def test_an_advisory_id_passes_a_closed_prefix_allow_list() -> None:
+    """KTD1, AE1: CVE, GHSA and the OSV databases that publish one record per vulnerability, each
+    with its own id grammar. A vendor bulletin is refused with the rule named."""
+    assert set(catalog_module._ADVISORY_ID_GRAMMARS) == {
+        "CVE",
+        "GHSA",
+        "PYSEC",
+        "RUSTSEC",
+        "GO",
+        "OSV",
+        "HSEC",
+        "JLSEC",
+        "OSEC",
+        "RSEC",
+        "EEF",
+        "DRUPAL",
+        "MAL",
+    }
+    validate_record("nodes", "advisory", {"value": "CVE-2025-29927"})
+    validate_record("nodes", "advisory", {"value": "GHSA-f82v-jwr5-mffw"})
+    with pytest.raises(ExpectedValidationError) as failure:
+        validate_record("nodes", "advisory", {"value": "RHSA-2025:1234"})
+
+    assert failure.value.message == "/properties/value: expected advisory_id"
 
 
 @pytest.mark.parametrize(
@@ -1811,13 +1843,15 @@ def _catalog_with(kind: str, type_name: str, **changes: object) -> dict[str, obj
     [
         (_catalog_with("nodes", "domain", optional={"value": "dns_name"}), "declares \\['value'\\] twice"),
         (
-            _catalog_with("nodes", "domain", identity={"properties": ["value", "note"]}, optional={"note": "cve"}),
+            _catalog_with(
+                "nodes", "domain", identity={"properties": ["value", "note"]}, optional={"note": "advisory_id"}
+            ),
             "identity names a property outside its required map",
         ),
         (
             {
                 **_catalog_with("nodes", "domain", optional={"label": "printable_text_200"}),
-                "relations": _catalog_with("relations", "resolves_to", optional={"label": "cve"})["relations"],
+                "relations": _catalog_with("relations", "resolves_to", optional={"label": "advisory_id"})["relations"],
             },
             "optional label has one rule on",
         ),
@@ -1845,7 +1879,7 @@ def test_ac10_attribute_properties_are_declared() -> None:
     wildcard DNS and CPE/version each have a declared, validated home."""
     manifest = catalog_manifest()
     expected = {
-        ("nodes", "cve"): {"cvss_score", "cvss_vector", "epss_score", "epss_percentile", "kev_added", "published"},
+        ("nodes", "advisory"): {"cvss_score", "cvss_vector", "epss_score", "epss_percentile", "kev_added", "published"},
         ("nodes", "finding"): {"cvss_score", "cvss_vector", "confidence", "tags", "scanner", "description"},
         ("nodes", "endpoint"): {"status", "title", "content_length", "content_type", "webserver"},
         ("nodes", "ip_address"): {"cdn_provider", "waf_provider", "cloud_provider"},

@@ -171,7 +171,7 @@
           "source": "nuclei"
         },
         {
-          "type": "cve",
+          "type": "advisory",
           "properties": {
             "value": "CVE-2021-26084",
             "epss_score": 0.99999,

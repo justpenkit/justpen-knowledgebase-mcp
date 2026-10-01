@@ -147,7 +147,7 @@ async def inventory_graph(kb: Any) -> dict[str, str]:
     names = (
         "ip", "port_22", "port_443", "ssh", "https", "finding",
         "allowlisted", "port_80", "allowlisted_443", "http", "allowlisted_https",
-        "candidate", "stranger", "www", "cve",
+        "candidate", "stranger", "www", "advisory",
     )  # fmt: skip
     written = await kb.write(
         WriteRequest.model_validate(
@@ -167,7 +167,7 @@ async def inventory_graph(kb: Any) -> dict[str, str]:
                     {"type": "domain", "properties": {"value": "acme.example"}, "ownership": "candidate"},
                     {"type": "domain", "properties": {"value": "stranger.example"}, "ownership": "candidate"},
                     {"type": "subdomain", "properties": {"value": "www.stranger.example"}, "ownership": "candidate"},
-                    {"type": "cve", "properties": {"value": "CVE-2026-1234"}},
+                    {"type": "advisory", "properties": {"value": "CVE-2026-1234"}},
                 ],
                 "relations": [
                     _scope("has_open_port", 0, 1),

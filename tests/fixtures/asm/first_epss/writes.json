@@ -4,7 +4,7 @@
     "request": {
       "nodes": [
         {
-          "type": "cve",
+          "type": "advisory",
           "properties": {
             "value": "CVE-2025-24813",
             "epss_score": 0.99927,
@@ -14,7 +14,7 @@
           "source": "first-epss"
         },
         {
-          "type": "cve",
+          "type": "advisory",
           "properties": {
             "value": "CVE-2021-44228",
             "epss_score": 0.99999,

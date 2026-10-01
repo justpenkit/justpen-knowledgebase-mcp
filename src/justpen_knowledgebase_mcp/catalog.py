@@ -40,6 +40,7 @@ _COMMON = {
 # Every format id with its behavior version. The prose lives in `catalog_docs.DOCS`; the version
 # moves, and with it the fingerprint, whenever what the validator accepts changes.
 _FORMATS: dict[str, int] = {
+    "advisory_id": 1,
     "alpn_tokens": 1,
     "asn": 1,
     "boolean": 1,
@@ -52,7 +53,6 @@ _FORMATS: dict[str, int] = {
     "cloud_region": 1,
     "cpe23": 1,
     "credential_key_id": 1,
-    "cve": 1,
     "cvss_score": 1,
     "cvss_vector": 1,
     "cwe": 1,
@@ -177,6 +177,20 @@ _ALPN_ORDER: dict[str, object] = {
 }
 
 _NODES: dict[str, dict[str, Any]] = {
+    "advisory": {
+        "inventory": "none",
+        "identity": _identity(["value"]),
+        "required": {"value": "advisory_id"},
+        "optional": {
+            "cvss_score": "cvss_score",
+            "cvss_vector": "cvss_vector",
+            "epss_score": "probability",
+            "epss_percentile": "probability",
+            "kev_added": "calendar_date",
+            "published": "utc_timestamp",
+        },
+        "checks": ["advisory_cve_scores.1"],
+    },
     "asn": {
         "inventory": "carries",
         "identity": _identity(["value"]),
@@ -227,19 +241,6 @@ _NODES: dict[str, dict[str, Any]] = {
         },
         "optional": {"region": "cloud_region"},
         "checks": ["cloud_resource_hostname.1"],
-    },
-    "cve": {
-        "inventory": "none",
-        "identity": _identity(["value"]),
-        "required": {"value": "cve"},
-        "optional": {
-            "cvss_score": "cvss_score",
-            "cvss_vector": "cvss_vector",
-            "epss_score": "probability",
-            "epss_percentile": "probability",
-            "kev_added": "calendar_date",
-            "published": "utc_timestamp",
-        },
     },
     "cwe": {
         "inventory": "none",
@@ -476,7 +477,7 @@ _NODES: dict[str, dict[str, Any]] = {
 
 _D = ["domain", "subdomain"]
 _RELATIONS = {
-    "affected_by": _relation(["service", "finding", "endpoint"], ["cve"]),
+    "affected_by": _relation(["service", "finding", "endpoint"], ["advisory"]),
     "announced_by": _relation(["ip_cidr"], ["asn"]),
     "authenticates": _relation(
         ["secret"],
@@ -601,7 +602,7 @@ _RELATIONS = {
     ),
     "has_tls_fingerprint": _relation(["service"], ["tls_fingerprint"]),
     "has_txt_record": _relation(_D, ["txt_record"]),
-    "has_weakness": _relation(["finding", "cve"], ["cwe"]),
+    "has_weakness": _relation(["finding", "advisory"], ["cwe"]),
     "hosted_on": _relation(["domain", "subdomain", "endpoint"], ["cloud_resource"]),
     "in_account": _relation(
         ["cloud_resource", "storage_bucket"], ["cloud_account"], checks=["in_account_provider_match.1"]
@@ -808,6 +809,50 @@ def _cross_field_tls_fingerprint(_type_name: str, properties: dict[str, Any]) ->
 def _cross_field_registrar(_type_name: str, properties: dict[str, Any]) -> None:
     if cast("int", properties["iana_id"]) < 1:
         raise ExpectedValidationError("/properties/iana_id: expected an assigned IANA registrar id")
+
+
+# FIRST scores and CISA lists CVE ids only, so these properties have no source on any other id.
+_CVE_ONLY_PROPERTIES = ("epss_score", "epss_percentile", "kev_added")
+
+
+def _cross_field_advisory(_type_name: str, properties: dict[str, Any]) -> None:
+    if cast("str", properties["value"]).startswith("CVE-"):
+        return
+    for name in _CVE_ONLY_PROPERTIES:
+        if name in properties:
+            raise ExpectedValidationError(f"/properties/{name}: EPSS and KEV describe CVE ids only")
+
+
+def _padded(width: int) -> str:
+    """A sequence number zero-padded to `width` digits, written unpadded once it outgrows them."""
+    return f"(?:[0-9]{{{width}}}|[1-9][0-9]{{{width},6}})"
+
+
+_UNPADDED = "[1-9][0-9]{0,6}"
+# One grammar per accepted advisory id prefix, for the whole id: CVE, GHSA, and the OSV databases
+# that publish one record per vulnerability, each in the number shape that database issues. Vendor
+# and distribution bulletins, which bundle many CVEs, and prefixes with no settled id shape are left
+# out. No id is case-folded: GHSA keeps its lowercase body, and every other id is uppercase.
+_ADVISORY_ID_GRAMMARS: dict[str, str] = {
+    "CVE": r"CVE-[0-9]{4}-[0-9]{4,19}",
+    "GHSA": r"GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}",
+    "PYSEC": rf"PYSEC-[0-9]{{4}}-{_UNPADDED}",
+    "RUSTSEC": rf"RUSTSEC-[0-9]{{4}}-{_padded(4)}",
+    "GO": rf"GO-[0-9]{{4}}-{_padded(4)}",
+    "OSV": rf"OSV-[0-9]{{4}}-{_UNPADDED}",
+    "HSEC": rf"HSEC-[0-9]{{4}}-{_padded(4)}",
+    "JLSEC": rf"JLSEC-[0-9]{{4}}-{_UNPADDED}",
+    "OSEC": rf"OSEC-[0-9]{{4}}-{_padded(2)}",
+    "RSEC": rf"RSEC-[0-9]{{4}}-{_UNPADDED}",
+    "EEF": r"EEF-CVE-[0-9]{4}-[0-9]{4,19}",
+    "DRUPAL": rf"DRUPAL-(?:CONTRIB|CORE)-[0-9]{{4}}-{_padded(3)}",
+    "MAL": rf"MAL-[0-9]{{4}}-{_UNPADDED}",
+}
+
+
+def _valid_advisory_id(text: str) -> bool:
+    grammar = _ADVISORY_ID_GRAMMARS.get(text.split("-", 1)[0])
+    return grammar is not None and re.fullmatch(grammar, text) is not None
 
 
 # One dedicated node type per version tag. Diverting on the bare prefix left a malformed tag with
@@ -1278,6 +1323,7 @@ _ensure_cloud_patterns_disjoint()
 # behavior: changing what a callable accepts means a new version suffix, which changes the
 # fingerprint, so a workspace written under the old behavior is refused rather than reinterpreted.
 _CHECKS: dict[str, Callable[[str, dict[str, Any]], None]] = {
+    "advisory_cve_scores.1": _cross_field_advisory,
     "asn_assigned.1": _cross_field_asn,
     "bucket_name_spelling.1": _cross_field_storage_bucket,
     "cloud_account_spelling.1": _cross_field_cloud_account,
@@ -1664,6 +1710,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
     if type(value) is not str:
         return False
     validators: dict[str, Callable[[str], bool]] = {
+        "advisory_id": _valid_advisory_id,
         "breach_token_or_empty": lambda text: text == "" or _BREACH_TOKEN.fullmatch(text) is not None,
         "bucket_name": _valid_bucket_name,
         "cidr": lambda text: _parse_cidr(text) is not None,
@@ -1672,7 +1719,6 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "calendar_date": _valid_calendar_date,
         "cpe23": lambda text: len(text) <= 512 and _CPE23.fullmatch(text) is not None,
         "credential_key_id": lambda text: re.fullmatch(r"[A-Za-z0-9._:/+=-]{1,128}", text) is not None,
-        "cve": lambda text: re.fullmatch(r"CVE-[0-9]{4}-[0-9]{4,}", text) is not None,
         "cvss_vector": _valid_cvss_vector,
         "cwe": lambda text: re.fullmatch(r"CWE-[0-9]{1,6}", text) is not None,
         "dkim_selector": _valid_dkim_selector,
