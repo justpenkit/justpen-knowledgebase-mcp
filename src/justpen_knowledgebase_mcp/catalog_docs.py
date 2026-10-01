@@ -177,12 +177,12 @@ DOCS: dict[str, Any] = {
             "ascending with no duplicate, so one policy has one spelling."
         ),
         "package_purl": (
-            "A versionless purl of at most 512 characters, `pkg:<type>/<namespace>/<name>`, of type npm, pypi, "
-            "maven, nuget, gem, cargo, golang, composer or oci, canonical, not rewritten: npm scope `%40acme`, "
-            "PyPA-normalized PyPI name, lowercase NuGet id, lowercase crate name, `_` not `-`, namespaced maven, "
-            "composer and golang. No version, subpath or qualifier but oci's required `repository_url`: "
-            "unencoded host and path ending in the name; Docker Hub as `docker.io`, official images in "
-            "`library/`; ECR as `<account>.dkr.ecr.<region>.amazonaws.com(.cn)`, no FIPS or dual-stack alias. "
+            "A versionless purl of at most 512 characters, `pkg:<type>/<namespace>/<name>` for npm, pypi, "
+            "maven, nuget, gem, cargo, golang, composer or oci, canonical, not rewritten: npm name as published, "
+            "scope `%40acme`; PyPA-normalized PyPI name; lowercase NuGet id, crate (`_` not `-`); namespaced "
+            "maven, composer, golang. No version, subpath or qualifier but oci's required `repository_url`: "
+            "unencoded `host[:port]/path` ending in the name; Docker Hub as `docker.io`, official images in "
+            "`library/`; ECR as `<account>.dkr.ecr.<region>.amazonaws.com(.cn)`, no FIPS/dual-stack alias. "
             "Write `docker` as oci."
         ),
         "parameter_name": (
@@ -646,7 +646,10 @@ DOCS: dict[str, Any] = {
             "notes": (
                 "Write a package whose publisher is not yet attributed to the target as a `candidate`, and reject "
                 "it with evidence once it proves to be someone else's. Which releases contain a secret or a "
-                "vulnerability is recorded in evidence, never as a property or a node per version."
+                "vulnerability is recorded in evidence, never as a property or a node per version. A Go module "
+                "path is written lowercased, as the purl spec requires: `github.com/Azure/azure-sdk-for-go` is "
+                "`pkg:golang/github.com/azure/azure-sdk-for-go`. An oci registry host never carries the default "
+                "port 443: `docker.io:443` is written `docker.io`."
             ),
             "properties": {
                 "purl": "The versionless purl in its canonical spelling; an oci purl keeps only `repository_url`.",

@@ -248,6 +248,8 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
         (
             "pkg:npm/%40acme/sdk",
             "pkg:npm/acme-sdk",
+            # npm names are case-sensitive, and legacy names keep their uppercase.
+            "pkg:npm/JSONStream",
             "pkg:pypi/acme-sdk",
             "pkg:maven/com.acme/sdk",
             "pkg:nuget/newtonsoft.json",
@@ -261,6 +263,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
             "pkg:oci/api?repository_url=docker.io/acme/api",
             "pkg:oci/nginx?repository_url=docker.io/library/nginx",
             "pkg:oci/api?repository_url=ghcr.io/acme/api",
+            "pkg:oci/api?repository_url=registry.acme.com:5000/acme/api",
         ),
         (
             # A version, a subpath, and every qualifier but an oci repository_url.
@@ -286,6 +289,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
             "pkg:composer/sdk",
             "pkg:golang/sdk",
             "pkg:golang/github.com/Acme/sdk",
+            "pkg:golang/github.com/Azure/azure-sdk-for-go",
             "pkg:nuget/Newtonsoft.Json",
             "pkg:cargo/Serde_json",
             "pkg:cargo/serde-json",
@@ -305,6 +309,14 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
             "pkg:oci/api?repository_url=123456789012.dkr-ecr.eu-west-1.on.aws/acme/api",
             "pkg:oci/api?repository_url=123456789012.dkr-ecr-fips.us-east-1.on.aws/acme/api",
             "pkg:oci/api?repository_url=123456789012.dkr-ecr.cn-north-1.on.amazonwebservices.com.cn/acme/api",
+            # A registry port is 1 to 65535, written without leading zeros.
+            "pkg:oci/api?repository_url=registry.acme.com:0/acme/api",
+            "pkg:oci/api?repository_url=registry.acme.com:65536/acme/api",
+            "pkg:oci/api?repository_url=registry.acme.com:/acme/api",
+            "pkg:oci/api?repository_url=registry.acme.com:05000/acme/api",
+            # The default HTTPS port would spell the same registry a second way.
+            "pkg:oci/api?repository_url=registry.acme.com:443/acme/api",
+            "pkg:oci/api?repository_url=docker.io:443/acme/api",
             "npm/acme-sdk",
             "",
             1,
@@ -730,6 +742,7 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
             ({}, image("docker.io/acme/api"), AWS_ACCOUNT),
             ({}, image("ghcr.io/acme/api"), AWS_ACCOUNT),
             ({}, image("registry.acme.com/api"), AWS_ACCOUNT),
+            ({}, image("registry.acme.com:5000/acme/api"), AWS_ACCOUNT),
             ({}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), AWS_ACCOUNT),
             ({}, ("package", {"purl": "pkg:maven/com.acme/sdk"}), GCP_ACCOUNT),
         ),

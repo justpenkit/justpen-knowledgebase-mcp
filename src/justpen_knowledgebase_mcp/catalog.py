@@ -908,8 +908,9 @@ _OCI_COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
 # keeps a qualifier, so the type alone decides whether `?repository_url=` may follow. `docker` is
 # not listed: it has no settled place for the registry, so an image is written as `oci`.
 _PURL_COORDINATES: dict[str, str] = {
-    # The scope's `@` is always `%40`; names follow npm's rule for new packages, which is lowercase.
-    "npm": r"(?:%40[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*",
+    # The scope's `@` is always `%40`, and npm scopes are lowercase. The name is case-sensitive and
+    # written as published: npm lowercases only new names, so legacy ones such as `JSONStream` remain.
+    "npm": r"(?:%40[a-z0-9~-][a-z0-9._~-]*/)?[A-Za-z0-9~-][A-Za-z0-9._~-]*",
     # The PyPA normalized name: lowercase, and every run of `-`, `_` and `.` one `-`.
     "pypi": r"[a-z0-9]+(?:-[a-z0-9]+)*",
     "maven": r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*",
@@ -919,6 +920,7 @@ _PURL_COORDINATES: dict[str, str] = {
     # crates.io treats names differing in case or in `-` versus `_` as one crate; its canonical
     # name is lowercase with every `-` an `_`.
     "cargo": r"[a-z][a-z0-9_]{0,63}",
+    # The purl spec lowercases a golang namespace and name, so a Go module path is written lowercased.
     "golang": r"[a-z0-9_~-]+(?:\.[a-z0-9_~-]+)*(?:/[a-z0-9_~-]+(?:\.[a-z0-9_~-]+)*)+",
     "composer": r"[a-z0-9](?:[_.-]?[a-z0-9]+)*/[a-z0-9](?:(?:[_.]|-{1,2})?[a-z0-9]+)*",
     "oci": _OCI_COMPONENT,
@@ -958,14 +960,22 @@ def _valid_package_purl(text: str) -> bool:
 
 
 def _valid_oci_repository(repository: str, name: str) -> bool:
-    """`<registry host>/<repository path>`, whose last component is the purl name.
+    """`<registry host>[:<port>]/<repository path>`, whose last component is the purl name.
 
     Docker Hub nests nothing, so its path is the namespace and the name, `library` for an
     official image. An alias spelling of Docker Hub or of an ECR registry is refused, so one image
-    is one package.
+    is one package. A port is 1 to 65535 without leading zeros, and never the default 443, which
+    would spell the registry a second way.
     """
     host, _slash, path = repository.partition("/")
-    if host in _DOCKER_HUB_ALIASES or re.fullmatch(_ECR_ALIAS_HOST, host) is not None or _dns_kind(host) is None:
+    hostname, colon, port = host.partition(":")
+    if colon and (re.fullmatch(r"[1-9][0-9]{0,4}", port) is None or int(port) > 65535 or int(port) == 443):
+        return False
+    if (
+        hostname in _DOCKER_HUB_ALIASES
+        or re.fullmatch(_ECR_ALIAS_HOST, hostname) is not None
+        or _dns_kind(hostname) is None
+    ):
         return False
     components = path.split("/")
     if any(re.fullmatch(_OCI_COMPONENT, component) is None for component in components):
@@ -1375,7 +1385,8 @@ _CLOUD_HOST_PATTERNS: dict[str, _HostPattern] = {
 _SERVICE_PROVIDERS = ("aws", "azure", "gcp")
 _BUCKET_ACCOUNT_PROVIDER: dict[str, str] = {"aws_s3": "aws", "gcp_gcs": "gcp", "azure_blob": "azure"}
 # The provider of each cloud registry an oci image can live in, by its `repository_url` host. Every
-# other registry, Docker Hub and GHCR among them, belongs to no cloud account.
+# other registry, Docker Hub, GHCR and any host written with a port among them, belongs to no cloud
+# account.
 _REGISTRY_ACCOUNT_PROVIDER: dict[str, str] = {
     # ECR private, with its China partition host, then ECR Public. `_valid_oci_repository` refuses
     # the FIPS and dual-stack aliases before a purl gets here.
