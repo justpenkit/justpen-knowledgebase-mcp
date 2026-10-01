@@ -130,7 +130,7 @@ brainstorm_model: opus           # model alias for approach generation; candidat
 
 cross_model_review_mode: auto     # auto | off (default: auto); auto sends review diffs and documents to the peer
 cross_model_peer: codex           # codex | claude | grok | cursor | composer | opencode
-cross_model_model: gpt-6-sol      # model alias or full id for the resolved peer target (no default)
+cross_model_model: gpt-6.1-sol    # model alias or full id for the resolved peer target (no default)
 cross_model_effort: high          # reasoning effort for the resolved peer target (no default)
 
 # --- ce-work implementation engine ---
