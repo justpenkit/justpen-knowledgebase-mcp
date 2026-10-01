@@ -250,6 +250,7 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
             "pkg:npm/acme-sdk",
             # npm names are case-sensitive, and legacy names keep their uppercase.
             "pkg:npm/JSONStream",
+            "pkg:npm/%40acme/SDK",
             "pkg:pypi/acme-sdk",
             "pkg:maven/com.acme/sdk",
             "pkg:nuget/newtonsoft.json",
@@ -264,6 +265,8 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
             "pkg:oci/nginx?repository_url=docker.io/library/nginx",
             "pkg:oci/api?repository_url=ghcr.io/acme/api",
             "pkg:oci/api?repository_url=registry.acme.com:5000/acme/api",
+            "pkg:oci/api?repository_url=registry.acme.com:1/acme/api",
+            "pkg:oci/api?repository_url=registry.acme.com:65535/acme/api",
         ),
         (
             # A version, a subpath, and every qualifier but an oci repository_url.
@@ -316,6 +319,11 @@ FORMATS: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {
             "pkg:oci/api?repository_url=registry.acme.com:05000/acme/api",
             # The default HTTPS port would spell the same registry a second way.
             "pkg:oci/api?repository_url=registry.acme.com:443/acme/api",
+            # An alias spelling stays refused when it carries a port, and docker.io with any port
+            # is still Docker Hub under another spelling.
+            "pkg:oci/api?repository_url=index.docker.io:5000/acme/api",
+            "pkg:oci/api?repository_url=123456789012.dkr.ecr-fips.us-east-1.amazonaws.com:5000/acme/api",
+            "pkg:oci/api?repository_url=docker.io:5000/acme/api",
             "pkg:oci/api?repository_url=docker.io:443/acme/api",
             "npm/acme-sdk",
             "",
@@ -743,6 +751,9 @@ ENDPOINT_CHECKS: dict[str, tuple[tuple[Endpoint, ...], tuple[Endpoint, ...]]] = 
             ({}, image("ghcr.io/acme/api"), AWS_ACCOUNT),
             ({}, image("registry.acme.com/api"), AWS_ACCOUNT),
             ({}, image("registry.acme.com:5000/acme/api"), AWS_ACCOUNT),
+            # A cloud registry host written with a port is not the account's registry.
+            ({}, image("123456789012.dkr.ecr.us-east-1.amazonaws.com:5000/acme/api"), AWS_ACCOUNT),
+            ({}, image("gcr.io:5000/my-project-123/api"), GCP_ACCOUNT),
             ({}, ("package", {"purl": "pkg:npm/%40acme/sdk"}), AWS_ACCOUNT),
             ({}, ("package", {"purl": "pkg:maven/com.acme/sdk"}), GCP_ACCOUNT),
         ),

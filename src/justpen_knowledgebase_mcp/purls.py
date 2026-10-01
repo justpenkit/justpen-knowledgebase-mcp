@@ -74,14 +74,15 @@ def _valid_oci_repository(repository: str, name: str, valid_host: Callable[[str]
     Docker Hub nests nothing, so its path is the namespace and the name, `library` for an
     official image. An alias spelling of Docker Hub or of an ECR registry is refused, so one image
     is one package. A port is 1 to 65535 without leading zeros, and never the default 443, which
-    would spell the registry a second way.
+    would spell the registry a second way; Docker Hub takes no port at all.
     """
     host, _slash, path = repository.partition("/")
     hostname, colon, port = host.partition(":")
     if colon and (re.fullmatch(r"[1-9][0-9]{0,4}", port) is None or int(port) > 65535 or int(port) == 443):
         return False
     if (
-        hostname in _DOCKER_HUB_ALIASES
+        (colon and hostname == "docker.io")
+        or hostname in _DOCKER_HUB_ALIASES
         or re.fullmatch(_ECR_ALIAS_HOST, hostname) is not None
         or not valid_host(hostname)
     ):
