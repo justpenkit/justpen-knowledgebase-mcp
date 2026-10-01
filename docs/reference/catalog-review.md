@@ -1,11 +1,12 @@
-# Catalog v3 design review
+# Catalog design review
 
 Why each type is shaped as it is. Catalog v3 reviewed every catalog v2 type against the same questions:
 what real thing it models, whether one thing can get two spellings or two things one key, whether its
 required properties are what tools actually emit, and whether a merge can clobber a better value with
 a worse one. The answers live in each type's description, which `kb_types` publishes and the
 [catalog reference](catalog.md) renders. This page records the verdicts and the defects the review
-found, each with the regression test that holds the fix.
+found, each with the regression test that holds the fix. Later versions answer the same questions for
+the types they add, and mark those rows with the version: catalog v5 added `advisory` and `package`.
 
 ## Defects
 

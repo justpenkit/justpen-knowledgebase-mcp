@@ -424,8 +424,8 @@ def render_coverage() -> str:
         "# ASM and OSINT coverage",
         "",
         "Every table below is generated from the coverage fixtures under `tests/fixtures/asm/`, one per"
-        " source. Each fixture holds output derived from the tool's documented schema, a mapping that sends"
-        " every emitted field to a catalog property, to evidence or to `non storable` with a reason, and"
+        " source. Each fixture holds the source's output, either derived from its documented schema or"
+        " recorded from the live service, together with a mapping that sends every emitted field to a catalog property, to evidence or to `non storable` with a reason, and"
         " the `kb_write` batches an agent sends for that output. The test suite holds the three to each other"
         " in both directions: an unmapped field, a mapped value that no write carries and a written value no"
         " field explains all fail. Regenerate the page with `make docs-catalog`.",

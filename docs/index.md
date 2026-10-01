@@ -27,12 +27,13 @@ telemetry only; it never partitions graph data.
     tabulated in [Catalog types and formats](reference/catalog.md).
 - Required identity properties are strictly validated; additional JSON
     properties remain available for scanner-specific facts.
-- Catalog v4 models domains, subdomains, IP addresses and CIDRs, ASNs, DNS
+- Catalog v5 models domains, subdomains, IP addresses and CIDRs, ASNs, DNS
     records, technologies, TLS cipher suites and fingerprints, HTTP fingerprints,
     SSH host keys, registrars, organizations, weaknesses, ports and services,
-    findings, parameters, certificates, endpoints, CVEs, storage buckets,
-    identity tenants, repositories, exposed secrets, MTA-STS policies, domain
-    registrations, and email and phone contacts.
+    findings, parameters, certificates, endpoints, vulnerability advisories
+    (CVE, GHSA and OSV ids), storage buckets, identity tenants, repositories,
+    published packages and container images, exposed secrets, MTA-STS policies,
+    domain registrations, and email and phone contacts.
 - Every asset node carries server-managed inventory state: `ownership`
     (`owned`, `dependency`, `candidate`, `rejected`) and a separate
     `authorization` (`in_scope`, `out_of_scope`, `unknown`). Only `in_scope`
@@ -50,8 +51,8 @@ telemetry only; it never partitions graph data.
     jobs with explicit pending, failure, retry, and retention state.
 - Read and search responses expose pagination, truncation, index coverage, and
     canonical property fallback rather than silently omitting unknown results.
-- Catalog v1, v2 and v3 workspaces, and workspaces created before schema
-    version 4, fail closed at startup; catalog v4 requires a new workspace.
+- Catalog v1, v2, v3 and v4 workspaces, and workspaces created before schema
+    version 4, fail closed at startup; catalog v5 requires a new workspace.
 
 ## Contributors
 

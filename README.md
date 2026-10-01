@@ -8,11 +8,13 @@ and local files, without an LLM, embedding service, or separate database server.
 
 ## Features
 
-- **Catalog v4 recon graph:** domains, subdomains, IP addresses and CIDRs, ASNs,
+- **Catalog v5 recon graph:** domains, subdomains, IP addresses and CIDRs, ASNs,
     DNS records, technologies, TLS cipher suites and fingerprints, registrars, organizations, weaknesses,
     parent-scoped
     ports/services/findings/DKIM selectors/parameters, certificates, endpoints,
-    and CVEs with server-generated identities and strict required properties.
+    published packages and container images, and vulnerability advisories (CVE,
+    GHSA and OSV ids) with server-generated identities and strict required
+    properties.
 - **Inventory state:** every asset node is `owned`, `dependency`, `candidate`
     or `rejected`, with a separate `in_scope`/`out_of_scope`/`unknown`
     authorization. Only `in_scope` authorizes active testing, and claims need
@@ -63,8 +65,8 @@ Call `kb_types` to discover the available schemas. Start with the [graph workflo
 for concurrency, backups, and upgrades, and [telemetry](docs/guides/telemetry.md)
 for exporter configuration.
 
-Catalog v4 and schema version 4 reject workspaces created with catalog v1, v2
-or v3 at startup. Create a new workspace rather than pointing this version at
+Catalog v5 and schema version 4 reject workspaces created with catalog v1, v2,
+v3 or v4 at startup. Create a new workspace rather than pointing this version at
 older data.
 
 ## Development

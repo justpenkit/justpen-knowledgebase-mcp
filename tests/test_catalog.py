@@ -1,4 +1,4 @@
-"""Catalog v4 manifest, schema, and strict validator contracts."""
+"""Catalog v5 manifest, schema, and strict validator contracts."""
 
 from __future__ import annotations
 
@@ -132,18 +132,18 @@ def _invalid(kind: str, type_name: str, properties: dict[str, object]) -> None:
         validate_record(kind, type_name, properties)
 
 
-V3_FINGERPRINT = "b13948852d5624c5b7c4e51fe33a0216473ca8b68e8356fcb97982f0acad513a"
+V4_FINGERPRINT = "2a82213a7a4019e9b6a8bcd6b86584fa237143de9d3af8f15d8f5e77f3495f33"
 
 
-def test_manifest_has_only_catalog_v4_types_and_stable_fingerprint() -> None:
+def test_manifest_has_only_catalog_v5_types_and_stable_fingerprint() -> None:
     manifest = catalog_manifest()
 
-    assert CATALOG_VERSION == 4
-    assert manifest["version"] == 4
+    assert CATALOG_VERSION == 5
+    assert manifest["version"] == 5
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
-    assert CATALOG_FINGERPRINT != V3_FINGERPRINT
-    assert CATALOG_FINGERPRINT == "05d1156694278481ef633b4698ff8c4eae5bf6cc15ac024a6aebbd88b0137599"
+    assert CATALOG_FINGERPRINT != V4_FINGERPRINT
+    assert CATALOG_FINGERPRINT == "67d6e1c8cea13662aae415f2f390b86024c9a78306f61da0cb258813d34fa8b2"
 
 
 INVENTORY = {
