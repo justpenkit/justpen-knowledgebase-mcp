@@ -146,13 +146,10 @@ brainstorm_model: opus           # model alias for approach generation; candidat
 # or commands here. A candidate equivalent to the current host/default is skipped;
 # a different explicit model in the same harness remains eligible.
 
-# work_engine_mode: prefer        # off | prefer | require (default: off)
-# work_engine_preferences:
-#   - harness: cursor
-#     model: composer
-#   - harness: codex
-#     model: "gpt-6-sol"
-#   - harness: claude             # configured default model
+work_engine_mode: prefer          # off | prefer | require (default: off)
+work_engine_preferences:
+  - harness: claude
+    model: sonnet                 # latest Sonnet; the session model keeps verification, commits and review
 
 # Reasoning effort for the external worker, per harness. Each value is one of
 # that harness's own effort levels. An unset harness keeps its own default:
