@@ -71,8 +71,8 @@ docs_root: .compound-engineering/artifacts
 # on your session model and the run says so. Invalid/commented/missing -> no
 # elevation.
 
-# plan_model: fable              # model alias for plan authoring; candidate preference when a Bake-off runs (no default)
-# brainstorm_model: fable        # model alias for approach generation; candidate preference when a Bake-off runs (no default)
+plan_model: opus                 # model alias for plan authoring; candidate preference when a Bake-off runs (no default)
+brainstorm_model: opus           # model alias for approach generation; candidate preference when a Bake-off runs (no default)
 
 # --- PR concept teaching (ce-commit-push-pr) ---
 # When a PR introduces a concept new to the codebase, the generated PR
@@ -128,10 +128,10 @@ docs_root: .compound-engineering/artifacts
 # xhigh; cursor/composer routes take none. A value the peer cannot honor skips
 # the pass with a stated reason -- never substituted.
 
-# cross_model_review_mode: off   # auto | off (default: auto)
-# cross_model_peer: codex          # codex | claude | grok | cursor | composer | opencode
-# cross_model_model: fable         # model alias or full id for the resolved peer target (no default)
-# cross_model_effort: xhigh        # reasoning effort for the resolved peer target (no default)
+cross_model_review_mode: auto     # auto | off (default: auto); auto sends review diffs and documents to the peer
+cross_model_peer: codex           # codex | claude | grok | cursor | composer | opencode
+cross_model_model: gpt-6.1-sol    # model alias or full id for the resolved peer target (no default)
+cross_model_effort: high          # reasoning effort for the resolved peer target (no default)
 
 # --- ce-work implementation engine ---
 # Standing preferences for who authors implementation units. Live
@@ -146,22 +146,21 @@ docs_root: .compound-engineering/artifacts
 # or commands here. A candidate equivalent to the current host/default is skipped;
 # a different explicit model in the same harness remains eligible.
 
-# work_engine_mode: prefer        # off | prefer | require (default: off)
-# work_engine_preferences:
-#   - harness: cursor
-#     model: composer
-#   - harness: codex
-#     model: "gpt-6-sol"
-#   - harness: claude             # configured default model
+work_engine_mode: prefer          # off | prefer | require (default: off)
+work_engine_preferences:
+  - harness: claude
+    model: sonnet                 # latest Sonnet; the session model keeps verification, commits and review
+  - harness: codex
+    model: gpt-6-sol              # fallback when the Claude worker is unavailable; sends code to OpenAI
 
 # Reasoning effort for the external worker, per harness. Each value is one of
 # that harness's own effort levels. An unset harness keeps its own default:
 # Codex and Claude at high, native Grok at xhigh, OpenCode with no variant.
 # Cursor routes take no effort. A map in config.local.yaml replaces this one.
 
-# work_engine_effort:
-#   codex: xhigh
-#   claude: max
+work_engine_effort:
+  claude: medium
+  codex: medium
 
 # --- ce-promote ---
 # Written automatically when you decline the Spiral setup offer in /ce-promote.
@@ -204,3 +203,6 @@ docs_root: .compound-engineering/artifacts
 #   - source: https://github.com/org/rails-ce-pack    # git, cached at ref
 #     ref: v1.2.0
 #     pack: [rails, inertia]
+
+packs:
+  - source: compound-packs
