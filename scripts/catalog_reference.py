@@ -52,8 +52,8 @@ GATES = [
     (
         "Inventory",
         "`inventory` per node type",
-        "A new node of a `carries` type without an ownership state, and inventory state on a type whose"
-        " declaration does not allow it.",
+        "A new node of a `carries` type without an ownership state, an ownership outside the type's"
+        " `allowed_ownership`, and inventory state on a type whose declaration does not allow it.",
     ),
     (
         "Parent scope",
@@ -187,6 +187,8 @@ def _type_section(kind: str, name: str, definition: dict[str, Any]) -> list[str]
     if kind == "nodes":
         facts.append(f"**Parent scope:** {_scope(definition['identity'])}")
         facts.append(f"**Inventory:** `{definition['inventory']}`")
+        if "allowed_ownership" in definition:
+            facts.append(f"**Allowed ownership:** {_code(definition['allowed_ownership'])}")
     else:
         facts.append(f"**Sources:** {_code(definition['sources'])}")
         facts.append(f"**Targets:** {_code(definition['targets'])}")

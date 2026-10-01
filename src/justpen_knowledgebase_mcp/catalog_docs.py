@@ -26,7 +26,10 @@ DOCS: dict[str, Any] = {
         "required_nonnull": "A required property may not be null or absent.",
     },
     "inventory": {
-        "carries": "The node holds its own ownership and authorization.",
+        "carries": (
+            "The node holds its own ownership and authorization. A type that lists `allowed_ownership` accepts "
+            "only those ownership values."
+        ),
         "inherits": (
             "The node is parent-scoped and inherits ownership and authorization from its parent-scope chain, "
             "which ends at a node that carries them."
@@ -172,6 +175,14 @@ DOCS: dict[str, Any] = {
         "mx_pattern_list": (
             "An array of RFC 8461 `mx` patterns, each a lowercase dns_name or `*.` followed by one, sorted "
             "ascending with no duplicate, so one policy has one spelling."
+        ),
+        "package_purl": (
+            "A versionless purl of at most 512 characters, `pkg:<type>/<namespace>/<name>`, of type npm, pypi, "
+            "maven, nuget, gem, cargo, golang, composer or oci, in its canonical spelling and never rewritten: an "
+            "npm scope as `%40acme`, a PyPI name normalized by the PyPA rule, a namespace for maven, composer and "
+            "golang. No version, subpath or qualifier, except the `repository_url` an oci purl requires: the "
+            "registry host and repository path, unencoded and ending in the name, with Docker Hub as `docker.io` "
+            "and its official images under `library/`. A `docker` purl is refused; write it as oci."
         ),
         "parameter_name": (
             "1 to 128 printable ASCII characters without space, `&`, `=`, or `#`; one single parameter name, "
@@ -614,6 +625,25 @@ DOCS: dict[str, Any] = {
                 "registry": "The RIR that issued the handle.",
                 "handle": "The RIR object handle, case preserved exactly as the registry publishes it.",
                 "name": "The organization's name as the registry publishes it; free text, so never identity.",
+            },
+        },
+        "package": {
+            "summary": (
+                "A package or container image the target publishes to a registry, keyed on its versionless purl, "
+                "so every release of it is one node. An image keeps the registry repository it lives in."
+            ),
+            "excludes": (
+                "Not a component the target runs or depends on: that is a `technology` reached through "
+                "`runs_technology`, so a package is never a `dependency`. Not a release: versions, tags and "
+                "digests stay in evidence and in a finding's matcher."
+            ),
+            "notes": (
+                "Write a package whose publisher is not yet attributed to the target as a `candidate`, and reject "
+                "it with evidence once it proves to be someone else's. Which releases contain a secret or a "
+                "vulnerability is recorded in evidence, never as a property or a node per version."
+            ),
+            "properties": {
+                "purl": "The versionless purl in its canonical spelling; an oci purl keeps only `repository_url`.",
             },
         },
         "parameter": {

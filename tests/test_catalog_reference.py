@@ -209,6 +209,8 @@ def test_every_type_section_shows_props_identity_and_checks(page: str, kind: str
             expected_scope = EMPTY if scope is None else f"`{scope['relation']}` (source)"
             assert f"**Parent scope:** {expected_scope}" in text, name
             assert f"**Inventory:** `{definition['inventory']}`" in text, name
+            if "allowed_ownership" in definition:
+                assert f"**Allowed ownership:** {_code(definition['allowed_ownership'])}" in text, name
         else:
             assert f"**Sources:** {_code(definition['sources'])}" in text, name
             assert f"**Targets:** {_code(definition['targets'])}" in text, name
@@ -270,7 +272,7 @@ REVIEW_PAGE = "docs/reference/catalog-review.md"
 # The types each catalog version added, by version. A rename counts as an addition: `advisory`
 # replaced the v2 `cve` in v5. Every other row is a v2 type the v3 review kept or changed.
 ADDITIONS = {
-    "nodes": {3: {"whois_registration", "cloud_account", "cloud_resource"}, 5: {"advisory"}},
+    "nodes": {3: {"whois_registration", "cloud_account", "cloud_resource"}, 5: {"advisory", "package"}},
     "relations": {3: {"has_registration", "hosted_on", "in_account", "authenticates", "links_to"}, 5: {"aliases"}},
 }
 V2_SURVIVORS = {"nodes": 30, "relations": 44}

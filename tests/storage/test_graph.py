@@ -2091,6 +2091,41 @@ async def test_a_rejected_identity_and_the_subdomains_under_it_cannot_be_re_crea
         assert await node_count(kb) == before
 
 
+SDK = {"type": "package", "properties": {"purl": "pkg:npm/%40acme/sdk"}}
+
+
+async def test_a_package_is_never_a_dependency_at_creation_or_by_id(tmp_path):
+    """AE10, R10, KTD5: the refusal names the type and writes nothing; reclassifying a candidate
+    package by ID is refused too, while every other carrying type still accepts `dependency`."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        lodash = {"type": "package", "properties": {"purl": "pkg:npm/lodash"}}
+        dependency = {"ownership": "dependency", "evidence_add": [evidence]}
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[0\]: a package cannot have ownership dependency"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{**lodash, **dependency}]}))
+        assert await node_count(kb) == 0
+        (sdk,) = await candidates(kb, SDK)
+        with pytest.raises(InvalidParamsError, match=r"^nodes\[0\]: a package cannot have ownership dependency"):
+            await kb.write(WriteRequest.model_validate({"nodes": [{"id": sdk, **dependency}]}))
+        assert (await stored_state(kb, sdk))[0] == "candidate"
+        written = await kb.write(WriteRequest.model_validate({"nodes": [{**ACME, **dependency}]}))
+        assert written["nodes"][0]["ownership"] == "dependency"
+
+
+async def test_a_rejected_package_keeps_only_its_identity_and_cannot_be_re_created(tmp_path):
+    """AE6, R11: a package from an unknown publisher is a candidate; once rejected it keeps its
+    purl alone, and a later identity write of the same purl is refused as a rejected identity."""
+    async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:
+        evidence = (await evidence_fixture(kb, 1))[0]
+        stranger = {"type": "package", "properties": {"purl": "pkg:npm/acme-sdk", "publisher": "unknown"}}
+        (identifier,) = await candidates(kb, stranger)
+        assert (await reject(kb, identifier, evidence))["ownership"] == "rejected"
+        assert (await record_of(kb, "nodes", identifier))["properties"] == {"purl": "pkg:npm/acme-sdk"}
+        with pytest.raises(RejectedIdentityError, match=r"^REJECTED_IDENTITY$") as refused:
+            await kb.write(WriteRequest.model_validate({"nodes": [{**stranger, "ownership": "candidate"}]}))
+        assert rejected_items(refused) == [("nodes[0]", identifier)]
+
+
 async def test_a_new_subdomain_under_a_domain_the_same_batch_rejects_is_refused(tmp_path):
     """R17, R26: the batch's planned rejection counts like a stored one, and nothing is written."""
     async with KnowledgeBase.open(ServerConfig(workspace_dir=tmp_path)) as kb:

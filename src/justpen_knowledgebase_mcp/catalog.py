@@ -79,6 +79,7 @@ _FORMATS: dict[str, int] = {
     "mta_sts": 1,
     "multiline_text_4096": 1,
     "mx_pattern_list": 1,
+    "package_purl": 1,
     "parameter_name": 1,
     "partial_date": 1,
     "phone_e164": 1,
@@ -350,6 +351,12 @@ _NODES: dict[str, dict[str, Any]] = {
         "identity": _identity(["registry", "handle"]),
         "required": {"registry": _RIRS, "handle": "rir_handle"},
         "optional": {"name": "printable_text_200"},
+    },
+    "package": {
+        "inventory": "carries",
+        "allowed_ownership": ["owned", "candidate", "rejected"],
+        "identity": _identity(["purl"]),
+        "required": {"purl": "package_purl"},
     },
     "parameter": {
         "inventory": "inherits",
@@ -713,6 +720,19 @@ _INVENTORY: dict[str, list[str]] = {
 _INVENTORY_DECLARATIONS = ("carries", "inherits", "none")
 
 
+def _ensure_ownership_narrowing(name: str, definition: Mapping[str, Any]) -> None:
+    """Refuse an `allowed_ownership` list on a type that holds no ownership, or naming a non-vocabulary value.
+
+    The list narrows the ownership vocabulary, so it means nothing anywhere else.
+    """
+    if "allowed_ownership" not in definition:
+        return
+    if definition["inventory"] != "carries":
+        raise RuntimeError(f"{name} does not carry inventory state and cannot narrow its ownership")
+    if not set(definition["allowed_ownership"]) <= set(_INVENTORY["ownership"]):
+        raise RuntimeError(f"{name} allows an ownership outside the inventory vocabulary")
+
+
 def _ensure_inventory_contract() -> None:
     """Fail at import if a node type's inventory declaration leaves its state unresolvable.
 
@@ -728,6 +748,7 @@ def _ensure_inventory_contract() -> None:
             raise RuntimeError(f"{name} is parent-scoped and must be declared inherits")
         if name not in scoped and value == "inherits":
             raise RuntimeError(f"{name} is not parent-scoped and cannot be declared inherits")
+        _ensure_ownership_narrowing(name, definition)
     for child, relation in scoped.items():
         for parent in cast("list[str]", _RELATIONS[relation]["sources"]):
             if parent not in scoped and _NODES[parent]["inventory"] != "carries":
@@ -854,6 +875,62 @@ _ADVISORY_ID_GRAMMARS: dict[str, str] = {
 def _valid_advisory_id(text: str) -> bool:
     grammar = _ADVISORY_ID_GRAMMARS.get(text.split("-", 1)[0])
     return grammar is not None and re.fullmatch(grammar, text) is not None
+
+
+# One OCI distribution-spec repository path component: lowercase, separators only between runs.
+_OCI_COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+# The canonical `namespace/name` part of a versionless purl, per accepted purl type. Only `oci`
+# keeps a qualifier, so the type alone decides whether `?repository_url=` may follow. `docker` is
+# not listed: it has no settled place for the registry, so an image is written as `oci`.
+_PURL_COORDINATES: dict[str, str] = {
+    # The scope's `@` is always `%40`; names follow npm's rule for new packages, which is lowercase.
+    "npm": r"(?:%40[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*",
+    # The PyPA normalized name: lowercase, and every run of `-`, `_` and `.` one `-`.
+    "pypi": r"[a-z0-9]+(?:-[a-z0-9]+)*",
+    "maven": r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*",
+    "nuget": r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*",
+    "gem": r"[A-Za-z0-9_][A-Za-z0-9._-]*",
+    "cargo": r"[A-Za-z][A-Za-z0-9_-]{0,63}",
+    "golang": r"[a-z0-9_~-]+(?:\.[a-z0-9_~-]+)*(?:/[a-z0-9_~-]+(?:\.[a-z0-9_~-]+)*)+",
+    "composer": r"[a-z0-9](?:[_.-]?[a-z0-9]+)*/[a-z0-9](?:(?:[_.]|-{1,2})?[a-z0-9]+)*",
+    "oci": _OCI_COMPONENT,
+}
+# Docker Hub is spelled `docker.io`; these hosts name the same registry under another spelling.
+_DOCKER_HUB_ALIASES = frozenset(
+    {"index.docker.io", "registry-1.docker.io", "registry.hub.docker.com", "hub.docker.com"}
+)
+
+
+def _valid_package_purl(text: str) -> bool:
+    """A purl with no version, subpath or qualifier, except the registry repository of an image."""
+    if len(text) > 512 or not text.startswith("pkg:") or "@" in text or "#" in text:
+        return False
+    path, separator, query = text.removeprefix("pkg:").partition("?")
+    purl_type, _slash, coordinates = path.partition("/")
+    grammar = _PURL_COORDINATES.get(purl_type)
+    if grammar is None or re.fullmatch(grammar, coordinates) is None:
+        return False
+    if purl_type != "oci":
+        return separator == ""
+    key, _equals, repository = query.partition("=")
+    return key == "repository_url" and _valid_oci_repository(repository, coordinates)
+
+
+def _valid_oci_repository(repository: str, name: str) -> bool:
+    """`<registry host>/<repository path>`, whose last component is the purl name.
+
+    Docker Hub nests nothing, so its path is the namespace and the name, `library` for an
+    official image.
+    """
+    host, _slash, path = repository.partition("/")
+    if host in _DOCKER_HUB_ALIASES or _dns_kind(host) is None:
+        return False
+    components = path.split("/")
+    if any(re.fullmatch(_OCI_COMPONENT, component) is None for component in components):
+        return False
+    if host == "docker.io" and len(components) != 2:
+        return False
+    return components[-1] == name
 
 
 # One dedicated node type per version tag. Diverting on the bare prefix left a malformed tag with
@@ -1759,6 +1836,7 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "media_type": lambda text: _MEDIA_TYPE.fullmatch(text) is not None,
         "method": lambda text: re.fullmatch(r"[A-Z][A-Z0-9!#$%&'*+.^_`|~-]{0,31}", text) is not None,
         "mta_sts": _valid_mta_sts,
+        "package_purl": _valid_package_purl,
         "multiline_text_4096": lambda text: (
             1 <= len(text) <= 4096 and all(char in "\n\t" or char.isprintable() for char in text)
         ),

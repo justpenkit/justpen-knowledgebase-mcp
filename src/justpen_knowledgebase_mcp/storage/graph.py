@@ -695,17 +695,29 @@ def _refuse_rejected_subtrees(
 
 
 def _plan_carried_state(address: str, plan: _PreparedMutation, mutation: NodeWrite) -> None:
-    """Apply creation state or the ownership transition table; an identity match keeps its stored state."""
+    """Apply creation state or the ownership transition table; an identity match keeps its stored state.
+
+    A type's `allowed_ownership`, where declared, narrows the vocabulary at creation and by ID.
+    """
     if plan.match == "identity":
         return
     row = plan.row
     evidenced = bool(mutation.evidence_add)
+    definition = catalog_view()["nodes"][plan.type_name]
+    allowed = definition.get("allowed_ownership", catalog_view()["inventory"]["ownership"])
     if plan.match == "created":
         if mutation.ownership is None:
+            creatable = ", ".join(value for value in allowed if value != "rejected")
             raise InvalidParamsError(
-                f"{address}: ownership is required to create a {plan.type_name}; give owned, dependency or candidate"
+                f"{address}: ownership is required to create a {plan.type_name}; give "
+                + " or ".join(creatable.rsplit(", ", 1))
             )
         row["authorization"] = "unknown"
+    if mutation.ownership is not None and mutation.ownership not in allowed:
+        raise InvalidParamsError(
+            f"{address}: a {plan.type_name} cannot have ownership {mutation.ownership}; "
+            f"its allowed_ownership is {', '.join(allowed)}"
+        )
     if mutation.ownership is not None and mutation.ownership != row["ownership"]:
         _check_ownership_transition(address, plan.type_name, row["ownership"], mutation.ownership, evidenced=evidenced)
         row["ownership"] = mutation.ownership

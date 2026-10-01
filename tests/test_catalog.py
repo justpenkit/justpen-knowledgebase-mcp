@@ -55,6 +55,7 @@ NODE_TYPES = {
     "organization",
     "email_address",
     "host_key",
+    "package",
     "http_fingerprint",
     "identity_tenant",
     "mta_sts_policy",
@@ -140,7 +141,7 @@ def test_manifest_has_only_catalog_v4_types_and_stable_fingerprint() -> None:
     assert set(manifest["nodes"]) == NODE_TYPES
     assert set(manifest["relations"]) == RELATION_TYPES
     assert CATALOG_FINGERPRINT != V3_FINGERPRINT
-    assert CATALOG_FINGERPRINT == "74c20866f177cb0ec7fdb54a29a467a519d0ea9e86cfdfc624891267e5154cf4"
+    assert CATALOG_FINGERPRINT == "431b0e698a4e0cad7b863fe9194a52be4688c0bcae67fcdbc96997c6ac8f56b0"
 
 
 INVENTORY = {
@@ -157,6 +158,7 @@ INVENTORY = {
         "ip_address",
         "ip_cidr",
         "organization",
+        "package",
         "phone",
         "repository",
         "secret",
@@ -188,11 +190,40 @@ def test_every_node_type_declares_exactly_one_inventory_value() -> None:
         declared.setdefault(definition["inventory"], set()).add(name)
 
     assert declared == INVENTORY
-    assert {value: len(names) for value, names in declared.items()} == {"carries": 17, "inherits": 7, "none": 10}
+    assert {value: len(names) for value, names in declared.items()} == {"carries": 18, "inherits": 7, "none": 10}
     assert catalog_manifest()["inventory"] == {
         "ownership": ["owned", "dependency", "candidate", "rejected"],
         "authorization": ["in_scope", "out_of_scope", "unknown"],
     }
+
+
+def test_only_a_package_narrows_the_ownerships_it_accepts() -> None:
+    """KTD5, R10: a package is never a dependency; every other carrying type keeps all four."""
+    narrowed = {
+        name: definition["allowed_ownership"]
+        for name, definition in catalog_manifest()["nodes"].items()
+        if "allowed_ownership" in definition
+    }
+
+    assert narrowed == {"package": ["owned", "candidate", "rejected"]}
+
+
+@pytest.mark.parametrize(
+    ("type_name", "allowed", "message"),
+    [
+        ("advisory", ["owned", "candidate", "rejected"], "advisory does not carry inventory state"),
+        ("port", ["owned", "candidate", "rejected"], "port does not carry inventory state"),
+        ("package", ["owned", "sometimes"], "package allows an ownership outside"),
+    ],
+)
+def test_inventory_contract_refuses_an_ownership_list_state_cannot_honor(
+    monkeypatch: pytest.MonkeyPatch, type_name: str, allowed: list[str], message: str
+) -> None:
+    monkeypatch.setitem(
+        catalog_module._NODES, type_name, {**catalog_module._NODES[type_name], "allowed_ownership": allowed}
+    )
+    with pytest.raises(RuntimeError, match=message):
+        catalog_module._ensure_inventory_contract()
 
 
 @pytest.mark.parametrize(
@@ -293,6 +324,8 @@ def test_manifest_declares_property_and_parent_scoped_identity() -> None:
         ("asn", {"value": 15169, "name": "GOOGLE", "country": "US", "rir": "arin"}),
         ("ip_cidr", {"value": "8.8.8.0/24", "version": 4, "netname": "GOGL", "country": "US", "rir": "arin"}),
         ("organization", {"registry": "arin", "handle": "GOGL", "name": "Google LLC"}),
+        ("package", {"purl": "pkg:npm/%40acme/sdk"}),
+        ("package", {"purl": "pkg:oci/api?repository_url=123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/api"}),
         ("spf_record", {"value": "v=spf1"}),
         ("spf_record", {"value": "v=spf1  include:example.com -all"}),
         ("spf_record", {"value": "v=spf1 " + "a" * 4089}),
@@ -648,6 +681,8 @@ def test_valid_node_fields_and_boundaries(type_name: str, properties: dict[str, 
         ("registrar", {"iana_id": 65536, "name": "over"}),
         ("registrar", {"iana_id": 292}),
         ("registrar", {"iana_id": "292", "name": "string id"}),
+        ("package", {"purl": "pkg:npm/%40acme/sdk@1.2.3"}),
+        ("package", {"value": "pkg:npm/%40acme/sdk"}),
         ("cwe", {"value": "cwe-79"}),
         ("cwe", {"value": "CWE-"}),
         ("cwe", {"value": "CWE-0079x"}),
@@ -1561,6 +1596,36 @@ def test_an_advisory_id_passes_a_closed_prefix_allow_list() -> None:
         validate_record("nodes", "advisory", {"value": "RHSA-2025:1234"})
 
     assert failure.value.message == "/properties/value: expected advisory_id"
+
+
+def test_a_package_purl_passes_a_closed_type_allow_list() -> None:
+    """KTD4: each listed purl type has its own canonical-name rule; `docker` is not listed, so an
+    image is written as `oci`, and a refused purl names the rule."""
+    assert set(catalog_module._PURL_COORDINATES) == {
+        "npm",
+        "pypi",
+        "maven",
+        "nuget",
+        "gem",
+        "cargo",
+        "golang",
+        "composer",
+        "oci",
+    }
+    with pytest.raises(ExpectedValidationError) as failure:
+        validate_record("nodes", "package", {"purl": "pkg:docker/acme/api"})
+
+    assert failure.value.message == "/properties/purl: expected package_purl"
+
+
+def test_one_image_name_in_two_registries_is_two_packages() -> None:
+    """AE9, R9: the registry repository is identity, so the target's ECR `api` image and a Docker
+    Hub `api` image are two nodes; a tag is never part of the purl, so every tag is one node."""
+    ecr = "pkg:oci/api?repository_url=123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/api"
+    hub = "pkg:oci/api?repository_url=docker.io/acme/api"
+
+    assert identity_key("nodes", "package", {"purl": ecr}) != identity_key("nodes", "package", {"purl": hub})
+    _invalid("nodes", "package", {"purl": ecr + "&tag=1.4"})
 
 
 @pytest.mark.parametrize(

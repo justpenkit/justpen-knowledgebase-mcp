@@ -317,6 +317,17 @@ def test_types_publish_each_node_inventory_declaration_and_the_vocabulary(type_n
     assert TypesResult.model_validate(result).inventory == result["inventory"]
 
 
+def test_types_publish_the_ownerships_a_package_accepts():
+    """KTD5, AE10: an agent reading `kb_types` alone learns that a package is never a dependency."""
+    db = database(cursor(value=(NODE, 1)))
+    result = graph.graph_types(db, Mock(deadline=0), TypesRequest(kind="nodes", type="package"))
+    package = result["types"][0]
+
+    assert package["inventory"] == "carries"
+    assert package["allowed_ownership"] == ["owned", "candidate", "rejected"]
+    assert "allowed_ownership" in result["inventory"]["declarations"]["carries"]
+
+
 def test_relation_references_batch_and_existing_endpoints_are_immutable(monkeypatch):
 
     source = owner(type="domain", properties='{"value":"example.com"}')
