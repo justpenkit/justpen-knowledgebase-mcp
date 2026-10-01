@@ -617,7 +617,7 @@ A package or container image the target publishes to a registry, keyed on its ve
 
 **Not modeled:** Not a component the target runs or depends on: that is a `technology` reached through `runs_technology`, so a package is never a `dependency`. Not a release: versions, tags and digests stay in evidence and in a finding's matcher.
 
-Write a package whose publisher is not yet attributed to the target as a `candidate`, and reject it with evidence once it proves to be someone else's. Which releases contain a secret or a vulnerability is recorded in evidence, never as a property or a node per version. A Go module path is written lowercased, as the purl spec requires: `github.com/Azure/azure-sdk-for-go` is `pkg:golang/github.com/azure/azure-sdk-for-go`. An oci registry host never carries the default port 443: `docker.io:443` is written `docker.io`.
+Write a package whose publisher is not yet attributed to the target as a `candidate`, and reject it with evidence once it proves to be someone else's. Which releases contain a secret or a vulnerability is recorded in evidence, never as a property or a node per version. A Go module path is written lowercased, as the purl spec requires: `github.com/Azure/azure-sdk-for-go` is `pkg:golang/github.com/azure/azure-sdk-for-go`. An oci registry host never carries the default port 443: `docker.io:443` is written `docker.io`. An internal registry may be a dotted IPv4 address; `localhost` is refused.
 
 **Identity:** `purl`<br>**Parent scope:** —<br>**Inventory:** `carries`<br>**Allowed ownership:** `owned`, `candidate`, `rejected`<br>**Checks:** —<br>**Canonicalizations:** —
 

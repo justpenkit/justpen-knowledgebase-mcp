@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from typing import TYPE_CHECKING
 
@@ -74,7 +75,8 @@ def _valid_oci_repository(repository: str, name: str, valid_host: Callable[[str]
     Docker Hub nests nothing, so its path is the namespace and the name, `library` for an
     official image. An alias spelling of Docker Hub or of an ECR registry is refused, so one image
     is one package. A port is 1 to 65535 without leading zeros, and never the default 443, which
-    would spell the registry a second way; Docker Hub takes no port at all.
+    would spell the registry a second way; Docker Hub takes no port at all. The host is a DNS name
+    or, for a registry inside an internal network, a canonical dotted IPv4 address.
     """
     host, _slash, path = repository.partition("/")
     hostname, colon, port = host.partition(":")
@@ -84,7 +86,7 @@ def _valid_oci_repository(repository: str, name: str, valid_host: Callable[[str]
         (colon and hostname == "docker.io")
         or hostname in _DOCKER_HUB_ALIASES
         or re.fullmatch(_ECR_ALIAS_HOST, hostname) is not None
-        or not valid_host(hostname)
+        or not (valid_host(hostname) or _is_canonical_ipv4(hostname))
     ):
         return False
     components = path.split("/")
@@ -93,3 +95,11 @@ def _valid_oci_repository(repository: str, name: str, valid_host: Callable[[str]
     if host == "docker.io" and len(components) != 2:
         return False
     return components[-1] == name
+
+
+def _is_canonical_ipv4(text: str) -> bool:
+    """A dotted IPv4 address in its one canonical spelling, so one registry is one host."""
+    try:
+        return str(ipaddress.IPv4Address(text)) == text
+    except ValueError:
+        return False
