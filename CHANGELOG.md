@@ -1,3 +1,30 @@
+## v0.6.0 (2026-10-01)
+
+### BREAKING CHANGE
+
+- the catalog contract is v5. A workspace created under catalog v4 fails closed at startup; create a new workspace. The cve node type is now advisory, and creating a package with ownership dependency is refused.
+- the cve node type is now advisory, and the cve format is now advisory_id; writes naming cve are refused.
+
+### Feat
+
+- **catalog**: bump the catalog contract to v5
+- **catalog**: link packages to repos, contacts, accounts and pages
+- **catalog**: add the package type for published packages and images
+- **catalog**: link advisories for one vulnerability with aliases
+- **catalog**: generalize the cve node type into advisory
+
+### Fix
+
+- **catalog**: accept IPv4 registry hosts in oci purls
+- **review**: pin registry port rules and refuse docker.io ports
+- **catalog**: accept legacy npm names and registry ports in purls
+- **review**: apply code review findings #2 and gaps
+
+### Refactor
+
+- **catalog**: move advisory and purl grammars to leaf modules
+- **catalog**: share advisory and purl parsing
+
 ## v0.5.0 (2026-09-30)
 
 ### BREAKING CHANGE
