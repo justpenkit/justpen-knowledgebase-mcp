@@ -205,4 +205,4 @@ work_engine_effort:
 #     pack: [rails, inertia]
 
 packs:
-  - source: compound-packs/catalog-modeling
+  - source: compound-packs
