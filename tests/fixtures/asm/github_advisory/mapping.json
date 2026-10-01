@@ -1,0 +1,221 @@
+{
+  "source": "github_advisory",
+  "files": {
+    "GHSA-c2m8-h5v5-343r.json": "json",
+    "GHSA-f82v-jwr5-mffw.json": "json"
+  },
+  "rows": [
+    {
+      "path": "ghsa_id",
+      "sink": {
+        "node": "advisory",
+        "property": "value"
+      }
+    },
+    {
+      "path": "cve_id",
+      "sink": {
+        "node": "advisory",
+        "property": "value"
+      },
+      "reason": "a second advisory, the target of the GHSA's `aliases` edge"
+    },
+    {
+      "path": "url",
+      "sink": "evidence"
+    },
+    {
+      "path": "html_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "summary",
+      "sink": "non_storable",
+      "reason": "advisory prose, not an asset fact"
+    },
+    {
+      "path": "description",
+      "sink": "non_storable",
+      "reason": "advisory prose, not an asset fact"
+    },
+    {
+      "path": "type",
+      "sink": "evidence"
+    },
+    {
+      "path": "severity",
+      "sink": "evidence"
+    },
+    {
+      "path": "repository_advisory_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "source_code_location",
+      "sink": "non_storable",
+      "reason": "the affected product's repository: advisory applicability data, not asset facts"
+    },
+    {
+      "path": "identifiers[].value",
+      "sink": "non_storable",
+      "reason": "repeats `ghsa_id` and `cve_id`; both are mapped"
+    },
+    {
+      "path": "identifiers[].type",
+      "sink": "non_storable",
+      "reason": "repeats `ghsa_id` and `cve_id`; both are mapped"
+    },
+    {
+      "path": "references",
+      "sink": "non_storable",
+      "reason": "advisory references, not asset facts"
+    },
+    {
+      "path": "published_at",
+      "sink": {
+        "node": "advisory",
+        "property": "published"
+      },
+      "transform": [
+        "rfc3339_utc"
+      ]
+    },
+    {
+      "path": "updated_at",
+      "sink": "evidence"
+    },
+    {
+      "path": "github_reviewed_at",
+      "sink": "evidence"
+    },
+    {
+      "path": "nvd_published_at",
+      "sink": "evidence",
+      "reason": "the CVE's NVD publication; `nvd_cve` feeds the CVE's `published`"
+    },
+    {
+      "path": "withdrawn_at",
+      "sink": "evidence"
+    },
+    {
+      "path": "vulnerabilities[].package.ecosystem",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].package.name",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].vulnerable_version_range",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].first_patched_version",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "vulnerabilities[].vulnerable_functions",
+      "sink": "non_storable",
+      "reason": "advisory applicability data, not asset facts"
+    },
+    {
+      "path": "cvss_severities.cvss_v3.vector_string",
+      "sink": {
+        "node": "advisory",
+        "property": "cvss_vector"
+      },
+      "transform": [
+        "github_preferred_cvss"
+      ]
+    },
+    {
+      "path": "cvss_severities.cvss_v3.score",
+      "sink": {
+        "node": "advisory",
+        "property": "cvss_score"
+      },
+      "transform": [
+        "cvss_one_decimal",
+        "github_preferred_cvss"
+      ]
+    },
+    {
+      "path": "cvss_severities.cvss_v4.vector_string",
+      "sink": {
+        "node": "advisory",
+        "property": "cvss_vector"
+      },
+      "transform": [
+        "github_preferred_cvss"
+      ]
+    },
+    {
+      "path": "cvss_severities.cvss_v4.score",
+      "sink": {
+        "node": "advisory",
+        "property": "cvss_score"
+      },
+      "transform": [
+        "cvss_one_decimal",
+        "github_preferred_cvss"
+      ]
+    },
+    {
+      "path": "cvss.vector_string",
+      "sink": "non_storable",
+      "reason": "deprecated copy of one `cvss_severities` family, null for a v4-only advisory"
+    },
+    {
+      "path": "cvss.score",
+      "sink": "non_storable",
+      "reason": "deprecated copy of one `cvss_severities` family, null for a v4-only advisory"
+    },
+    {
+      "path": "cwes[].cwe_id",
+      "sink": {
+        "node": "cwe",
+        "property": "value"
+      }
+    },
+    {
+      "path": "cwes[].name",
+      "sink": "evidence",
+      "reason": "`cwe.name` is fed by the MITRE CWE catalog"
+    },
+    {
+      "path": "epss.percentage",
+      "sink": "evidence",
+      "reason": "the CVE's EPSS probability without its model date; `first_epss` feeds `epss_score`"
+    },
+    {
+      "path": "epss.percentile",
+      "sink": "evidence",
+      "reason": "the CVE's EPSS percentile without its model date; `first_epss` feeds `epss_percentile`"
+    },
+    {
+      "path": "credits[].type",
+      "sink": "non_storable",
+      "reason": "a credited researcher's GitHub account, not a fact about the target"
+    },
+    {
+      "path": "credits[].user.*",
+      "sink": "non_storable",
+      "reason": "a credited researcher's GitHub account, not a fact about the target"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "github"
+      ],
+      "reason": "the API that produced the output"
+    }
+  ]
+}

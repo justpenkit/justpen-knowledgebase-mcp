@@ -1,0 +1,112 @@
+{
+  "ghsa_id": "GHSA-c2m8-h5v5-343r",
+  "cve_id": null,
+  "url": "https://api.github.com/advisories/GHSA-c2m8-h5v5-343r",
+  "html_url": "https://github.com/advisories/GHSA-c2m8-h5v5-343r",
+  "summary": "Tornado: StaticFileHandler follows symlinks outside static root (path traversal)",
+  "description": "### Summary\nStaticFileHandler allows an unauthenticated attacker to read arbitrary files from the server's filesystem by requesting a path that resolves to a symbolic link placed inside the static root directory. Any application that serves user-uploadable content, or whose static directory is populated by a build/deploy pipeline that creates symlinks (e.g. npm link, webpack, Docker volume mounts, CDN sync tools), is affected. An attacker who can trigger the creation of a symlink pointing outside the static root—or exploit one that already exists—can retrieve sensitive files such as /etc/passwd, private keys, configuration files, or application secrets.\n\n\n\n### Details\nThe vulnerability is in tornado.web.StaticFileHandler, specifically in the interaction between two methods in [tornado/web.py](vscode-webview://1grdaaa6v64itrol06qu70pq3d1b9h9im5c3npvvc9snaprc1q9f/tornado/web.py):\n- [get_absolute_path](https://github.com/tornadoweb/tornado/blob/0ca3c5f8279d402b245718d16522bc18a8f5d958/tornado/web.py#L2932) uses `os.path.abspath()` to resolve the requested path:\n- [validate_absolute_path](https://github.com/tornadoweb/tornado/blob/0ca3c5f8279d402b245718d16522bc18a8f5d958/tornado/web.py#L2935) uses the same `os.path.abspath()` on the root, then performs a string prefix check:\n\n`os.path.abspath()` normalises . and .. segments but does not resolve symbolic links. As a result, a path like `/var/www/static/link` passes the `startswith(\"/var/www/static/\")` check regardless of where `link` actually points.\n\nImmediately after, `os.path.exists()` and `os.path.isfile()`  **do follow symlinks**, so the file they ultimately open is the symlink's target. The fix would be to replace os.path.abspath() with os.path.realpath() in both methods, so the resolved real path of the symlink target is validated against the root, not just its string representation inside the static directory.\n\n### PoC\n_Complete instructions, including specific configuration details, to reproduce the vulnerability._\nPrerequisites: Python 3.x, Tornado installed.\n1. Create the environment\n```\nmkdir -p /tmp/static\necho \"DB_PASSWORD=s3cr3t\" > /tmp/secret.conf   \nln -s /tmp/secret.conf /tmp/static/config.conf \n```\n2. Minimal vulnerable server (server.py):\n```\nimport tornado.web, tornado.ioloop\n\napp = tornado.web.Application([\n    (r\"/static/(.*)\", tornado.web.StaticFileHandler, {\"path\": \"/tmp/static\"}),\n])\napp.listen(8888)\ntornado.ioloop.IOLoop.current().start()\n```\n3. Exploit:\n`curl http://localhost:8888/static/config.conf`\n\n### Impact\nAny application using StaticFileHandler is potentially affected if:\n- the static directory contains symlinks pointing outside it (common with build tooling), or\n- the application allows file uploads into the static directory without stripping symlinks.\n\nAn unauthenticated remote attacker can read any file readable by the process user: application secrets, private TLS keys, database credentials, /etc/shadow, SSH keys, or source code (depending on the process's filesystem permissions).",
+  "type": "reviewed",
+  "severity": "high",
+  "repository_advisory_url": "https://api.github.com/repos/tornadoweb/tornado/security-advisories/GHSA-c2m8-h5v5-343r",
+  "source_code_location": "https://github.com/tornadoweb/tornado",
+  "identifiers": [
+    {
+      "value": "GHSA-c2m8-h5v5-343r",
+      "type": "GHSA"
+    }
+  ],
+  "references": [
+    "https://github.com/tornadoweb/tornado/security/advisories/GHSA-c2m8-h5v5-343r",
+    "https://github.com/tornadoweb/tornado/pull/3719",
+    "https://github.com/tornadoweb/tornado/commit/437ab5f76565403b3403438d2e555d11f8128d32",
+    "https://github.com/tornadoweb/tornado/commit/f9f50b8bab265a2abf9f2415a3d2da6264a5450b",
+    "https://github.com/tornadoweb/tornado/releases/tag/v6.5.9",
+    "https://github.com/advisories/GHSA-c2m8-h5v5-343r"
+  ],
+  "published_at": "2026-09-30T23:48:55Z",
+  "updated_at": "2026-09-30T23:48:56Z",
+  "github_reviewed_at": "2026-09-30T23:48:55Z",
+  "nvd_published_at": null,
+  "withdrawn_at": null,
+  "vulnerabilities": [
+    {
+      "package": {
+        "ecosystem": "pip",
+        "name": "tornado"
+      },
+      "vulnerable_version_range": "<= 6.5.8",
+      "first_patched_version": "6.5.9",
+      "vulnerable_functions": []
+    }
+  ],
+  "cvss_severities": {
+    "cvss_v3": {
+      "vector_string": null,
+      "score": 0.0
+    },
+    "cvss_v4": {
+      "vector_string": "CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+      "score": 8.2
+    }
+  },
+  "cwes": [
+    {
+      "cwe_id": "CWE-59",
+      "name": "Improper Link Resolution Before File Access ('Link Following')"
+    }
+  ],
+  "credits": [
+    {
+      "user": {
+        "login": "example-reporter-a",
+        "id": 1000003,
+        "node_id": "MDQ6VXNlcjEwMDAwMDM=",
+        "avatar_url": "https://avatars.githubusercontent.com/u/1000003?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/example-reporter-a",
+        "html_url": "https://github.com/example-reporter-a",
+        "followers_url": "https://api.github.com/users/example-reporter-a/followers",
+        "following_url": "https://api.github.com/users/example-reporter-a/following{/other_user}",
+        "gists_url": "https://api.github.com/users/example-reporter-a/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/example-reporter-a/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/example-reporter-a/subscriptions",
+        "organizations_url": "https://api.github.com/users/example-reporter-a/orgs",
+        "repos_url": "https://api.github.com/users/example-reporter-a/repos",
+        "events_url": "https://api.github.com/users/example-reporter-a/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/example-reporter-a/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "type": "reporter"
+    },
+    {
+      "user": {
+        "login": "example-reporter-b",
+        "id": 1000004,
+        "node_id": "MDQ6VXNlcjEwMDAwMDQ=",
+        "avatar_url": "https://avatars.githubusercontent.com/u/1000004?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/example-reporter-b",
+        "html_url": "https://github.com/example-reporter-b",
+        "followers_url": "https://api.github.com/users/example-reporter-b/followers",
+        "following_url": "https://api.github.com/users/example-reporter-b/following{/other_user}",
+        "gists_url": "https://api.github.com/users/example-reporter-b/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/example-reporter-b/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/example-reporter-b/subscriptions",
+        "organizations_url": "https://api.github.com/users/example-reporter-b/orgs",
+        "repos_url": "https://api.github.com/users/example-reporter-b/repos",
+        "events_url": "https://api.github.com/users/example-reporter-b/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/example-reporter-b/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "type": "reporter"
+    }
+  ],
+  "cvss": {
+    "vector_string": null,
+    "score": null
+  }
+}

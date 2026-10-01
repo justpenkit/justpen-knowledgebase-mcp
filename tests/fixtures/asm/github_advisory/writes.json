@@ -1,0 +1,108 @@
+[
+  {
+    "file": "GHSA-f82v-jwr5-mffw.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "advisory",
+          "properties": {
+            "value": "GHSA-f82v-jwr5-mffw",
+            "published": "2025-03-21T15:20:12Z",
+            "cvss_score": 9.1,
+            "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+          },
+          "source": "github"
+        },
+        {
+          "type": "advisory",
+          "properties": {
+            "value": "CVE-2025-29927"
+          },
+          "source": "github"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-285"
+          },
+          "source": "github"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-863"
+          },
+          "source": "github"
+        }
+      ],
+      "relations": [
+        {
+          "type": "aliases",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        },
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 3
+          },
+          "properties": {}
+        }
+      ]
+    }
+  },
+  {
+    "file": "GHSA-c2m8-h5v5-343r.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "advisory",
+          "properties": {
+            "value": "GHSA-c2m8-h5v5-343r",
+            "published": "2026-09-30T23:48:55Z",
+            "cvss_score": 8.2,
+            "cvss_vector": "CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N"
+          },
+          "source": "github"
+        },
+        {
+          "type": "cwe",
+          "properties": {
+            "value": "CWE-59"
+          },
+          "source": "github"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_weakness",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

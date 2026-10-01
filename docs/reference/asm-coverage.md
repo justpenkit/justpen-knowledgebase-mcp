@@ -367,6 +367,56 @@ Constants a write carries that no field holds:
 | ------------------------- | -------------- | -------------------------------- |
 | `source` (write metadata) | `"first-epss"` | the API that produced the output |
 
+### `github_advisory`
+
+- **Command:** `curl -s -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/advisories/<ghsa_id>` → `<ghsa_id>.json`
+- **Version:** GitHub REST API 2022-11-28, unauthenticated
+- **Files:** `GHSA-c2m8-h5v5-343r.json`, `GHSA-f82v-jwr5-mffw.json`
+
+| Field                                        | Sink                   | Transforms                                  | Notes                                                                                  |
+| -------------------------------------------- | ---------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `ghsa_id`                                    | `advisory.value`       | —                                           | —                                                                                      |
+| `cve_id`                                     | `advisory.value`       | —                                           | a second advisory, the target of the GHSA's `aliases` edge                             |
+| `url`                                        | evidence               | —                                           | —                                                                                      |
+| `html_url`                                   | evidence               | —                                           | —                                                                                      |
+| `summary`                                    | non storable           | —                                           | advisory prose, not an asset fact                                                      |
+| `description`                                | non storable           | —                                           | advisory prose, not an asset fact                                                      |
+| `type`                                       | evidence               | —                                           | —                                                                                      |
+| `severity`                                   | evidence               | —                                           | —                                                                                      |
+| `repository_advisory_url`                    | evidence               | —                                           | —                                                                                      |
+| `source_code_location`                       | non storable           | —                                           | the affected product's repository: advisory applicability data, not asset facts        |
+| `identifiers[].value`                        | non storable           | —                                           | repeats `ghsa_id` and `cve_id`; both are mapped                                        |
+| `identifiers[].type`                         | non storable           | —                                           | repeats `ghsa_id` and `cve_id`; both are mapped                                        |
+| `references`                                 | non storable           | —                                           | advisory references, not asset facts                                                   |
+| `published_at`                               | `advisory.published`   | `rfc3339_utc`                               | —                                                                                      |
+| `updated_at`                                 | evidence               | —                                           | —                                                                                      |
+| `github_reviewed_at`                         | evidence               | —                                           | —                                                                                      |
+| `nvd_published_at`                           | evidence               | —                                           | the CVE's NVD publication; `nvd_cve` feeds the CVE's `published`                       |
+| `withdrawn_at`                               | evidence               | —                                           | —                                                                                      |
+| `vulnerabilities[].package.ecosystem`        | non storable           | —                                           | advisory applicability data, not asset facts                                           |
+| `vulnerabilities[].package.name`             | non storable           | —                                           | advisory applicability data, not asset facts                                           |
+| `vulnerabilities[].vulnerable_version_range` | non storable           | —                                           | advisory applicability data, not asset facts                                           |
+| `vulnerabilities[].first_patched_version`    | non storable           | —                                           | advisory applicability data, not asset facts                                           |
+| `vulnerabilities[].vulnerable_functions`     | non storable           | —                                           | advisory applicability data, not asset facts                                           |
+| `cvss_severities.cvss_v3.vector_string`      | `advisory.cvss_vector` | `github_preferred_cvss`                     | —                                                                                      |
+| `cvss_severities.cvss_v3.score`              | `advisory.cvss_score`  | `cvss_one_decimal`, `github_preferred_cvss` | —                                                                                      |
+| `cvss_severities.cvss_v4.vector_string`      | `advisory.cvss_vector` | `github_preferred_cvss`                     | —                                                                                      |
+| `cvss_severities.cvss_v4.score`              | `advisory.cvss_score`  | `cvss_one_decimal`, `github_preferred_cvss` | —                                                                                      |
+| `cvss.vector_string`                         | non storable           | —                                           | deprecated copy of one `cvss_severities` family, null for a v4-only advisory           |
+| `cvss.score`                                 | non storable           | —                                           | deprecated copy of one `cvss_severities` family, null for a v4-only advisory           |
+| `cwes[].cwe_id`                              | `cwe.value`            | —                                           | —                                                                                      |
+| `cwes[].name`                                | evidence               | —                                           | `cwe.name` is fed by the MITRE CWE catalog                                             |
+| `epss.percentage`                            | evidence               | —                                           | the CVE's EPSS probability without its model date; `first_epss` feeds `epss_score`     |
+| `epss.percentile`                            | evidence               | —                                           | the CVE's EPSS percentile without its model date; `first_epss` feeds `epss_percentile` |
+| `credits[].type`                             | non storable           | —                                           | a credited researcher's GitHub account, not a fact about the target                    |
+| `credits[].user.*`                           | non storable           | —                                           | a credited researcher's GitHub account, not a fact about the target                    |
+
+Constants a write carries that no field holds:
+
+| Sink                      | Values     | Reason                           |
+| ------------------------- | ---------- | -------------------------------- |
+| `source` (write metadata) | `"github"` | the API that produced the output |
+
 ### `github_repository`
 
 - **Command:** `curl -s -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/repos/Example-Org/Web-App`
@@ -989,6 +1039,64 @@ Constants a write carries that no field holds:
 | ------------------------- | ------- | -------------------------------- |
 | `source` (write metadata) | `"nvd"` | the API that produced the output |
 
+### `pypi_json`
+
+- **Command:** `curl -s https://pypi.org/pypi/Flask-SQLAlchemy/json`
+- **Version:** PyPI JSON API (Warehouse), unauthenticated
+- **Files:** `Flask-SQLAlchemy.json`
+
+| Field                           | Sink                  | Transforms           | Notes                                                 |
+| ------------------------------- | --------------------- | -------------------- | ----------------------------------------------------- |
+| `info.name`                     | `package.purl`        | `pypi_name_to_purl`  | —                                                     |
+| `info.maintainer_email`         | `email_address.value` | `pypi_email_address` | —                                                     |
+| `info.author_email`             | `email_address.value` | `pypi_email_address` | —                                                     |
+| `info.maintainer`               | evidence              | —                    | —                                                     |
+| `info.author`                   | evidence              | —                    | —                                                     |
+| `info.project_urls.Source Code` | `repository.host`     | `url_host`           | —                                                     |
+| `info.project_urls.Source Code` | `repository.owner`    | `repo_url_owner`     | —                                                     |
+| `info.project_urls.Source Code` | `repository.name`     | `repo_url_name`      | —                                                     |
+| `info.project_urls.*`           | evidence              | —                    | —                                                     |
+| `info.bugtrack_url`             | evidence              | —                    | —                                                     |
+| `info.classifiers`              | evidence              | —                    | —                                                     |
+| `info.description`              | evidence              | —                    | —                                                     |
+| `info.description_content_type` | evidence              | —                    | —                                                     |
+| `info.docs_url`                 | evidence              | —                    | —                                                     |
+| `info.download_url`             | evidence              | —                    | —                                                     |
+| `info.downloads.*`              | evidence              | —                    | —                                                     |
+| `info.dynamic`                  | evidence              | —                    | —                                                     |
+| `info.home_page`                | evidence              | —                    | —                                                     |
+| `info.keywords`                 | evidence              | —                    | —                                                     |
+| `info.license`                  | evidence              | —                    | —                                                     |
+| `info.license_expression`       | evidence              | —                    | —                                                     |
+| `info.license_files`            | evidence              | —                    | —                                                     |
+| `info.package_url`              | evidence              | —                    | —                                                     |
+| `info.platform`                 | evidence              | —                    | —                                                     |
+| `info.project_url`              | evidence              | —                    | —                                                     |
+| `info.provides_extra`           | evidence              | —                    | —                                                     |
+| `info.release_url`              | evidence              | —                    | —                                                     |
+| `info.requires_dist`            | evidence              | —                    | —                                                     |
+| `info.requires_python`          | evidence              | —                    | —                                                     |
+| `info.summary`                  | evidence              | —                    | —                                                     |
+| `info.version`                  | evidence              | —                    | a release, not the package; versions stay in evidence |
+| `info.yanked`                   | evidence              | —                    | —                                                     |
+| `info.yanked_reason`            | evidence              | —                    | —                                                     |
+| `last_serial`                   | evidence              | —                    | —                                                     |
+| `ownership.organization`        | evidence              | —                    | —                                                     |
+| `ownership.roles`               | evidence              | —                    | —                                                     |
+| `releases.*.*`                  | evidence              | —                    | one release file; versions stay in evidence           |
+| `releases.*.*.*`                | evidence              | —                    | one release file; versions stay in evidence           |
+| `urls[].*`                      | evidence              | —                    | one file of the latest release                        |
+| `urls[].*.*`                    | evidence              | —                    | one file of the latest release                        |
+| `vulnerabilities`               | evidence              | —                    | —                                                     |
+
+Constants a write carries that no field holds:
+
+| Sink                      | Values         | Reason                                                                        |
+| ------------------------- | -------------- | ----------------------------------------------------------------------------- |
+| `repository.platform`     | `"github"`     | the source URL is on `github.com`                                             |
+| `has_contact.role` (edge) | `"maintainer"` | a registry lists a package's author and maintainer as its maintainer contacts |
+| `source` (write metadata) | `"pypi"`       | the API that produced the output                                              |
+
 ### `rdap_autnum`
 
 - **Command:** `curl -s -H 'Accept: application/rdap+json' https://rdap.db.ripe.net/autnum/64496` → `as64496.json`
@@ -1397,6 +1505,7 @@ The closed set a mapping may apply, left to right, from `scripts/asm_transforms.
 | `dmarc_owner_name`                | Drop the leading `_dmarc` label of a query name: RFC 7489 publishes it for the name below.                        |
 | `epoch_utc`                       | A float epoch, as BBOT 3 prints `timestamp`, in the catalog's UTC spelling.                                       |
 | `float_value`                     | Parse a numeric string, such as an EPSS `epss` field, into a number.                                              |
+| `github_preferred_cvss`           | Keep a (rounded) base score or vector only if the preferred GitHub CVSS family carries it, else None.             |
 | `gitleaks_location`               | A gitleaks finding's `File` joined with its `StartLine` as `<file>:<line>`.                                       |
 | `gitleaks_secret_kind`            | The secret `kind` of a gitleaks `RuleID`, from a closed per-rule table.                                           |
 | `go_time_string_utc`              | Go's default `time.Time.String()` (`2006-01-02 15:04:05.999999999 -0700 MST`), as asnmap prints it, in UTC.       |
@@ -1425,6 +1534,8 @@ The closed set a mapping may apply, left to right, from `scripts/asm_transforms.
 | `openssh_b64_to_hex`              | Convert OpenSSH's `SHA256:<base64>` fingerprint into 64 lowercase hex characters.                                 |
 | `partial_date`                    | Keep `YYYY`, `YYYY-MM` or `YYYY-MM-DD` exactly as precise as the source gives it.                                 |
 | `public_suffix_of`                | The zone a registrable domain is registered in: the name without its first label.                                 |
+| `pypi_email_address`              | The lowercase address of a core-metadata `Author-email` or `Maintainer-email`; None when empty.                   |
+| `pypi_name_to_purl`               | The versionless purl of a PyPI project: the PyPA normalized name, lowercase with `-`, `_`, `.` runs one `-`.      |
 | `rdap_abuse_email`                | The vCard `email` of an entity with the `abuse` role; None for other entities or an empty email.                  |
 | `rdap_abuse_phone`                | The first international vCard `tel` of an `abuse` entity as E.164; None for other entities.                       |
 | `rdap_abuse_role`                 | The RDAP role `abuse` as the `has_contact` role; None for any other role.                                         |

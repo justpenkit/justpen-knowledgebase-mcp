@@ -1,0 +1,60 @@
+[
+  {
+    "file": "Flask-SQLAlchemy.json",
+    "request": {
+      "nodes": [
+        {
+          "type": "package",
+          "properties": {
+            "purl": "pkg:pypi/flask-sqlalchemy"
+          },
+          "ownership": "candidate",
+          "source": "pypi"
+        },
+        {
+          "type": "email_address",
+          "properties": {
+            "value": "contact@palletsprojects.com"
+          },
+          "ownership": "candidate",
+          "source": "pypi"
+        },
+        {
+          "type": "repository",
+          "properties": {
+            "platform": "github",
+            "host": "github.com",
+            "owner": "pallets-eco",
+            "name": "flask-sqlalchemy"
+          },
+          "ownership": "candidate",
+          "source": "pypi"
+        }
+      ],
+      "relations": [
+        {
+          "type": "has_contact",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 1
+          },
+          "properties": {
+            "role": "maintainer"
+          }
+        },
+        {
+          "type": "published_from",
+          "source_ref": {
+            "node_index": 0
+          },
+          "target_ref": {
+            "node_index": 2
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+]

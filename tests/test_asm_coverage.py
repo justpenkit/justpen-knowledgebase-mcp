@@ -24,7 +24,7 @@ from . import asm_harness as harness
 
 SOURCES = harness.source_names()
 
-# The 24 sources the plan names; a missing or extra directory fails here rather than silently.
+# The 26 sources the plans name; a missing or extra directory fails here rather than silently.
 EXPECTED_SOURCES = {
     "subfinder",
     "dnsx",
@@ -50,6 +50,8 @@ EXPECTED_SOURCES = {
     "first_epss",
     "mta_sts",
     "entra_realm",
+    "github_advisory",
+    "pypi_json",
 }
 
 # Properties no ASM or OSINT source in scope emits; each is fed by a reference dataset instead.
@@ -351,6 +353,72 @@ def test_transform_golden_cases() -> None:
         apply("x", ["trufflehog_public_part"], {"DetectorName": "Stripe"})
     with pytest.raises(KeyError):
         apply("maybe", ["whois_dnssec_bool"], {})
+    assert apply("Zope.Interface", ["pypi_name_to_purl"], {}) == "pkg:pypi/zope-interface"
+    assert apply("zope__interface", ["pypi_name_to_purl"], {}) == "pkg:pypi/zope-interface"
+    assert apply("Flask-SQLAlchemy", ["pypi_name_to_purl"], {}) == "pkg:pypi/flask-sqlalchemy"
+    assert apply("Pallets <Contact@PalletsProjects.com>", ["pypi_email_address"], {}) == "contact@palletsprojects.com"
+    assert apply("", ["pypi_email_address"], {}) is None
+    with pytest.raises(ValueError, match="one address"):
+        apply("A <a@example.com>, B <b@example.com>", ["pypi_email_address"], {})
+    both: dict[str, Any] = {
+        "cvss_severities": {
+            "cvss_v3": {"vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N", "score": 9.1},
+            "cvss_v4": {
+                "vector_string": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N",
+                "score": 9.3,
+            },
+        }
+    }
+    assert apply(9.3, ["cvss_one_decimal", "github_preferred_cvss"], both) == 9.3
+    assert apply(9.1, ["cvss_one_decimal", "github_preferred_cvss"], both) is None
+    v3_only: dict[str, Any] = {
+        "cvss_severities": {
+            "cvss_v3": {"vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N", "score": 9.1},
+            "cvss_v4": {"vector_string": None, "score": 0.0},
+        }
+    }
+    assert apply(9.1, ["cvss_one_decimal", "github_preferred_cvss"], v3_only) == 9.1
+    assert apply(0.0, ["cvss_one_decimal", "github_preferred_cvss"], v3_only) is None
+
+
+def _batch_of(name: str, file_name: str) -> dict[str, Any]:
+    (request,) = [batch["request"] for batch in harness.load_source(name).batches if batch["file"] == file_name]
+    return request
+
+
+def test_a_github_advisory_with_a_cve_aliases_toward_it() -> None:
+    """The GHSA and its CVE are two advisories joined by one `aliases` edge, from the GHSA to the CVE."""
+    request = _batch_of("github_advisory", "GHSA-f82v-jwr5-mffw.json")
+    values = [node["properties"]["value"] for node in request["nodes"] if node["type"] == "advisory"]
+    assert values == ["GHSA-f82v-jwr5-mffw", "CVE-2025-29927"]
+    (alias,) = [relation for relation in request["relations"] if relation["type"] == "aliases"]
+    assert request["nodes"][alias["source_ref"]["node_index"]]["properties"]["value"] == "GHSA-f82v-jwr5-mffw"
+    assert request["nodes"][alias["target_ref"]["node_index"]]["properties"]["value"] == "CVE-2025-29927"
+    unaliased = _batch_of("github_advisory", "GHSA-c2m8-h5v5-343r.json")
+    assert [node["properties"]["value"] for node in unaliased["nodes"] if node["type"] == "advisory"] == [
+        "GHSA-c2m8-h5v5-343r"
+    ]
+    assert all(relation["type"] != "aliases" for relation in unaliased.get("relations", []))
+
+
+def test_a_pypi_project_is_a_candidate_package_with_its_maintainer_and_source() -> None:
+    """The project is a candidate under its normalized purl, linked to its maintainer and source repository."""
+    request = _batch_of("pypi_json", "Flask-SQLAlchemy.json")
+    nodes = request["nodes"]
+    (package,) = [index for index, node in enumerate(nodes) if node["type"] == "package"]
+    assert nodes[package] == {
+        "type": "package",
+        "properties": {"purl": "pkg:pypi/flask-sqlalchemy"},
+        "ownership": "candidate",
+        "source": "pypi",
+    }
+    edges = {
+        (relation["type"], nodes[relation["target_ref"]["node_index"]]["type"]): relation
+        for relation in request["relations"]
+        if relation["source_ref"] == {"node_index": package}
+    }
+    assert set(edges) == {("has_contact", "email_address"), ("published_from", "repository")}
+    assert edges[("has_contact", "email_address")]["properties"] == {"role": "maintainer"}
 
 
 def test_a_bbot_trufflehog_finding_joins_the_secret_trufflehog_reports() -> None:

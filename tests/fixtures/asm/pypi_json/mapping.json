@@ -1,0 +1,244 @@
+{
+  "source": "pypi_json",
+  "files": {
+    "Flask-SQLAlchemy.json": "json"
+  },
+  "rows": [
+    {
+      "path": "info.name",
+      "sink": {
+        "node": "package",
+        "property": "purl"
+      },
+      "transform": [
+        "pypi_name_to_purl"
+      ]
+    },
+    {
+      "path": "info.maintainer_email",
+      "sink": {
+        "node": "email_address",
+        "property": "value"
+      },
+      "transform": [
+        "pypi_email_address"
+      ]
+    },
+    {
+      "path": "info.author_email",
+      "sink": {
+        "node": "email_address",
+        "property": "value"
+      },
+      "transform": [
+        "pypi_email_address"
+      ]
+    },
+    {
+      "path": "info.maintainer",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.author",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.project_urls.Source Code",
+      "sink": {
+        "node": "repository",
+        "property": "host"
+      },
+      "transform": [
+        "url_host"
+      ]
+    },
+    {
+      "path": "info.project_urls.Source Code",
+      "sink": {
+        "node": "repository",
+        "property": "owner"
+      },
+      "transform": [
+        "repo_url_owner"
+      ]
+    },
+    {
+      "path": "info.project_urls.Source Code",
+      "sink": {
+        "node": "repository",
+        "property": "name"
+      },
+      "transform": [
+        "repo_url_name"
+      ]
+    },
+    {
+      "path": "info.project_urls.*",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.bugtrack_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.classifiers",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.description",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.description_content_type",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.docs_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.download_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.downloads.*",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.dynamic",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.home_page",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.keywords",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.license",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.license_expression",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.license_files",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.package_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.platform",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.project_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.provides_extra",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.release_url",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.requires_dist",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.requires_python",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.summary",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.version",
+      "sink": "evidence",
+      "reason": "a release, not the package; versions stay in evidence"
+    },
+    {
+      "path": "info.yanked",
+      "sink": "evidence"
+    },
+    {
+      "path": "info.yanked_reason",
+      "sink": "evidence"
+    },
+    {
+      "path": "last_serial",
+      "sink": "evidence"
+    },
+    {
+      "path": "ownership.organization",
+      "sink": "evidence"
+    },
+    {
+      "path": "ownership.roles",
+      "sink": "evidence"
+    },
+    {
+      "path": "releases.*.*",
+      "sink": "evidence",
+      "reason": "one release file; versions stay in evidence"
+    },
+    {
+      "path": "releases.*.*.*",
+      "sink": "evidence",
+      "reason": "one release file; versions stay in evidence"
+    },
+    {
+      "path": "urls[].*",
+      "sink": "evidence",
+      "reason": "one file of the latest release"
+    },
+    {
+      "path": "urls[].*.*",
+      "sink": "evidence",
+      "reason": "one file of the latest release"
+    },
+    {
+      "path": "vulnerabilities",
+      "sink": "evidence"
+    }
+  ],
+  "derived": [
+    {
+      "sink": {
+        "node": "repository",
+        "property": "platform"
+      },
+      "values": [
+        "github"
+      ],
+      "reason": "the source URL is on `github.com`"
+    },
+    {
+      "sink": {
+        "relation": "has_contact",
+        "property": "role"
+      },
+      "values": [
+        "maintainer"
+      ],
+      "reason": "a registry lists a package's author and maintainer as its maintainer contacts"
+    },
+    {
+      "sink": {
+        "meta": "source"
+      },
+      "values": [
+        "pypi"
+      ],
+      "reason": "the API that produced the output"
+    }
+  ]
+}
