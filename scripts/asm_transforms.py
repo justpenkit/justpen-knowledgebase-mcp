@@ -761,7 +761,12 @@ def nvd_preferred_cvss(value: object, record: Mapping[str, object]) -> object:
     if preferred is None:
         return None
     data = cast("Mapping[str, object]", preferred["cvssData"])
-    return value if value in (cvss_one_decimal(data["baseScore"], record), data["vectorString"]) else None
+    return _carried_cvss(value, data["baseScore"], data["vectorString"], record)
+
+
+def _carried_cvss(value: object, score: object, vector: object, record: Mapping[str, object]) -> object:
+    """`value` when it is the preferred metric's rounded score or its vector, else None."""
+    return value if value in (cvss_one_decimal(score, record), vector) else None
 
 
 _GITHUB_CVSS_FAMILIES = ("cvss_v4", "cvss_v3")
@@ -782,7 +787,7 @@ def github_preferred_cvss(value: object, record: Mapping[str, object]) -> object
     )
     if preferred is None:
         return None
-    return value if value in (cvss_one_decimal(preferred["score"], record), preferred["vector_string"]) else None
+    return _carried_cvss(value, preferred["score"], preferred["vector_string"], record)
 
 
 # ---- package transforms ----

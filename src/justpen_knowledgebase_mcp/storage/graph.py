@@ -703,15 +703,13 @@ def _plan_carried_state(address: str, plan: _PreparedMutation, mutation: NodeWri
         return
     row = plan.row
     evidenced = bool(mutation.evidence_add)
-    definition = catalog_view()["nodes"][plan.type_name]
-    allowed = definition.get("allowed_ownership", catalog_view()["inventory"]["ownership"])
+    catalog = catalog_view()
+    allowed = catalog["nodes"][plan.type_name].get("allowed_ownership", catalog["inventory"]["ownership"])
     if plan.match == "created":
         if mutation.ownership is None:
-            creatable = ", ".join(value for value in allowed if value != "rejected")
-            raise InvalidParamsError(
-                f"{address}: ownership is required to create a {plan.type_name}; give "
-                + " or ".join(creatable.rsplit(", ", 1))
-            )
+            *head, last = [value for value in allowed if value != "rejected"]
+            choices = f"{', '.join(head)} or {last}" if head else last
+            raise InvalidParamsError(f"{address}: ownership is required to create a {plan.type_name}; give {choices}")
         row["authorization"] = "unknown"
     if mutation.ownership is not None and mutation.ownership not in allowed:
         raise InvalidParamsError(

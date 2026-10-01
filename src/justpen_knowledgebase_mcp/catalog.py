@@ -853,8 +853,13 @@ def _cross_field_registrar(_type_name: str, properties: dict[str, Any]) -> None:
 _CVE_ONLY_PROPERTIES = ("epss_score", "epss_percentile", "kev_added")
 
 
+def _advisory_prefix(value: str) -> str:
+    """The database an advisory id belongs to: the part before its first `-`."""
+    return value.split("-", 1)[0]
+
+
 def _cross_field_advisory(_type_name: str, properties: dict[str, Any]) -> None:
-    if cast("str", properties["value"]).startswith("CVE-"):
+    if _advisory_prefix(cast("str", properties["value"])) == "CVE":
         return
     for name in _CVE_ONLY_PROPERTIES:
         if name in properties:
@@ -889,7 +894,7 @@ _ADVISORY_ID_GRAMMARS: dict[str, str] = {
 
 
 def _valid_advisory_id(text: str) -> bool:
-    grammar = _ADVISORY_ID_GRAMMARS.get(text.split("-", 1)[0])
+    grammar = _ADVISORY_ID_GRAMMARS.get(_advisory_prefix(text))
     return grammar is not None and re.fullmatch(grammar, text) is not None
 
 
@@ -917,18 +922,24 @@ _DOCKER_HUB_ALIASES = frozenset(
 )
 
 
+def _purl_parts(text: str) -> tuple[str, str, str | None]:
+    """The type, the `namespace/name` coordinates and the qualifier string (None when absent) of a purl."""
+    path, separator, query = text.removeprefix("pkg:").partition("?")
+    purl_type, _slash, coordinates = path.partition("/")
+    return purl_type, coordinates, query if separator else None
+
+
 def _valid_package_purl(text: str) -> bool:
     """A purl with no version, subpath or qualifier, except the registry repository of an image."""
     if len(text) > 512 or not text.startswith("pkg:") or "@" in text or "#" in text:
         return False
-    path, separator, query = text.removeprefix("pkg:").partition("?")
-    purl_type, _slash, coordinates = path.partition("/")
+    purl_type, coordinates, query = _purl_parts(text)
     grammar = _PURL_COORDINATES.get(purl_type)
     if grammar is None or re.fullmatch(grammar, coordinates) is None:
         return False
     if purl_type != "oci":
-        return separator == ""
-    key, _equals, repository = query.partition("=")
+        return query is None
+    key, _equals, repository = (query or "").partition("=")
     return key == "repository_url" and _valid_oci_repository(repository, coordinates)
 
 
@@ -1188,7 +1199,7 @@ _ALIAS_RANKS = {"CVE": 2, "GHSA": 1}
 
 def _endpoint_alias_direction(_relation: Mapping[str, Any], source: EndpointView, target: EndpointView) -> None:
     source_id, target_id = cast("str", source.properties["value"]), cast("str", target.properties["value"])
-    source_rank, target_rank = (_ALIAS_RANKS.get(value.split("-", 1)[0], 0) for value in (source_id, target_id))
+    source_rank, target_rank = (_ALIAS_RANKS.get(_advisory_prefix(value), 0) for value in (source_id, target_id))
     if source_rank == target_rank == _ALIAS_RANKS["CVE"]:
         raise ExpectedValidationError(f"{_ENDPOINT_FAILED}: two CVE ids are never aliases")
     if source_rank > target_rank or (source_rank == target_rank and source_id >= target_id):
@@ -1408,8 +1419,8 @@ def _cross_field_cloud_resource(_type_name: str, properties: dict[str, Any]) -> 
 
 
 def _image_provider(properties: Mapping[str, Any]) -> str:
-    path, _separator, query = cast("str", properties["purl"]).removeprefix("pkg:").partition("?")
-    if path.startswith("oci/"):
+    purl_type, _coordinates, query = _purl_parts(cast("str", properties["purl"]))
+    if purl_type == "oci" and query is not None:
         host = query.removeprefix("repository_url=").partition("/")[0]
         for pattern, provider in _REGISTRY_ACCOUNT_PROVIDER.items():
             if re.fullmatch(pattern, host) is not None:
@@ -1894,10 +1905,10 @@ def _valid_field(value: object, rule: str | list[str] | tuple[str, ...]) -> bool
         "media_type": lambda text: _MEDIA_TYPE.fullmatch(text) is not None,
         "method": lambda text: re.fullmatch(r"[A-Z][A-Z0-9!#$%&'*+.^_`|~-]{0,31}", text) is not None,
         "mta_sts": _valid_mta_sts,
-        "package_purl": _valid_package_purl,
         "multiline_text_4096": lambda text: (
             1 <= len(text) <= 4096 and all(char in "\n\t" or char.isprintable() for char in text)
         ),
+        "package_purl": _valid_package_purl,
         "parameter_name": lambda text: (
             1 <= len(text) <= 128 and all(0x21 <= ord(char) <= 0x7E and char not in "&=#" for char in text)
         ),
