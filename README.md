@@ -57,6 +57,10 @@ Provide the workspace variable when configuring your MCP client.
 The [quickstart](docs/quickstart.md) also has locked source-checkout installation
 and client configuration examples.
 
+Claude Code and Codex share [AGENTS.md](AGENTS.md). Follow the
+[agent setup guide](docs/contributing/agents.md) to activate
+project instructions and the protected-files guard.
+
 The server exposes 11 MCP tools for catalog discovery, graph writes and reads,
 evidence ingestion, search, traversal, deletion, jobs, reindexing, and status.
 Call `kb_types` to discover the available schemas. Start with the [graph workflow](docs/guides/graph.md),

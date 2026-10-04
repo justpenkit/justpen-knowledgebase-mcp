@@ -13,12 +13,12 @@ permissions:
   contents: read
 
 jobs:
-  quality:
-    name: quality
+  check:
+    name: check
     outputs:
       generated: ${{ steps.project.outputs.generated }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       UV_PYTHON: "3.13"
     steps:
@@ -45,44 +45,34 @@ jobs:
         run: make check-static
       - name: Strict documentation build
         run: make docs-build
-
-  check:
-    name: check (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-    env:
-      UV_PYTHON: ${{ matrix.python-version }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: true
-          cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
-      - name: Install Python
-        run: uv python install "$UV_PYTHON"
-      - name: Require the committed lockfile
-        run: make lock-check
-      - name: make install
-        run: make install
-      - name: Active Python typing and unit tests
+      - name: Python 3.13 typing and unit tests
         run: make check-python
+      # Pull requests also cover the older supported versions; main re-checks 3.13 only.
+      - name: Python 3.12 typing and unit tests
+        if: github.event_name == 'pull_request'
+        env:
+          UV_PYTHON: "3.12"
+        run: |
+          uv python install "$UV_PYTHON"
+          make install
+          make check-python
+      - name: Python 3.11 typing and unit tests
+        if: github.event_name == 'pull_request'
+        env:
+          UV_PYTHON: "3.11"
+        run: |
+          uv python install "$UV_PYTHON"
+          make install
+          make check-python
 
   integration:
-    name: integration (py${{ matrix.python-version }})
-    needs: quality
-    if: needs.quality.outputs.generated == 'true'
+    name: integration
+    needs: check
+    if: needs.check.outputs.generated == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.13"]
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
+      UV_PYTHON: "3.13"
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.2.0
@@ -131,11 +121,10 @@ jobs:
 
   deploy-docs:
     name: Publish documentation
-    needs: [quality, check, integration, consumer-runtime]
+    needs: [check, integration, consumer-runtime]
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.quality.result == 'success' &&
       needs.check.result == 'success' &&
       needs.integration.result == 'success' &&
       needs.consumer-runtime.result == 'success'

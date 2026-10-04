@@ -14,7 +14,7 @@ How did you verify this works? E.g.:
 - Pre-push `make check` and `make docs-build` passed
 - New/updated unit tests cover the change
 - Relevant focused integration test passed when its test/harness changed
-- CI runs the full integration suite and Python matrix
+- CI runs the full integration suite and every supported Python version
 -->
 
 ## Checklist

@@ -1,24 +1,20 @@
-# Requires Codex CLI 0.154+ (or a desktop build with permission profiles and hooks).
-# Trust this project and review its hooks before starting a development session.
+# Requires Codex CLI 0.160+. Trust this project and review its hooks before
+# starting a development session; review them again whenever .codex/hooks.json
+# changes.
+#
+# Codex runs without an OS sandbox. The protected-files guard in
+# scripts/hooks/guard_config.py restores changes to the project's rules and
+# tooling that no approved route made, and every escalation still reaches you.
+sandbox_mode = "danger-full-access"
 approval_policy = "on-request"
 approvals_reviewer = "user"
-default_permissions = "justpen-dev"
 
-[permissions.justpen-dev]
-extends = ":workspace"
+# Compound Engineering, the same planning plugin Claude Code enables, active only
+# in this project. `make setup` downloads the marketplace; Codex reads these tables
+# once the project is trusted. Restart Codex afterwards.
+[marketplaces.compound-engineering-plugin]
+source_type = "git"
+source = "https://github.com/EveryInc/compound-engineering-plugin.git"
 
-# Routine checks can use their caches without an out-of-workspace escalation.
-[permissions.justpen-dev.filesystem]
-"~/.cache/uv" = "write"
-"~/Library/Caches/uv" = "write"
-"~/.cache/pre-commit" = "write"
-"~/.cache/pyright-python" = "write"
-
-[permissions.justpen-dev.filesystem.":workspace_roots"]
-"pyproject.toml" = "read"
-"uv.lock" = "read"
-"scripts/hooks/guard_config.py" = "read"
-".claude" = "read"
-
-[permissions.justpen-dev.network]
+[plugins."compound-engineering@compound-engineering-plugin"]
 enabled = true

@@ -5,6 +5,13 @@ fail_fast: false
 repos:
   - repo: local
     hooks:
+      # First, so an agent's commit cannot carry protected changes nobody approved.
+      - id: guard-staged
+        name: Reject unapproved staged protected files
+        entry: /usr/bin/python3 -I -B scripts/hooks/guard_config.py --event pre-commit
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: merge-conflict-check
         name: Reject staged conflict markers and whitespace errors
         entry: git diff --cached --check
