@@ -2,22 +2,32 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "apply_patch",
+        "matcher": "Bash|apply_patch",
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 -I -B \"$(git rev-parse --show-toplevel)/scripts/hooks/guard_config.py\" --client codex"
+            "command": "f=\"$(git rev-parse --show-toplevel)/scripts/hooks/guard_config.py\"; grep -qs '^GUARD_PROTOCOL = 2$' \"$f\" || exit 0; exec /usr/bin/python3 -I -B \"$f\" --client codex --event pre"
           }
         ]
       }
     ],
-    "PermissionRequest": [
+    "PostToolUse": [
       {
         "matcher": "Bash|apply_patch",
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 -I -B \"$(git rev-parse --show-toplevel)/scripts/hooks/guard_config.py\" --client codex"
+            "command": "f=\"$(git rev-parse --show-toplevel)/scripts/hooks/guard_config.py\"; grep -qs '^GUARD_PROTOCOL = 2$' \"$f\" || exit 0; exec /usr/bin/python3 -I -B \"$f\" --client codex --event post"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$(git rev-parse --show-toplevel)/scripts/hooks/guard_config.py\"; grep -qs '^GUARD_PROTOCOL = 2$' \"$f\" || exit 0; exec /usr/bin/python3 -I -B \"$f\" --client codex --event stop"
           }
         ]
       }

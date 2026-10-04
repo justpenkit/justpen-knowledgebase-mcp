@@ -4,56 +4,60 @@
     "ENABLE_LSP_TOOL": "1"
   },
   "effortLevel": "high",
-  "sandbox": {
-    "enabled": true,
-    "failIfUnavailable": true,
-    "allowUnsandboxedCommands": false,
-    "autoAllowBashIfSandboxed": false,
-    "excludedCommands": [
-      "uv add *",
-      "uv remove *",
-      "uv lock *",
-      "uv sync *",
-      "uv version *",
-      "make format",
-      "make format-project-text",
-      "make format-toml",
-      "make bump-patch",
-      "make bump-minor",
-      "make bump-major",
-      "git switch *",
-      "git checkout *",
-      "git pull *",
-      "git merge *",
-      "git rebase *",
-      "git restore *",
-      "git stash *",
-      "git reset *",
-      "git cherry-pick *",
-      "git push *",
-      "git branch *",
-      "git worktree *",
-      "gh pr checkout *"
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Monitor|PowerShell|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/hooks/guard_config.py\"; grep -qs '^GUARD_PROTOCOL = 2$' \"$f\" || exit 0; exec /usr/bin/python3 -I -B \"$f\" --client claude --event pre"
+          }
+        ]
+      }
     ],
-    "filesystem": {
-      "allowWrite": [
-        "~/.cache/uv",
-        "~/.cache/pre-commit",
-        "~/.cache/pyright-python"
-      ],
-      "denyWrite": [
-        "./pyproject.toml",
-        "./uv.lock"
-      ]
-    },
-    "network": {
-      "allowedDomains": [
-        "github.com",
-        "api.github.com",
-        "pypi.org",
-        "files.pythonhosted.org"
-      ]
-    }
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Monitor|PowerShell|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/hooks/guard_config.py\"; grep -qs '^GUARD_PROTOCOL = 2$' \"$f\" || exit 0; exec /usr/bin/python3 -I -B \"$f\" --client claude --event post"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|Monitor|PowerShell|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/hooks/guard_config.py\"; grep -qs '^GUARD_PROTOCOL = 2$' \"$f\" || exit 0; exec /usr/bin/python3 -I -B \"$f\" --client claude --event post-failure"
+          }
+        ]
+      }
+    ],
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/hooks/guard_config.py\"; grep -qs '^GUARD_PROTOCOL = 2$' \"$f\" || exit 0; exec /usr/bin/python3 -I -B \"$f\" --client claude --event config-change"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/hooks/guard_config.py\"; grep -qs '^GUARD_PROTOCOL = 2$' \"$f\" || exit 0; exec /usr/bin/python3 -I -B \"$f\" --client claude --event stop"
+          }
+        ]
+      }
+    ]
   },
   "enabledPlugins": {
     "pyright-lsp@claude-plugins-official": true,
@@ -66,6 +70,13 @@
         "repo": "anthropics/claude-plugins-official"
       },
       "autoUpdate": true
+    },
+    "compound-engineering-plugin": {
+      "source": {
+        "source": "github",
+        "repo": "EveryInc/compound-engineering-plugin"
+      },
+      "autoUpdate": true
     }
   },
   "attribution": {
@@ -76,6 +87,12 @@
     "defaultMode": "acceptEdits",
     "allow": [
       "Bash(make install)",
+      "Bash(make uv-add *)",
+      "Bash(make uv-remove *)",
+      "Bash(make uv-upgrade)",
+      "Bash(make uv-upgrade *)",
+      "Bash(make uv-lock)",
+      "Bash(make uv-reinstall)",
       "Bash(make setup)",
       "Bash(make check)",
       "Bash(make test)",
@@ -98,22 +115,51 @@
       "Bash(make typecheck)",
       "Bash(make docs-build)",
       "Bash(make lock-check)",
-      "Bash(make test-one TEST=tests/*)",
-      "Bash(uv add *)",
-      "Bash(uv remove *)",
-      "Bash(uv lock *)",
-      "Bash(uv sync *)",
-      "Bash(uv version *)"
+      "Bash(make test-one TEST=tests/*)"
     ],
     "ask": [
       "Edit(/pyproject.toml)",
       "Edit(/uv.lock)",
-      "Edit(/scripts/hooks/guard_config.py)",
-      "Bash(git checkout *pyproject.toml*)",
-      "Bash(git checkout *uv.lock*)",
-      "Bash(git restore *pyproject.toml*)",
-      "Bash(git restore *uv.lock*)",
-      "Bash(uv *--script*)"
+      "Edit(/Makefile)",
+      "Edit(/scripts/development.mk)",
+      "Edit(/scripts/hooks/**)",
+      "Edit(/.claude/settings.json)",
+      "Edit(/.codex/**)",
+      "Edit(/.pre-commit-config.yaml)",
+      "Edit(/scripts/format_files.py)",
+      "Edit(/scripts/release.py)",
+      "Edit(/scripts/install_taplo.py)",
+      "Edit(/scripts/docs_version.py)",
+      "Edit(/mkdocs.yml)",
+      "Edit(/.taplo.toml)",
+      "Edit(/.mdformat.toml)",
+      "Edit(/.python-version)",
+      "Edit(/AGENTS.md)",
+      "Edit(/CLAUDE.md)",
+      "Bash(make guard-accept-changes)",
+      "Bash(git switch *)",
+      "Bash(git checkout *)",
+      "Bash(git pull)",
+      "Bash(git pull *)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(git restore *)",
+      "Bash(git stash)",
+      "Bash(git stash *)",
+      "Bash(git reset *)",
+      "Bash(git cherry-pick *)",
+      "Bash(gh pr checkout *)",
+      "Bash(uv *--script*)",
+      "Bash(git push)",
+      "Bash(git push *)",
+      "Bash(gh pr create)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr merge)",
+      "Bash(gh pr merge *)",
+      "Bash(make bump-patch)",
+      "Bash(make bump-minor)",
+      "Bash(make bump-major)",
+      "Bash(make release-tag)"
     ]
   }
 }

@@ -49,5 +49,6 @@ playwright/.cache/
 # Leftover dependency caches from older template versions
 node_modules/
 
-# Compound Engineering local scratch
+# Compound Engineering local scratch and personal overrides
 .context/compound-engineering/
+.compound-engineering/config.local.yaml

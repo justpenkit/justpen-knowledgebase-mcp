@@ -1,0 +1,29 @@
+# Publishing runs CI or ships a release, and accepting protected-file changes
+# overrides the guard, so the user approves each one. Never use an allow decision
+# here. Prefix forms such as `git -C dir push` or `make --directory dir release-tag`
+# do not match; AGENTS.md tells agents to use the plain forms, and the guard
+# refuses `make -C/--directory`.
+
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    justification = "Pushing runs CI; the user approves every push (AGENTS.md).",
+)
+
+prefix_rule(
+    pattern = ["gh", "pr", ["create", "merge"]],
+    decision = "prompt",
+    justification = "Opening or merging a PR runs CI; the user approves each one (AGENTS.md).",
+)
+
+prefix_rule(
+    pattern = ["make", ["bump-patch", "bump-minor", "bump-major", "release-tag"]],
+    decision = "prompt",
+    justification = "Version bumps and release tags need the user's approval (AGENTS.md).",
+)
+
+prefix_rule(
+    pattern = ["make", "guard-accept-changes"],
+    decision = "prompt",
+    justification = "Only the user accepts changes to protected files (AGENTS.md).",
+)

@@ -22,10 +22,10 @@ consistency, Python/Markdown/TOML/YAML/JSON/HTML/CSS formatting, lint, strict
 typing and unit tests with 80% branch coverage in the active Python environment.
 The strict docs build rejects broken internal links and anchors.
 
-CI verifies typing/unit tests across Python 3.11–3.13 and runs integration tests
-separately on Python 3.13. When developing an integration test or its harness,
-run the relevant scenario locally with `make test-one TEST=...`; other changes
-do not require the local generation matrix.
+CI verifies typing/unit tests across Python 3.11–3.13 on pull requests and runs
+integration tests separately on Python 3.13. When developing an integration test
+or its harness, run the relevant scenario locally with `make test-one TEST=...`;
+other changes do not require the local generation matrix.
 
 ## 3. Tests
 

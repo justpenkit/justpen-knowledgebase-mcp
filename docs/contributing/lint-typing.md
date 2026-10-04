@@ -64,7 +64,8 @@ One of:
 
 ## Config changes require escalation
 
-Never modify `pyproject.toml` ruff or pyright rules unilaterally to make warnings disappear. This includes:
+The [protected-files guard](agents.md#protected-files-guard) reverts agent edits
+to `pyproject.toml` and the other configuration files. Never modify `pyproject.toml` ruff or pyright rules unilaterally to make warnings disappear. This includes:
 
 - `[tool.ruff.lint] select`
 - `[tool.ruff.lint] ignore`
@@ -99,12 +100,12 @@ Bootstrap tests that use real Git are integration tests even when Copier is
 stubbed. Project configuration checked by real Commitizen, registered hook
 launchers, formatters, release tooling, docs builds and generated projects also
 exercise integrations. CI runs this suite through `make test-integration`;
-the actual Codex sandbox probes additionally require an explicit
+the real Codex rule checks additionally require an explicit
 `CODEX_TEST_BINARY` and remain skipped in normal CI. Local execution is only needed while developing such a test or its harness: select
 the relevant scenario with `make test-one` instead of the full generation matrix.
 
-TOML formatting of Python metadata through Make and uv-managed lockfile changes
-remain trusted tool operations. Direct AI metadata rewrites and unilateral
+TOML formatting of Python metadata through Make and the `make uv-*` dependency
+targets remain trusted tool operations. Direct AI metadata rewrites and unilateral
 changes to lint/type/coverage policy still require approval.
 
 ## Git hooks
@@ -132,8 +133,9 @@ an indented `#` line is message content. Leading blank lines and trailing spaces
 are normalized, so a period followed only by whitespace is still rejected.
 Git's scissors marker ends the message; text below it cannot supply a subject.
 
-CI's shared job runs formatting, lint and the docs build once. Each Python matrix
-job runs strict typing and unit tests only for its selected interpreter. Real
+CI's single `check` job runs formatting, lint and the docs build once, then strict
+typing and unit tests per interpreter: 3.11, 3.12 and 3.13 on pull requests, 3.13
+alone on the push to `main`. Real
 integration scenarios run separately; generated projects keep their own
 infrastructure tests and CI integration job.
 

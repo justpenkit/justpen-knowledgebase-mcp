@@ -23,6 +23,10 @@ make setup
 - `make install` installs the locked development and documentation dependencies
     into `.venv/`. A freshly generated project initializes its missing `uv.lock`
     through uv first.
+- On linux aarch64, where taplo publishes no wheel, `make install-taplo` installs
+    the pinned upstream binary into `.venv/bin` after verifying its checksums.
+- Claude Code and Codex plugins the project declares are installed in project
+    scope when those CLIs are present.
 - The project formatters normalize generated Markdown, TOML, YAML and JSON.
 - Git hooks are installed for pre-commit, pre-push and commit-msg.
 
@@ -50,17 +54,18 @@ to Python 3.13; typing and tests each use the active uv Python once.
 There is no additional manual gate before starting development or opening a PR.
 A passing pre-push hook already supplies that verification.
 
-CI runs shared formatting, lint and the docs build once on Python 3.13. Its
-matrix checks typing and unit tests once per Python 3.11, 3.12 and 3.13.
-The full integration suite runs on Python 3.13. Consumer/runtime checks cover
-Linux x86-64, Linux ARM64 and macOS Apple Silicon on all three Python versions.
+CI runs one `check` job: shared formatting, lint and the docs build once on
+Python 3.13, then typing and unit tests. Pull requests run typing and tests on
+Python 3.11, 3.12 and 3.13; the push to `main` after a merge re-checks 3.13 only.
 It rejects a missing or stale committed lock before installing dependencies.
 Initial project setup may create a new lockfile.
+The full integration suite runs on Python 3.13. Consumer/runtime checks cover
+Linux x86-64, Linux ARM64 and macOS Apple Silicon on all three Python versions.
 
 Infrastructure tests remain in generated projects. Real hook, formatter,
 release and documentation scenarios run through `make test-integration` in CI.
 The generator's Template CI additionally tests Copier generation and updates,
-including both setup routes on all three Python versions. These tests are
+including both setup routes on all three Python versions, on pull requests only. These tests are
 excluded from local commit/push gates.
 
 Use `make test-one TEST=tests/test_file.py::test_name` for focused development.
@@ -85,8 +90,8 @@ surface rather than a Python import API.
 ## Use a coding agent
 
 Claude Code and Codex share the rules in root `AGENTS.md`. Follow the
-[agent setup guide](agents.md) to activate project permissions and the protected
-metadata gate before development.
+[agent setup guide](agents.md) to activate project permissions and the
+protected-files guard before development.
 
 ## Make a change
 

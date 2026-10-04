@@ -53,6 +53,10 @@ Neither command pushes tags or publishes to PyPI.
 For coding agents, ordinary uv-managed version changes remain allowed. The
 complete release operation also commits and tags, so it requires release
 authorization and is not an automatic dependency-management exemption.
+Agents run each command of the flow below as its own standalone call. The
+protected-files guard accepts `make bump-*` and the plain Git steps only in that
+form, and publishing commands (`git push`, `gh pr create`, `gh pr merge`,
+`make bump-*`, `make release-tag`) always ask you; see [agent setup](agents.md).
 
 ## Step-by-step flow
 

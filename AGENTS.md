@@ -9,21 +9,22 @@ Install uv first. Run `make setup` once to install locked development and docs
 dependencies and all Git hook stages; `make install` installs dependencies only.
 uv manages Python 3.11–3.13, with 3.13 as the local default. Use the Make targets below
 for routine development checks; their recipes select the tools and arguments.
-Use uv directly for dependency management and running the application. Do not
-install project dependencies into system Python.
-The stdlib-only Codex permission hook is the sole exception: it runs with
+Change dependencies through the `uv-*` Make targets below and run the
+application with uv. Do not install project dependencies into system Python.
+The stdlib-only protected-files guard is the sole exception: it runs with
 `/usr/bin/python3 -I -B` (Python 3.9+) independently of project dependencies.
-Claude Code runs shell commands in its OS sandbox. On Linux and WSL install
-`bubblewrap` and `socat` first; the project settings fail closed, so Claude Code
-does not start without them.
 
 - `make check`: lock consistency, formatting, lint, strict typing and unit tests
     once in the active interpreter. The pre-push hook runs this gate.
 - `make lint-fix`, `make format`, `make typecheck`: individual development checks/fixes.
+- `make uv-add PKG=<spec> [GROUP=<group>]`, `make uv-remove PKG=<name> [GROUP=<group>]`,
+    `make uv-upgrade [PKG=<name>]`: change dependencies and the lock.
+- `make uv-lock`: relock and sync after a user-approved `pyproject.toml` edit.
+- `make uv-reinstall`: delete `.venv` and rebuild it from `uv.lock`.
 - `make test-one TEST=tests/test_file.py::test_name`: focused feedback; it does
     not replace the full `make check` gate or apply its suite-wide coverage threshold.
-- `make test-permissions`: policy tests plus the real Codex sandbox probe;
-    set `CODEX_TEST_BINARY` to an installed CLI first.
+- `make test-permissions`: agent policy tests plus the real Codex execpolicy
+    checks; set `CODEX_TEST_BINARY` to an installed CLI first.
 - `make docs-build`: build MkDocs with strict link and anchor checks.
 - `make test-integration`: real tool, release, documentation and, in the generator,
     Copier scenarios. CI runs these; local execution is only needed when developing
@@ -47,56 +48,57 @@ implementation details, not alternate agent workflows.
 
 ## Protected configuration and approvals
 
-Reading `pyproject.toml` and `uv.lock` is allowed. Routine source, test, and docs
-edits may proceed within the user's task without repeated confirmation.
+Neither agent runs in an OS sandbox. A guard hook (`scripts/hooks/guard_config.py`)
+runs around every Claude Code and Codex tool call and protects the files that
+define this project's rules and tooling: `pyproject.toml`, `uv.lock`, `Makefile`,
+`scripts/development.mk`, `scripts/hooks/`, the agent settings (`.claude/settings.json`,
+`.codex/`), `.pre-commit-config.yaml`, the scripts the Make targets run
+(`scripts/format_files.py`, `release.py`, `install_taplo.py`, `docs_version.py`),
+`mkdocs.yml`, `.taplo.toml`, `.mdformat.toml`, `.python-version`, `AGENTS.md`
+and `CLAUDE.md`. It also forbids new files that override tool settings, such as
+`ruff.toml`, `pytest.ini`, `pyrightconfig.json`, `.coveragerc`, `uv.toml`,
+`GNUmakefile` or a nested `pyproject.toml`.
 
-Read a protected file with the host's file-reading tool or an ordinary inspection
-command. Claude Code's sandbox and Codex's filesystem profile keep root metadata
-read-only for shell commands, so reading never needs approval.
+Reading protected files is always allowed. Routine source, test and docs edits
+proceed within the user's task without repeated confirmation.
 
-Use `uv add`, `uv remove`, `uv lock`, `uv sync`, and `uv version` for normal
-dependency/version changes. Run them as separate commands from the project root.
-Do not hand-edit the lockfile.
+Agents do not write protected files directly. After each call the guard restores
+any change no approved route made, deletes new override files and unstages
+unapproved staged content, then says why. The approved routes are:
 
-Trusted formatting through `make format`, `make format-md`, `make format-toml`,
-`make format-yaml` or `make format-json` is allowed, including TOML formatting
-of `pyproject.toml`. The gate protects against direct
-AI rewrites; it does not prohibit normal uv-managed changes or formatter output.
+- the `uv-*` targets for dependencies, the `format*` and `lint-fix` targets,
+    `install`, `setup` and `install-taplo`, run as the exact plain command
+    `make <target> [VAR=value]` from the project root and in the foreground;
+- a plain standalone `git commit`, so pre-commit's formatting is kept. The guard
+    refuses a commit chained with other commands or built with `$(...)`; write
+    the message to a file and use `git commit -F <file>`;
+- plain `git switch`, `checkout`, `pull`, `merge`, `rebase`, `reset`, `restore`,
+    `stash`, `cherry-pick` and `gh pr checkout`, which ask the user first;
+- a Claude Code Edit or Write on a protected file, which asks the user first.
+    Prepare the exact diff before asking; an approval covers that change. Codex
+    cannot make approved edits: ask the user to make the change.
 
-Any direct AI write to root `pyproject.toml` or `uv.lock` needs explicit user approval
-for the concrete change. Prepare the exact diff first. This includes description,
-build metadata, lint/type settings, and edits made through scripts or patches.
-An approval covers that change; do not request it again without a scope change.
-Do not substitute a Python script, symlink, shell session, or edited Makefile to
-evade the gate. Never weaken checks merely to make them pass.
+The guard refuses commands that switch checks off: `--no-verify`, `git commit -n`,
+`SKIP=`, `core.hooksPath`, `GIT_CONFIG_*`, `PYTEST_ADDOPTS`, `COVERAGE_RCFILE`,
+`MAKEFLAGS`, `MAKEFILES`, `make -f/-C/-e/--directory`, `pre-commit uninstall`,
+running the guard or touching its baseline directly, and `guard-accept-changes`,
+`bump-*` or `release-tag` combined with other goals or variables. When a merge,
+rebase or cherry-pick leaves protected files conflicted, the guard leaves them
+for the user to resolve. Calls that may change
+protected files run alone; when the guard says another call is running, retry
+after it finishes.
 
-Codex uses `justpen-dev` filesystem permissions and **user** approval review.
-Protected `apply_patch` calls are blocked by the hook: show the diff and perform
-the approved change through a shell command with native sandbox escalation.
-Request no persistent broad command exemption. For automatic uv escalation, use
-`uv --directory /absolute/path/to/repo <action> …`, with the actual absolute root
-and the directory option **before** the action. Codex's approval hook receives
-the session directory, which may differ from the command's working directory;
-plain uv commands therefore retain normal approval handling when they escalate.
-The exact `make --directory /absolute/path/to/repo <target>` command also receives
-automatic escalation for trusted formatting, where the single target is `format`,
-`format-md`, `format-toml`, `format-yaml` or `format-json`. No extra targets, variable
-overrides or shell chains are covered. Other escalations remain user-reviewed.
+When the guard reports that protected state changed outside an agent call, stop
+and ask the user whether they made the change. If they want to keep it, they
+approve `make guard-accept-changes`; never run it to get past a refusal on your
+own. When it reports a changed `.venv`, run `make uv-reinstall`.
 
-Claude Code runs Bash in its OS sandbox with no unsandboxed retry. The sandbox
-makes root `pyproject.toml` and `uv.lock` read-only, so a sandboxed shell write
-fails whether it uses a redirect, an interpreter or a script. The uv, formatter,
-bump and Git worktree commands listed in `sandbox.excludedCommands` run outside
-the sandbox, together with the project code they execute (Make recipes, Git
-hooks, `.venv` tools). Run each one as a standalone command: a chained or
-`cd`-prefixed command stays sandboxed. Edit/Write calls, `uv … --script` and
-`git checkout`/`git restore` commands naming a protected file ask for approval.
-Never edit a recipe, hook or tool to route a metadata change through an excluded
-command. When the sandbox blocks a needed command, report the restriction; do
-not add exclusions, domains or writable paths to get past it.
-Treat hook, sandbox and permission changes as policy changes requiring user
-authorization.
-See [agent setup and limitations](docs/contributing/agents.md).
+Do not substitute a script, symlink, chained shell command or edited Make recipe
+to get around the guard, and never weaken checks merely to make them pass. Hook,
+permission and guard changes are policy changes that need user authorization.
+The guard is a guardrail against mistakes, not a security boundary; see
+[agent setup and limitations](docs/contributing/agents.md) for how it works and
+what it does not cover.
 
 ## Quality and code navigation
 
@@ -127,10 +129,23 @@ the release commit without a tag. After review and merge, update main and run
 command is not an automatic dependency-management exemption. Follow the
 [release process](docs/contributing/release-process.md).
 
+Publishing is the user's decision each time. Ask before every `git push`, opening
+a PR, merging, `make bump-*`, `make release-tag` and pushing a tag; an earlier
+approval covers only the PR or release it named, and a skill that publishes does
+not change this. Every PR and every push to an open PR runs the full CI and
+spends the organization's Actions minutes. Commit on the feature branch, report
+what is ready, and let the user choose between more development and publishing;
+batch related changes into one PR. Claude Code enforces this through its
+permission rules, and Codex through `.codex/rules/publishing.rules`, which
+prompts before these commands and `make guard-accept-changes` in a trusted
+project. Codex matches only the plain forms, so never publish with prefixes such
+as `git -C <dir> push`.
+
 ## Optional skills and private working notes
 
-Core development works without host plugins. Use installed skills when useful;
-do not assume Claude plugins or LSP capabilities exist in Codex.
+Both Claude Code and Codex enable Compound Engineering from project settings;
+the pyright LSP plugin is Claude-only. Core development works without either
+plugin. Use installed skills when useful.
 
 Compound Engineering writes its artifacts under
 `.compound-engineering/artifacts/`. The
