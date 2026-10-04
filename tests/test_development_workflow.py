@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_full_integration_suite_runs_on_python_313():
     workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    check = workflow["jobs"]["check"]
+    assert check["outputs"]["generated"] == "${{ steps.project.outputs.generated }}"
+    assert any(step.get("id") == "project" for step in check["steps"])
     integration = workflow["jobs"]["integration"]
     assert integration["env"]["UV_PYTHON"] == "3.13"
     assert integration["needs"] == "check"
