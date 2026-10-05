@@ -8,5 +8,5 @@ Each subfolder is one pack. A pack holds one rule per top-level Markdown file,
 each with `title` and `applies_when` frontmatter, plus an optional `README.md`
 describing the pack. This README is not a rule.
 
-Until the first pack exists, CE reports that `compound-packs` publishes no packs.
-The warning is expected and does not stop any skill.
+While the folder holds no pack, CE reports that `compound-packs` publishes no
+packs. The warning is expected and does not stop any skill.

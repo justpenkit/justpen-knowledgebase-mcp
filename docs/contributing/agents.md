@@ -92,14 +92,14 @@ when developing that test or its harness.
 Dependency changes go through Make, never through `uv add`, `uv remove`,
 `uv lock`, `uv sync` or `uv version` run by an agent:
 
-| Target                                      | Use                                               |
-| ------------------------------------------- | ------------------------------------------------- |
-| `make uv-add PKG=<spec> [GROUP=<group>]`    | Add a dependency                                  |
-| `make uv-remove PKG=<name> [GROUP=<group>]` | Remove a dependency                               |
-| `make uv-upgrade [PKG=<name>]`              | Upgrade one package or all of them                |
-| `make uv-lock`                              | Relock after a `pyproject.toml` edit you approved |
-| `make uv-reinstall`                         | Delete `.venv` and rebuild it from `uv.lock`      |
-| `make guard-accept-changes`                 | Keep protected changes made outside an agent call |
+| Target                                      | Use                                                                          |
+| ------------------------------------------- | ---------------------------------------------------------------------------- |
+| `make uv-add PKG=<spec> [GROUP=<group>]`    | Add a dependency; quote a spec that carries an environment marker            |
+| `make uv-remove PKG=<name> [GROUP=<group>]` | Remove a dependency                                                          |
+| `make uv-upgrade [PKG=<name>]`              | Upgrade one package or all of them                                           |
+| `make uv-lock`                              | Relock after a `pyproject.toml` edit you approved                            |
+| `make uv-reinstall`                         | Delete `.venv`, rebuild it from `uv.lock` and restore taplo on linux aarch64 |
+| `make guard-accept-changes`                 | Keep protected changes made outside an agent call                            |
 
 The `uv-*` targets run without approval in Claude Code. Run each as a standalone
 foreground command from the repository root. After a target changes

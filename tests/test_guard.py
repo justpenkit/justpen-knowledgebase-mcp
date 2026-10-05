@@ -202,11 +202,21 @@ def test_allowlisted_dependency_target_is_accepted(project):
     assert (pre, post) == ({}, {})
 
 
+def test_dependency_with_an_environment_marker_is_accepted(project):
+    _, post = project.call(
+        """make uv-add PKG="taplo>=0.9.3 ; platform_machine != 'aarch64' or sys_platform != 'linux'\""""
+    )
+    assert post == {}
+    assert "platform_machine != 'aarch64' or sys_platform != 'linux'" in project.read("pyproject.toml")
+
+
 @pytest.mark.parametrize(
     "command",
     [
         "make uv-add PKG=httpx && true",
         "make uv-add PKG='x; echo'",
+        """make uv-add PKG="x ; os_name == '$(id)'\"""",
+        """make uv-add PKG="x ; os_name == 'nt'; touch y\"""",
         "make uv-add PKG=-e",
         "make uv-add PKG=httpx EXTRA=1",
         "make -f Makefile uv-add PKG=httpx",
