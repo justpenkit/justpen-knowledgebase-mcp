@@ -1,3 +1,9 @@
+## v0.6.1 (2026-10-05)
+
+### Fix
+
+- keep the update preview rule and pin the integration trigger
+
 ## v0.6.0 (2026-10-01)
 
 ### BREAKING CHANGE
