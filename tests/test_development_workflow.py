@@ -71,6 +71,7 @@ def create_make_project(tmp_path):
     (project / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
     # Stand in for the formatter runner so tests can see that formatting ran.
     (project / "scripts/format_files.py").write_text("import json, sys\nprint(json.dumps(['format', *sys.argv[1:]]))\n")
+    (project / "scripts/install_taplo.py").write_text("import json\nprint(json.dumps(['install-taplo']))\n")
     binary = tmp_path / "bin"
     binary.mkdir()
     # Capture tool arguments, but delegate the formatter runner to real tools.
@@ -292,12 +293,12 @@ def test_uv_lock_relocks_then_syncs(make_project):
     assert recorded_calls(result) == [["lock"], SYNC, FORMAT_TOML]
 
 
-def test_uv_reinstall_removes_the_venv_before_a_locked_sync(make_project):
+def test_uv_reinstall_removes_the_venv_then_syncs_and_restores_taplo(make_project):
     project, environment = make_project
     (project / ".venv/lib").mkdir(parents=True)
     (project / ".venv/lib/planted.pth").write_text("import os\n")
     result = run_make(project, environment, "uv-reinstall")
-    assert recorded_calls(result) == [SYNC]
+    assert recorded_calls(result) == [SYNC, ["install-taplo"]]
     assert not (project / ".venv").exists()
 
 

@@ -93,9 +93,12 @@ SYMLINK_PREFIX = "symlink:"
 TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024
 
 PACKAGE_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\-\[\],<>=!~]*")
+# A PEP 508 environment marker: `name op 'value'` clauses joined by and/or.
+MARKER_CLAUSE = r"[a-z_]+ *(?:===|==|!=|<=|>=|~=|<|>| in | not in ) *'[^'$`\\]*'"
+REQUIREMENT_VALUE = re.compile(rf"{PACKAGE_VALUE.pattern}(?: *; *{MARKER_CLAUSE}(?: +(?:and|or) +{MARKER_CLAUSE})*)?")
 GROUP_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 ALLOWLISTED_TARGETS: dict[str, dict[str, re.Pattern[str]]] = {
-    "uv-add": {"PKG": PACKAGE_VALUE, "GROUP": GROUP_VALUE},
+    "uv-add": {"PKG": REQUIREMENT_VALUE, "GROUP": GROUP_VALUE},
     "uv-remove": {"PKG": PACKAGE_VALUE, "GROUP": GROUP_VALUE},
     "uv-upgrade": {"PKG": PACKAGE_VALUE},
     "uv-lock": {},

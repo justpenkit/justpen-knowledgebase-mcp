@@ -77,10 +77,12 @@ uv-lock:
 	uv sync --locked --group dev --group docs
 	$(MAKE) format-toml
 
-# Delete first: syncing in place would keep a planted .pth file.
+# Delete first: syncing in place would keep a planted .pth file. The sync cannot
+# restore taplo on linux aarch64, where it lives outside the lock.
 uv-reinstall:
 	rm -rf $(VENV)
 	uv sync --locked --group dev --group docs
+	$(MAKE) install-taplo
 
 guard-accept-changes:
 	/usr/bin/python3 -I -B scripts/hooks/guard_config.py --event accept
