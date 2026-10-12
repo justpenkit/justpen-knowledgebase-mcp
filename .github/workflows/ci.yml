@@ -23,7 +23,7 @@ jobs:
       UV_PYTHON: "3.13"
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
           cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
@@ -75,7 +75,7 @@ jobs:
       UV_PYTHON: "3.13"
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
           cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
@@ -103,7 +103,7 @@ jobs:
       UV_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
           cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
@@ -149,7 +149,7 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
           cache-suffix: ${{ github.workflow }}-${{ github.job }}-py${{ env.UV_PYTHON }}
